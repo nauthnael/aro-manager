@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v2.0.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v2.1.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -106,7 +106,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v2.0.0         ║
+║         ARO Manager - Complete Node Management v2.1.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -584,6 +584,7 @@ start_redsocks_service() {
 
 # ───────────────────────────────────────────────────────────────
 # WATCHDOG FUNCTIONS (ported from aro-watchdog.sh v1.4.3)
+# NOTE: All functions are hardened against set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 
 # Global node info variables (populated by parse_node_info)
@@ -598,9 +599,9 @@ LATEST_LOG_FILE=""
 LAST_ONLINE_LABEL="❓ No connection history"
 LAST_ONLINE_AGO=""
 
-# Run a command as EFFECTIVE_USER if we lack direct permission
+# Run a command as EFFECTIVE_USER if needed
 run_as_aro_user() {
-    if [[ "$EFFECTIVE_USER" == "root" ]] || [[ "$EFFECTIVE_USER" == "$(whoami)" ]]; then
+    if [[ "$EFFECTIVE_USER" == "$(whoami)" ]]; then
         "$@"
     elif command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
         sudo -u "$EFFECTIVE_USER" "$@"
@@ -610,39 +611,46 @@ run_as_aro_user() {
 }
 
 get_latest_aro_log() {
+    # Guard: directory may not exist yet
     if [[ ! -d "$ARO_LOG_DIR" ]] && ! run_as_aro_user test -d "$ARO_LOG_DIR" 2>/dev/null; then
         echo ""
-        return
+        return 0
     fi
-    run_as_aro_user ls -t "$ARO_LOG_DIR"/*.log 2>/dev/null | head -1
+    # IMPORTANT: ls exits non-zero when no *.log files match the glob.
+    # With pipefail enabled, we must isolate the ls failure with "|| true"
+    # so head -1 still runs and the pipeline returns 0.
+    { run_as_aro_user ls -t "$ARO_LOG_DIR"/*.log 2>/dev/null || true; } | head -1
 }
 
 # ── Format helpers ──────────────────────────────────────────────
 
 format_number() {
     local raw="$1"
-    if [[ -z "$raw" ]] || [[ "$raw" == "N/A" ]]; then echo "0"; return; fi
+    if [[ -z "$raw" ]] || [[ "$raw" == "N/A" ]]; then echo "0"; return 0; fi
+    # awk || true: prevent set -e abort if awk fails on unexpected input
     echo "$raw" | awk '{
-        split($1,a,".")
-        int_part=a[1]; frac=(length(a)>1)?".":""a[2]:""
-        res=""; len=length(int_part)
-        for(i=1;i<=len;i++){
-            res=res substr(int_part,i,1)
-            if((len-i)%3==0 && i!=len) res=res","
+        split($1, a, ".")
+        int_part = a[1]
+        frac_part = (length(a) > 1) ? ("." a[2]) : ""
+        res = ""
+        len = length(int_part)
+        for (i = 1; i <= len; i++) {
+            res = res substr(int_part, i, 1)
+            if ((len - i) % 3 == 0 && i != len) res = res ","
         }
-        print res frac
-    }'
+        print res frac_part
+    }' || echo "$raw"
 }
 
 format_uptime() {
     local ratio="$1"
-    if [[ -z "$ratio" ]] || [[ "$ratio" == "N/A" ]]; then echo "N/A"; return; fi
-    echo "$ratio" | awk '{printf "%.1f", $1 * 100}'
+    if [[ -z "$ratio" ]] || [[ "$ratio" == "N/A" ]]; then echo "N/A"; return 0; fi
+    echo "$ratio" | awk '{printf "%.1f", $1 * 100}' || echo "N/A"
 }
 
 format_time_ago() {
     local seconds="$1"
-    if [[ -z "$seconds" ]] || [[ "$seconds" -lt 0 ]] 2>/dev/null; then echo "unknown"; return; fi
+    if [[ -z "$seconds" ]] || ! [[ "$seconds" =~ ^[0-9]+$ ]]; then echo "unknown"; return 0; fi
     local days=$(( seconds / 86400 ))
     local hours=$(( (seconds % 86400) / 3600 ))
     local minutes=$(( (seconds % 3600) / 60 ))
@@ -658,7 +666,10 @@ format_time_ago() {
     fi
 }
 
-# ── Parse node info from ARO log (mirrors watchdog v1.4.3) ─────
+# ── Parse node info from ARO log ────────────────────────────────
+# Mirrors watchdog v1.4.3 field names exactly.
+# All grep calls use "|| true" inside $() so set -e never aborts
+# when grep finds no match (exit 1).
 
 parse_node_info() {
     SERIAL="N/A"; EMAIL="N/A"; CONNECT_STATUS="N/A"
@@ -666,69 +677,79 @@ parse_node_info() {
 
     LATEST_LOG_FILE=$(get_latest_aro_log)
     if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
-        return
+        return 0
     fi
 
     local lines
-    lines=$(run_as_aro_user tail -n 200 "$LATEST_LOG_FILE" 2>/dev/null)
-    [[ -z "$lines" ]] && return
+    lines=$(run_as_aro_user tail -n 200 "$LATEST_LOG_FILE" 2>/dev/null || true)
+    [[ -z "$lines" ]] && return 0
 
     local val
-    val=$(echo "$lines" | grep -oP '(?<="serialNumber":")[^"]+' | tail -1)
+    # "|| true" inside $() prevents set -e abort when grep returns 1 (no match)
+    val=$(echo "$lines" | grep -oP '(?<="serialNumber":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && SERIAL="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="email":")[^"]+' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="email":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && EMAIL="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="connect":")(connected|disconnected)' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="connect":")(connected|disconnected)' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && CONNECT_STATUS="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="today":)[0-9.]+' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="today":)[0-9.]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && REWARD_TODAY="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="yesterday":)[0-9.]+' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="yesterday":)[0-9.]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && REWARD_YESTERDAY="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="uptime":)[0-9.]+' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="uptime":)[0-9.]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && UPTIME_RATIO="$val"
 
-    val=$(echo "$lines" | grep -oP '(?<="publicIp":")[^"]+' | tail -1)
+    val=$(echo "$lines" | grep -oP '(?<="publicIp":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && PUBLIC_IP="$val"
+
+    return 0
 }
 
 get_last_online_info() {
     LAST_ONLINE_LABEL="❓ No connection history"
     LAST_ONLINE_AGO=""
 
-    if ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then return; fi
+    [[ -z "$LATEST_LOG_FILE" ]] && return 0
+    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 0
 
     local now; now=$(date +%s)
     local log_content
-    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null)
+    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null || true)
 
     local last_connected_line
-    last_connected_line=$(echo "$log_content" | grep '"connect":"connected"' | tail -1)
-    [[ -z "$last_connected_line" ]] && { LAST_ONLINE_LABEL="❓ Never connected in recent log"; return; }
+    last_connected_line=$(echo "$log_content" | grep '"connect":"connected"' 2>/dev/null | tail -1 || true)
+    if [[ -z "$last_connected_line" ]]; then
+        LAST_ONLINE_LABEL="❓ Never connected in recent log"
+        return 0
+    fi
 
     local last_ts_str
-    last_ts_str=$(echo "$last_connected_line" | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' | tr -d '[')
+    last_ts_str=$(echo "$last_connected_line" \
+        | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null | tr -d '[' || true)
     local last_epoch=0
     [[ -n "$last_ts_str" ]] && last_epoch=$(date -d "$last_ts_str" +%s 2>/dev/null || echo 0)
-    [[ "$last_epoch" -eq 0 ]] && { LAST_ONLINE_LABEL="❓ Could not parse timestamp"; return; }
+    if [[ "$last_epoch" -eq 0 ]]; then
+        LAST_ONLINE_LABEL="❓ Could not parse timestamp"
+        return 0
+    fi
 
     local elapsed=$(( now - last_epoch ))
     local ago_str; ago_str=$(format_time_ago "$elapsed")
 
     if [[ "$CONNECT_STATUS" == "connected" ]]; then
         local first_conn_ts
-        first_conn_ts=$(echo "$log_content" | grep '"connect":"connected"' | head -1 \
-            | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' | tr -d '[')
+        first_conn_ts=$(echo "$log_content" | grep '"connect":"connected"' 2>/dev/null | head -1 \
+            | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null | tr -d '[' || true)
         local sess_epoch=0
         [[ -n "$first_conn_ts" ]] && sess_epoch=$(date -d "$first_conn_ts" +%s 2>/dev/null || echo 0)
         if [[ "$sess_epoch" -gt 0 ]]; then
-            local sess_ago; sess_ago=$(format_time_ago $(( now - sess_epoch )))
             LAST_ONLINE_LABEL="🟢 Online since"
-            LAST_ONLINE_AGO="$sess_ago"
+            LAST_ONLINE_AGO=$(format_time_ago $(( now - sess_epoch )))
         else
             LAST_ONLINE_LABEL="🟢 Currently online"
             LAST_ONLINE_AGO="$ago_str"
@@ -737,37 +758,46 @@ get_last_online_info() {
         LAST_ONLINE_LABEL="🔴 Last online"
         LAST_ONLINE_AGO="$ago_str"
     fi
+    return 0
 }
 
 # ── Process helpers ─────────────────────────────────────────────
 
 is_aro_running() {
-    pgrep -u "$EFFECTIVE_USER" -x "ARO" >/dev/null 2>&1
+    pgrep -u "$EFFECTIVE_USER" -x "ARO" >/dev/null 2>&1 || return 1
 }
 
 get_aro_pid() {
-    pgrep -u "$EFFECTIVE_USER" -x "ARO" | head -n1
+    pgrep -u "$EFFECTIVE_USER" -x "ARO" 2>/dev/null | head -n1 || true
 }
 
 is_log_fresh() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     [[ -z "$LATEST_LOG_FILE" ]] && return 1
     ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 1
-    local log_age
-    log_age=$(( $(date +%s) - $(run_as_aro_user stat -c %Y "$LATEST_LOG_FILE" 2>/dev/null || echo 0) ))
+    local mtime
+    mtime=$(run_as_aro_user stat -c %Y "$LATEST_LOG_FILE" 2>/dev/null || echo 0)
+    local log_age=$(( $(date +%s) - mtime ))
     [[ $log_age -lt $((LOG_STALE_MINUTES * 60)) ]]
 }
 
 get_disconnect_duration() {
-    [[ -z "$LATEST_LOG_FILE" ]] && { echo "0"; return; }
+    if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+        echo "0"; return 0
+    fi
     local last_line
     last_line=$(run_as_aro_user tail -n 100 "$LATEST_LOG_FILE" 2>/dev/null \
-        | grep -E '"connect":"(connected|disconnected)"' | tail -1)
-    if echo "$last_line" | grep -q '"connect":"disconnected"'; then
-        local ts_str; ts_str=$(echo "$last_line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}')
+        | { grep -E '"connect":"(connected|disconnected)"' 2>/dev/null || true; } | tail -1)
+    if echo "$last_line" | grep -q '"connect":"disconnected"' 2>/dev/null; then
+        local ts_str
+        ts_str=$(echo "$last_line" \
+            | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
         if [[ -n "$ts_str" ]]; then
             local ep; ep=$(date -d "$ts_str" +%s 2>/dev/null || echo 0)
-            [[ "$ep" -gt 0 ]] && echo $(( ($(date +%s) - ep) / 60 )) && return
+            if [[ "$ep" -gt 0 ]]; then
+                echo $(( ($(date +%s) - ep) / 60 ))
+                return 0
+            fi
         fi
     fi
     echo "0"
@@ -783,14 +813,12 @@ kill_aro() {
 
 launch_aro() {
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
-    local launch_cmd="DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
         sudo -u "$EFFECTIVE_USER" \
             env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" LIBGL_ALWAYS_SOFTWARE="1" \
             "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
-    elif command -v script >/dev/null 2>&1; then
-        su - "$EFFECTIVE_USER" -c "script -q -c '$launch_cmd' /dev/null" >/dev/null 2>&1 &
     else
+        local launch_cmd="DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
