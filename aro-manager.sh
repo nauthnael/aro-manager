@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v2.1.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v2.2.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.2.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -62,6 +62,11 @@ MAX_RETRIES=5
 BACKOFF_TIMES="0 0 30 60 120"
 DAILY_REPORT_HOUR=7
 
+# Proxy connectivity check
+PROXY_CHECK_INTERVAL=300          # real proxy test every 5 minutes
+PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour when proxy is down
+PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))  # = 240s between alerts
+
 # Telegram
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
@@ -106,7 +111,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v2.1.0         ║
+║         ARO Manager - Complete Node Management v2.2.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -872,12 +877,26 @@ send_notify_max_retries() {
     send_telegram "$msg"
 }
 
+# Epoch of last proxy-down Telegram alert (throttle state, in-memory)
+_last_proxy_down_notify=0
+
 send_notify_proxy_down() {
+    local reason="${1:-redsocks service not running}"
+
+    # Throttle: max PROXY_DOWN_NOTIFY_MAX alerts per hour
+    local now; now=$(date +%s)
+    local since=$(( now - _last_proxy_down_notify ))
+    if [[ $_last_proxy_down_notify -gt 0 ]] && [[ $since -lt $PROXY_DOWN_NOTIFY_INTERVAL ]]; then
+        watchdog_log "Proxy-down notification throttled (${since}s since last, limit ${PROXY_DOWN_NOTIFY_INTERVAL}s)"
+        return 0
+    fi
+    _last_proxy_down_notify=$now
+
     local msg="🚨 <b>[PROXY DOWN] ${HOSTNAME}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-⚠️ Redsocks service not running
+⚠️ Reason: ${reason}
 🛡️ ARO launch blocked (kill-switch active)
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
 
@@ -966,13 +985,13 @@ ${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
 check_proxy_health() {
     if ! systemctl is-active --quiet redsocks-aro; then
         watchdog_log "WARNING: Proxy service (redsocks-aro) is down!"
-        send_notify_proxy_down
-        
+        send_notify_proxy_down "redsocks service not running"
+
         # Attempt auto-recovery
         watchdog_log "Attempting to restart proxy service..."
         systemctl restart redsocks-aro 2>/dev/null || true
         sleep 3
-        
+
         if systemctl is-active --quiet redsocks-aro; then
             watchdog_log "SUCCESS: Proxy service recovered"
             send_notify_proxy_recovered
@@ -982,13 +1001,42 @@ check_proxy_health() {
             return 1
         fi
     fi
-    
+
     # Check redsocks port
     if ! nc -z 127.0.0.1 "$REDSOCKS_PORT" 2>/dev/null; then
         watchdog_log "WARNING: Redsocks port $REDSOCKS_PORT not responding"
         return 1
     fi
-    
+
+    return 0
+}
+
+# ── Real proxy connectivity check ───────────────────────────────
+# Tests actual SOCKS5 tunnel to proxy server, independent of
+# redsocks/iptables. Detects: proxy server offline, wrong creds,
+# upstream routing failure. Runs every PROXY_CHECK_INTERVAL (5m).
+
+check_real_proxy() {
+    watchdog_log "Real proxy connectivity check: ${PROXY_HOST}:${PROXY_PORT}"
+
+    local exit_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        exit_ip=$(curl -s --max-time 10 \
+            --socks5-hostname "${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" \
+            "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
+        if [[ "$exit_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            break
+        fi
+        exit_ip=""
+    done
+
+    if [[ -z "$exit_ip" ]]; then
+        watchdog_log "ERROR: Real proxy check FAILED — cannot reach ${PROXY_HOST}:${PROXY_PORT}"
+        send_notify_proxy_down "proxy server unreachable or credentials rejected"
+        return 1
+    fi
+
+    watchdog_log "Real proxy check OK — exit IP: ${exit_ip}"
     return 0
 }
 
@@ -1041,11 +1089,20 @@ watchdog_loop() {
     state_set "last_restart" "0"
     state_set "last_report" "0"
     state_set "stable_since" "$(date +%s)"
-    
+
     local last_daily_hour=-1
-    
+    local last_proxy_check_epoch=0   # tracks real proxy check timer
+
     while true; do
-        # Check proxy health first
+        local now; now=$(date +%s)
+
+        # ── Real proxy check every PROXY_CHECK_INTERVAL (5 min) ──
+        if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
+            check_real_proxy || true   # failure already logged + notified inside
+            last_proxy_check_epoch=$(date +%s)
+        fi
+
+        # ── Redsocks service / port check (every cycle) ──
         if ! check_proxy_health; then
             watchdog_log "Proxy unhealthy, skipping ARO checks this cycle"
             sleep "$CHECK_INTERVAL"
