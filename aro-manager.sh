@@ -1461,22 +1461,31 @@ do_status() {
     load_configs
     detect_crd_user
     parse_node_info
-    
+    get_last_online_info
+
     echo "═══════════════════════════════════════════════════════════════"
-    echo "  ARO MANAGER STATUS"
+    echo "  ARO MANAGER STATUS v${SCRIPT_VERSION}"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
-    
-    echo "📋 Configuration:"
-    echo "  Host: $HOSTNAME"
-    echo "  CRD User: $CRD_USER"
-    echo "  Node ID: $NODE_ID"
-    echo "  Node Version: $NODE_VERSION"
+
+    echo "📋 Node Info:"
+    echo "  Host:    $HOSTNAME"
+    echo "  User:    $CRD_USER"
+    echo "  Serial:  $SERIAL"
+    echo "  Email:   $EMAIL"
+    echo "  Pub IP:  $PUBLIC_IP"
+    echo "  Status:  $CONNECT_STATUS"
+    echo "  $LAST_ONLINE_LABEL${LAST_ONLINE_AGO:+ $LAST_ONLINE_AGO}"
     echo ""
-    
+
+    echo "💰 Rewards:"
+    echo "  Today:     $(format_number "$REWARD_TODAY") pts"
+    echo "  Yesterday: $(format_number "$REWARD_YESTERDAY") pts"
+    echo "  Uptime:    $(format_uptime "$UPTIME_RATIO")%"
+    echo ""
+
     echo "🔌 Proxy:"
-    echo "  Server: $PROXY_HOST:$PROXY_PORT"
-    echo "  Username: $PROXY_USER"
+    echo "  Server:        $PROXY_HOST:$PROXY_PORT"
     echo "  Redsocks Port: $REDSOCKS_PORT"
     if systemctl is-active --quiet redsocks-aro; then
         echo "  Status: ✓ Running"
@@ -1484,57 +1493,48 @@ do_status() {
         echo "  Status: ✗ Not running"
     fi
     echo ""
-    
+
     echo "🤖 Watchdog:"
     if systemctl is-active --quiet aro-watchdog; then
         echo "  Status: ✓ Running"
     else
         echo "  Status: ✗ Not running"
     fi
+    local retry_count
+    retry_count=$(state_get "retry_count" "0")
     echo "  Check Interval: ${CHECK_INTERVAL}s"
-    echo "  Max Retries: $MAX_RETRIES"
+    echo "  Max Retries:    $MAX_RETRIES"
+    echo "  Retry Count:    $retry_count/$MAX_RETRIES"
     echo ""
-    
+
     echo "🎮 ARO Application:"
     if is_aro_running; then
         local aro_pid
         aro_pid=$(get_aro_pid)
         echo "  Status: ✓ Running (PID: $aro_pid)"
-        
         if is_log_fresh; then
-            echo "  Log: ✓ Fresh (<${LOG_STALE_MINUTES}m)"
+            echo "  Log:    ✓ Fresh (<${LOG_STALE_MINUTES}m)"
         else
-            echo "  Log: ⚠ Stale (>${LOG_STALE_MINUTES}m)"
+            echo "  Log:    ⚠ Stale (>${LOG_STALE_MINUTES}m)"
         fi
     else
         echo "  Status: ✗ Not running"
     fi
     echo ""
-    
+
     echo "🛡️  Security:"
     if iptables -t nat -L ARO_PROXY >/dev/null 2>&1; then
         echo "  Kill-switch: ✓ Active"
     else
         echo "  Kill-switch: ✗ Inactive"
     fi
-    
-    if ip6tables -L OUTPUT | grep -q "$CRD_USER"; then
-        echo "  IPv6 Block: ✓ Active"
+    if ip6tables -L OUTPUT 2>/dev/null | grep -q "$CRD_USER"; then
+        echo "  IPv6 Block:  ✓ Active"
     else
-        echo "  IPv6 Block: ✗ Inactive"
+        echo "  IPv6 Block:  ✗ Inactive"
     fi
     echo ""
-    
-    echo "📊 Statistics:"
-    local daily_reward
-    daily_reward=$(get_daily_reward)
-    echo "  Today's Reward: $daily_reward"
-    
-    local retry_count
-    retry_count=$(state_get "retry_count" "0")
-    echo "  Current Retry Count: $retry_count/$MAX_RETRIES"
-    echo ""
-    
+
     echo "═══════════════════════════════════════════════════════════════"
 }
 
