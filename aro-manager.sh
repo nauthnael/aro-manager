@@ -382,36 +382,53 @@ load_configs() {
 
 create_redsocks_config() {
     log_info "Creating redsocks configuration..."
-    
+
+    # daemon=off → systemd manages the process lifecycle (Type=simple)
     cat > "$REDSOCKS_CONF_FILE" << EOF
 base {
     log_debug = off;
     log_info = on;
     log = "syslog:daemon";
-    daemon = on;
+    daemon = off;
     redirector = iptables;
 }
 
 redsocks {
     local_ip = 127.0.0.1;
     local_port = $REDSOCKS_PORT;
-    
+
     ip = $PROXY_HOST;
     port = $PROXY_PORT;
     type = socks5;
-    
+
     login = "$PROXY_USER";
     password = "$PROXY_PASS";
 }
 EOF
-    
+
     chmod 600 "$REDSOCKS_CONF_FILE"
     log_success "Redsocks config created"
 }
 
 create_redsocks_service() {
     log_info "Creating redsocks systemd service..."
-    
+
+    # Detect redsocks binary (path differs across distros/versions)
+    local redsocks_bin=""
+    if command -v redsocks >/dev/null 2>&1; then
+        redsocks_bin=$(command -v redsocks)
+    elif [[ -x /usr/sbin/redsocks ]]; then
+        redsocks_bin="/usr/sbin/redsocks"
+    elif [[ -x /usr/bin/redsocks ]]; then
+        redsocks_bin="/usr/bin/redsocks"
+    else
+        log_error "redsocks binary not found after installation!"
+        exit 1
+    fi
+
+    log_info "Redsocks binary: $redsocks_bin"
+
+    # Type=simple + daemon=off → systemd tracks PID directly, no forking issues
     cat > "$SYSTEMD_REDSOCKS_SERVICE" << EOF
 [Unit]
 Description=Redsocks SOCKS5 Transparent Proxy for ARO
@@ -419,11 +436,9 @@ Documentation=https://github.com/darkk/redsocks
 After=network.target
 
 [Service]
-Type=forking
-ExecStartPre=/bin/sleep 2
-ExecStart=/usr/sbin/redsocks -c $REDSOCKS_CONF_FILE
-ExecStop=/bin/kill -s TERM \$MAINPID
-PIDFile=/var/run/redsocks.pid
+Type=simple
+ExecStartPre=/bin/sh -c 'ss -tlnp | grep -q ":${REDSOCKS_PORT} " && fuser -k ${REDSOCKS_PORT}/tcp 2>/dev/null || true'
+ExecStart=$redsocks_bin -c $REDSOCKS_CONF_FILE
 Restart=on-failure
 RestartSec=10s
 
@@ -437,9 +452,9 @@ ReadWritePaths=/var/run /var/log
 [Install]
 WantedBy=multi-user.target
 EOF
-    
+
     systemctl daemon-reload
-    log_success "Redsocks service created"
+    log_success "Redsocks service created (binary: $redsocks_bin)"
 }
 
 setup_iptables_rules() {
