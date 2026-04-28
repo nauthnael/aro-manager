@@ -583,237 +583,355 @@ start_redsocks_service() {
 }
 
 # ───────────────────────────────────────────────────────────────
-# WATCHDOG FUNCTIONS (from aro-watchdog.sh v1.4.3)
+# WATCHDOG FUNCTIONS (ported from aro-watchdog.sh v1.4.3)
 # ───────────────────────────────────────────────────────────────
 
+# Global node info variables (populated by parse_node_info)
+SERIAL="N/A"
+EMAIL="N/A"
+CONNECT_STATUS="N/A"
+REWARD_TODAY="0"
+REWARD_YESTERDAY="0"
+UPTIME_RATIO="0"
+PUBLIC_IP="N/A"
+LATEST_LOG_FILE=""
+LAST_ONLINE_LABEL="❓ No connection history"
+LAST_ONLINE_AGO=""
+
+# Run a command as EFFECTIVE_USER if we lack direct permission
+run_as_aro_user() {
+    if [[ "$EFFECTIVE_USER" == "root" ]] || [[ "$EFFECTIVE_USER" == "$(whoami)" ]]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
+        sudo -u "$EFFECTIVE_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
 get_latest_aro_log() {
-    if [[ ! -d "$ARO_LOG_DIR" ]]; then
+    if [[ ! -d "$ARO_LOG_DIR" ]] && ! run_as_aro_user test -d "$ARO_LOG_DIR" 2>/dev/null; then
         echo ""
         return
     fi
-    
-    find "$ARO_LOG_DIR" -name "*.log" -type f -printf '%T@ %p\n' 2>/dev/null \
-        | sort -rn \
-        | head -n1 \
-        | cut -d' ' -f2
+    run_as_aro_user ls -t "$ARO_LOG_DIR"/*.log 2>/dev/null | head -1
 }
+
+# ── Format helpers ──────────────────────────────────────────────
+
+format_number() {
+    local raw="$1"
+    if [[ -z "$raw" ]] || [[ "$raw" == "N/A" ]]; then echo "0"; return; fi
+    echo "$raw" | awk '{
+        split($1,a,".")
+        int_part=a[1]; frac=(length(a)>1)?".":""a[2]:""
+        res=""; len=length(int_part)
+        for(i=1;i<=len;i++){
+            res=res substr(int_part,i,1)
+            if((len-i)%3==0 && i!=len) res=res","
+        }
+        print res frac
+    }'
+}
+
+format_uptime() {
+    local ratio="$1"
+    if [[ -z "$ratio" ]] || [[ "$ratio" == "N/A" ]]; then echo "N/A"; return; fi
+    echo "$ratio" | awk '{printf "%.1f", $1 * 100}'
+}
+
+format_time_ago() {
+    local seconds="$1"
+    if [[ -z "$seconds" ]] || [[ "$seconds" -lt 0 ]] 2>/dev/null; then echo "unknown"; return; fi
+    local days=$(( seconds / 86400 ))
+    local hours=$(( (seconds % 86400) / 3600 ))
+    local minutes=$(( (seconds % 3600) / 60 ))
+    local secs=$(( seconds % 60 ))
+    if [[ $days -gt 0 ]]; then
+        [[ $hours -gt 0 ]] && echo "${days}d ${hours}h ${minutes}m ago" || echo "${days}d ago"
+    elif [[ $hours -gt 0 ]]; then
+        [[ $minutes -gt 0 ]] && echo "${hours}h ${minutes}m ago" || echo "${hours}h ago"
+    elif [[ $minutes -gt 0 ]]; then
+        echo "${minutes}m ${secs}s ago"
+    else
+        echo "${secs}s ago"
+    fi
+}
+
+# ── Parse node info from ARO log (mirrors watchdog v1.4.3) ─────
 
 parse_node_info() {
+    SERIAL="N/A"; EMAIL="N/A"; CONNECT_STATUS="N/A"
+    REWARD_TODAY="0"; REWARD_YESTERDAY="0"; UPTIME_RATIO="0"; PUBLIC_IP="N/A"
+
     LATEST_LOG_FILE=$(get_latest_aro_log)
-    
-    if [[ -z "$LATEST_LOG_FILE" ]] || [[ ! -f "$LATEST_LOG_FILE" ]]; then
-        NODE_ID="Unknown"
-        NODE_VERSION="Unknown"
+    if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
         return
     fi
-    
-    NODE_ID=$(grep -oP 'nodeId":\s*"\K[^"]+' "$LATEST_LOG_FILE" 2>/dev/null | tail -n1 || echo "Unknown")
-    NODE_VERSION=$(grep -oP 'ARO Desktop v\K[0-9.]+' "$LATEST_LOG_FILE" 2>/dev/null | head -n1 || echo "Unknown")
+
+    local lines
+    lines=$(run_as_aro_user tail -n 200 "$LATEST_LOG_FILE" 2>/dev/null)
+    [[ -z "$lines" ]] && return
+
+    local val
+    val=$(echo "$lines" | grep -oP '(?<="serialNumber":")[^"]+' | tail -1)
+    [[ -n "$val" ]] && SERIAL="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="email":")[^"]+' | tail -1)
+    [[ -n "$val" ]] && EMAIL="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="connect":")(connected|disconnected)' | tail -1)
+    [[ -n "$val" ]] && CONNECT_STATUS="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="today":)[0-9.]+' | tail -1)
+    [[ -n "$val" ]] && REWARD_TODAY="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="yesterday":)[0-9.]+' | tail -1)
+    [[ -n "$val" ]] && REWARD_YESTERDAY="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="uptime":)[0-9.]+' | tail -1)
+    [[ -n "$val" ]] && UPTIME_RATIO="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="publicIp":")[^"]+' | tail -1)
+    [[ -n "$val" ]] && PUBLIC_IP="$val"
 }
 
-get_daily_reward() {
-    LATEST_LOG_FILE=$(get_latest_aro_log)
-    
-    if [[ -z "$LATEST_LOG_FILE" ]] || [[ ! -f "$LATEST_LOG_FILE" ]]; then
-        echo "0"
-        return
-    fi
-    
-    local today_date
-    today_date=$(date +%Y-%m-%d)
-    
-    local reward_line
-    reward_line=$(grep "$today_date" "$LATEST_LOG_FILE" 2>/dev/null \
-        | grep -i "reward" \
-        | grep -oP 'totalReward":\s*\K[0-9.]+' \
-        | tail -n1)
-    
-    if [[ -n "$reward_line" ]]; then
-        echo "$reward_line"
+get_last_online_info() {
+    LAST_ONLINE_LABEL="❓ No connection history"
+    LAST_ONLINE_AGO=""
+
+    if ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then return; fi
+
+    local now; now=$(date +%s)
+    local log_content
+    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null)
+
+    local last_connected_line
+    last_connected_line=$(echo "$log_content" | grep '"connect":"connected"' | tail -1)
+    [[ -z "$last_connected_line" ]] && { LAST_ONLINE_LABEL="❓ Never connected in recent log"; return; }
+
+    local last_ts_str
+    last_ts_str=$(echo "$last_connected_line" | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' | tr -d '[')
+    local last_epoch=0
+    [[ -n "$last_ts_str" ]] && last_epoch=$(date -d "$last_ts_str" +%s 2>/dev/null || echo 0)
+    [[ "$last_epoch" -eq 0 ]] && { LAST_ONLINE_LABEL="❓ Could not parse timestamp"; return; }
+
+    local elapsed=$(( now - last_epoch ))
+    local ago_str; ago_str=$(format_time_ago "$elapsed")
+
+    if [[ "$CONNECT_STATUS" == "connected" ]]; then
+        local first_conn_ts
+        first_conn_ts=$(echo "$log_content" | grep '"connect":"connected"' | head -1 \
+            | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' | tr -d '[')
+        local sess_epoch=0
+        [[ -n "$first_conn_ts" ]] && sess_epoch=$(date -d "$first_conn_ts" +%s 2>/dev/null || echo 0)
+        if [[ "$sess_epoch" -gt 0 ]]; then
+            local sess_ago; sess_ago=$(format_time_ago $(( now - sess_epoch )))
+            LAST_ONLINE_LABEL="🟢 Online since"
+            LAST_ONLINE_AGO="$sess_ago"
+        else
+            LAST_ONLINE_LABEL="🟢 Currently online"
+            LAST_ONLINE_AGO="$ago_str"
+        fi
     else
-        echo "0"
+        LAST_ONLINE_LABEL="🔴 Last online"
+        LAST_ONLINE_AGO="$ago_str"
     fi
 }
+
+# ── Process helpers ─────────────────────────────────────────────
 
 is_aro_running() {
-    pgrep -x "ARO" >/dev/null 2>&1
+    pgrep -u "$EFFECTIVE_USER" -x "ARO" >/dev/null 2>&1
 }
 
 get_aro_pid() {
-    pgrep -x "ARO" | head -n1
+    pgrep -u "$EFFECTIVE_USER" -x "ARO" | head -n1
 }
 
 is_log_fresh() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
-    
-    if [[ -z "$LATEST_LOG_FILE" ]] || [[ ! -f "$LATEST_LOG_FILE" ]]; then
-        return 1
-    fi
-    
+    [[ -z "$LATEST_LOG_FILE" ]] && return 1
+    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 1
     local log_age
-    log_age=$(( $(date +%s) - $(stat -c %Y "$LATEST_LOG_FILE" 2>/dev/null || echo 0) ))
-    local stale_threshold=$((LOG_STALE_MINUTES * 60))
-    
-    [[ $log_age -lt $stale_threshold ]]
+    log_age=$(( $(date +%s) - $(run_as_aro_user stat -c %Y "$LATEST_LOG_FILE" 2>/dev/null || echo 0) ))
+    [[ $log_age -lt $((LOG_STALE_MINUTES * 60)) ]]
 }
 
-check_disconnect_alert() {
-    LATEST_LOG_FILE=$(get_latest_aro_log)
-    
-    if [[ -z "$LATEST_LOG_FILE" ]] || [[ ! -f "$LATEST_LOG_FILE" ]]; then
-        return 1
+get_disconnect_duration() {
+    [[ -z "$LATEST_LOG_FILE" ]] && { echo "0"; return; }
+    local last_line
+    last_line=$(run_as_aro_user tail -n 100 "$LATEST_LOG_FILE" 2>/dev/null \
+        | grep -E '"connect":"(connected|disconnected)"' | tail -1)
+    if echo "$last_line" | grep -q '"connect":"disconnected"'; then
+        local ts_str; ts_str=$(echo "$last_line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}')
+        if [[ -n "$ts_str" ]]; then
+            local ep; ep=$(date -d "$ts_str" +%s 2>/dev/null || echo 0)
+            [[ "$ep" -gt 0 ]] && echo $(( ($(date +%s) - ep) / 60 )) && return
+        fi
     fi
-    
-    local last_disconnect
-    last_disconnect=$(grep -i "disconnect" "$LATEST_LOG_FILE" 2>/dev/null | tail -n1)
-    
-    if [[ -z "$last_disconnect" ]]; then
-        return 1
-    fi
-    
-    local disconnect_time
-    disconnect_time=$(echo "$last_disconnect" | grep -oP '^\[\K[0-9-]+ [0-9:]+' || echo "")
-    
-    if [[ -z "$disconnect_time" ]]; then
-        return 1
-    fi
-    
-    local disconnect_epoch
-    disconnect_epoch=$(date -d "$disconnect_time" +%s 2>/dev/null || echo 0)
-    
-    local now_epoch
-    now_epoch=$(date +%s)
-    
-    local minutes_since=$(( (now_epoch - disconnect_epoch) / 60 ))
-    
-    [[ $minutes_since -lt $DISCONNECT_ALERT_MINUTES ]]
+    echo "0"
 }
 
 kill_aro() {
     watchdog_log "Killing ARO process..."
-    pkill -9 ARO 2>/dev/null || true
+    pkill -u "$EFFECTIVE_USER" -x ARO 2>/dev/null || true
     sleep 2
+    pkill -9 -u "$EFFECTIVE_USER" -x ARO 2>/dev/null || true
+    sleep 1
 }
 
 launch_aro() {
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
-    
-    # Use PTY allocation for GUI app via su
     local launch_cmd="DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
-    
-    if command -v script >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
+        sudo -u "$EFFECTIVE_USER" \
+            env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" LIBGL_ALWAYS_SOFTWARE="1" \
+            "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
+    elif command -v script >/dev/null 2>&1; then
         su - "$EFFECTIVE_USER" -c "script -q -c '$launch_cmd' /dev/null" >/dev/null 2>&1 &
     else
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
-    
-    local launch_pid=$!
-    watchdog_log "ARO launch initiated (wrapper PID: $launch_pid)"
+    watchdog_log "ARO launch initiated (PID: $!)"
 }
+
+# ── Telegram notification templates ────────────────────────────
 
 send_notify_restart_success() {
     local retry_count=$1
-    
+    LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
-    
-    local msg="✅ <b>ARO Restarted Successfully</b>
+    get_last_online_info
 
-🖥 <b>Host:</b> $HOSTNAME
-🆔 <b>Node ID:</b> $NODE_ID
-📦 <b>Version:</b> $NODE_VERSION
-🔄 <b>Retry:</b> $retry_count/$MAX_RETRIES
-🕐 <b>Time:</b> $(date '+%Y-%m-%d %H:%M:%S')"
-    
+    local f_today; f_today=$(format_number "$REWARD_TODAY")
+    local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
+    local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
+
+    local msg="✅ <b>[ARO RESTARTED] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+👤 User: ${EFFECTIVE_USER}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🌐 IP: ${PUBLIC_IP}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🔄 Retry: ${retry_count}/${MAX_RETRIES}
+──────────────────────
+💰 Reward today:     ${f_today} pts
+💰 Reward yesterday: ${f_yest} pts
+📶 Uptime: ${f_up}%
+${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
     send_telegram "$msg"
 }
 
 send_notify_max_retries() {
+    LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
-    
-    local msg="🚨 <b>ARO MAX RETRIES REACHED</b>
 
-🖥 <b>Host:</b> $HOSTNAME
-🆔 <b>Node ID:</b> $NODE_ID
-⚠️ <b>Status:</b> Failed to restart after $MAX_RETRIES attempts
-🕐 <b>Time:</b> $(date '+%Y-%m-%d %H:%M:%S')
+    local msg="🚨 <b>[ARO MAX RETRIES] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+⚠️ Failed after ${MAX_RETRIES} attempts
+🛑 Watchdog stopped retrying
+👉 Manual intervention required!
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
-<i>Manual intervention required!</i>"
-    
     send_telegram "$msg"
 }
 
 send_notify_proxy_down() {
-    local msg="🚨 <b>PROXY SERVICE DOWN</b>
-
-🖥 <b>Host:</b> $HOSTNAME
-🔌 <b>Proxy:</b> $PROXY_HOST:$PROXY_PORT
-⚠️ <b>Status:</b> Redsocks service not running
-🛡️ <b>Action:</b> ARO launch blocked (kill-switch active)
-🕐 <b>Time:</b> $(date '+%Y-%m-%d %H:%M:%S')
+    local msg="🚨 <b>[PROXY DOWN] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+⚠️ Redsocks service not running
+🛡️ ARO launch blocked (kill-switch active)
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
 
 <i>Attempting auto-recovery...</i>"
-    
+
     send_telegram "$msg"
 }
 
 send_notify_proxy_recovered() {
-    local msg="✅ <b>PROXY SERVICE RECOVERED</b>
+    local msg="✅ <b>[PROXY RECOVERED] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+✓ Redsocks service restarted successfully
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
-🖥 <b>Host:</b> $HOSTNAME
-🔌 <b>Proxy:</b> $PROXY_HOST:$PROXY_PORT
-✓ <b>Status:</b> Redsocks service restarted successfully
-🕐 <b>Time:</b> $(date '+%Y-%m-%d %H:%M:%S')"
-    
     send_telegram "$msg"
 }
 
 send_daily_report() {
+    LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
-    
-    local daily_reward
-    daily_reward=$(get_daily_reward)
-    
-    local uptime_hours
-    if is_aro_running; then
-        local aro_pid
-        aro_pid=$(get_aro_pid)
-        local start_time
-        start_time=$(ps -p "$aro_pid" -o lstart= 2>/dev/null || echo "Unknown")
-        uptime_hours="Running since $start_time"
-    else
-        uptime_hours="Not running"
-    fi
-    
-    local msg="📊 <b>Daily ARO Report</b>
+    get_last_online_info
 
-🖥 <b>Host:</b> $HOSTNAME
-🆔 <b>Node ID:</b> $NODE_ID
-📦 <b>Version:</b> $NODE_VERSION
-💰 <b>Today's Reward:</b> $daily_reward
-⏱ <b>Uptime:</b> $uptime_hours
-🔌 <b>Proxy:</b> $PROXY_HOST:$PROXY_PORT (Active)
-📅 <b>Date:</b> $(date '+%Y-%m-%d')
-🕐 <b>Time:</b> $(date '+%H:%M:%S')"
-    
+    local delta; delta=$(awk "BEGIN {print $REWARD_TODAY - $REWARD_YESTERDAY}" 2>/dev/null || echo "0")
+    local cmp;   cmp=$(awk "BEGIN {if ($delta>0) print 1; else if ($delta<0) print -1; else print 0}" 2>/dev/null || echo "0")
+    local trend="➡️ No change"
+    [[ "$cmp" -eq 1 ]]  && trend="📈 +$(format_number "$delta")"
+    [[ "$cmp" -eq -1 ]] && trend="📉 $(format_number "$delta")"
+
+    local f_today; f_today=$(format_number "$REWARD_TODAY")
+    local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
+    local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
+
+    local msg="📊 <b>[ARO DAILY REPORT] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🌐 IP: ${PUBLIC_IP}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+─────── Reward ───────
+💰 Today:     ${f_today} pts
+💰 Yesterday: ${f_yest} pts
+${trend}
+📶 Uptime: ${f_up}%
+🟢 Status: ${CONNECT_STATUS}
+${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+📅 Date: $(date '+%Y-%m-%d %H:%M:%S')"
+
     send_telegram "$msg"
 }
 
 send_notify_setup_success() {
     local mode="$1"
-    
+    LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
-    
-    local msg="🚀 <b>ARO Manager Setup Complete</b>
+    get_last_online_info
 
-🖥 <b>Host:</b> $HOSTNAME
-🆔 <b>Node ID:</b> $NODE_ID
-📦 <b>Version:</b> $NODE_VERSION
-🔌 <b>Proxy:</b> $PROXY_HOST:$PROXY_PORT
-🤖 <b>Watchdog:</b> $mode mode
-🕐 <b>Time:</b> $(date '+%Y-%m-%d %H:%M:%S')
+    local f_today; f_today=$(format_number "$REWARD_TODAY")
+    local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
+    local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
 
-✅ System is now monitoring ARO node with proxy protection."
-    
+    local msg="🚀 <b>[ARO MANAGER INSTALLED] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+👤 ARO User: ${EFFECTIVE_USER}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🌐 IP: ${PUBLIC_IP}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🤖 Watchdog: ${mode} mode
+──────────────────────
+💰 Reward today:     ${f_today} pts
+💰 Reward yesterday: ${f_yest} pts
+📶 Uptime: ${f_up}%
+🔗 Status: ${CONNECT_STATUS}
+${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+──────────────────────
+✅ Watchdog is active and monitoring your node.
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
     send_telegram "$msg"
 }
 
@@ -1646,8 +1764,9 @@ USAGE:
 MAIN COMMANDS:
   full-install <proxy> [--token TOKEN] [--chatid ID]
                       Complete setup: proxy + watchdog + kill-switch
-                      
+
   status              Show complete status (proxy + watchdog + ARO)
+  report              Send daily report to Telegram immediately
   uninstall           Remove everything
 
 PROXY COMMANDS:
@@ -1800,11 +1919,29 @@ main() {
             watchdog_loop
             ;;
             
+        report)
+            # Send daily report to Telegram on demand
+            if [[ ! -f "$PROXY_CONF_FILE" ]]; then
+                log_error "ARO Manager not installed. Run: $SCRIPT_NAME full-install <proxy>"
+                exit 1
+            fi
+            load_configs
+            detect_crd_user
+            if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
+                log_error "Telegram not configured. Check $WATCHDOG_CONF_FILE"
+                exit 1
+            fi
+            log_info "Sending report to Telegram..."
+            send_daily_report
+            log_success "Report sent."
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
         uninstall)
             do_uninstall
             SHOW_FOOTER_ON_EXIT=1
             ;;
-            
+
         -h|--help|help)
             show_usage
             ;;
