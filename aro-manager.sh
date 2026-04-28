@@ -1040,6 +1040,113 @@ EOF
 }
 
 # ───────────────────────────────────────────────────────────────
+# ARO APP INSTALLATION FUNCTIONS
+# ───────────────────────────────────────────────────────────────
+
+ARO_DEB_URL="https://download.aro.network/files/packages/linux/ARO_Desktop_latest_debian.deb"
+ARO_DEB_TMP="/tmp/ARO_Desktop_latest_debian.deb"
+
+get_real_ip() {
+    # Run as root → bypasses CRD-user iptables rules → returns actual server IP
+    local ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        ip=$(curl -s --max-time 10 "https://$endpoint" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    echo ""
+}
+
+verify_proxy_ip() {
+    # Run as CRD user → goes through redsocks → must differ from real IP
+    local real_ip="$1"
+
+    log_info "Checking IP as user '$CRD_USER' (through proxy)..."
+    echo ""
+
+    local proxy_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        proxy_ip=$(sudo -u "$CRD_USER" timeout 20 curl -s --max-time 15 \
+            "https://$endpoint" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$proxy_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            break
+        fi
+        proxy_ip=""
+    done
+
+    echo "  Real IP  (root): ${real_ip:-UNKNOWN}"
+    echo "  System IP (CRD): ${proxy_ip:-FAILED TO FETCH}"
+    echo ""
+
+    if [[ -z "$proxy_ip" ]]; then
+        log_error "Cannot fetch IP as user '$CRD_USER'."
+        log_error "Proxy/kill-switch may be misconfigured. ARO installation BLOCKED."
+        echo ""
+        echo "Troubleshoot:"
+        echo "  sudo bash $SCRIPT_NAME proxy test"
+        echo ""
+        exit 1
+    fi
+
+    if [[ "$proxy_ip" == "$real_ip" ]]; then
+        log_error "IP LEAK DETECTED! System IP ($proxy_ip) is the same as real IP."
+        log_error "Proxy is NOT routing traffic correctly. ARO installation BLOCKED."
+        echo ""
+        echo "Troubleshoot:"
+        echo "  sudo bash $SCRIPT_NAME proxy test"
+        echo "  journalctl -u redsocks-aro -n 50"
+        echo ""
+        exit 1
+    fi
+
+    log_success "IP check PASSED → Real: $real_ip | Proxy: $proxy_ip (different ✓)"
+}
+
+install_aro_app() {
+    log_info "Checking ARO Desktop installation..."
+
+    if [[ -x "$ARO_BINARY" ]]; then
+        log_info "ARO is already installed at $ARO_BINARY — skipping download."
+        return 0
+    fi
+
+    log_info "ARO not found. Downloading from:"
+    echo "  $ARO_DEB_URL"
+    echo ""
+
+    if ! curl -L --progress-bar --max-time 180 -o "$ARO_DEB_TMP" "$ARO_DEB_URL"; then
+        log_error "Download failed. Check network connectivity."
+        rm -f "$ARO_DEB_TMP"
+        exit 1
+    fi
+
+    if [[ ! -s "$ARO_DEB_TMP" ]]; then
+        log_error "Downloaded file is empty."
+        rm -f "$ARO_DEB_TMP"
+        exit 1
+    fi
+
+    log_info "Installing ARO Desktop (.deb)..."
+    echo ""
+
+    if ! dpkg -i "$ARO_DEB_TMP" 2>&1; then
+        log_warn "dpkg reported issues — attempting to fix dependencies..."
+        apt-get install -f -y -qq >/dev/null 2>&1
+    fi
+
+    rm -f "$ARO_DEB_TMP"
+
+    if [[ ! -x "$ARO_BINARY" ]]; then
+        log_error "ARO installation failed — binary not found at $ARO_BINARY"
+        exit 1
+    fi
+
+    log_success "ARO Desktop installed at $ARO_BINARY"
+}
+
+# ───────────────────────────────────────────────────────────────
 # COMMAND: FULL-INSTALL
 # ───────────────────────────────────────────────────────────────
 
@@ -1086,9 +1193,19 @@ do_full_install() {
         exit 0
     fi
     
+    # Capture real IP BEFORE proxy is applied (root bypasses CRD-user rules)
+    log_info "Detecting real IP before proxy setup..."
+    local REAL_IP
+    REAL_IP=$(get_real_ip)
+    if [[ -z "$REAL_IP" ]]; then
+        log_warn "Could not detect real IP — IP leak check will still run after proxy setup."
+    else
+        log_info "Real IP detected: $REAL_IP"
+    fi
+
     echo ""
     log_info "=== PHASE 1: PROXY SETUP ==="
-    
+
     install_packages
     create_config_directory
     save_proxy_config
@@ -1099,17 +1216,30 @@ do_full_install() {
     persist_iptables_rules
     create_wrapper_script
     start_redsocks_service
-    
+
     echo ""
-    log_info "=== PHASE 2: WATCHDOG SETUP ==="
-    
+    log_info "=== PHASE 2: IP VERIFICATION (ANTI-LEAK CHECK) ==="
+    echo ""
+    echo "Waiting 5s for iptables rules to stabilise..."
+    sleep 5
+
+    verify_proxy_ip "$REAL_IP"
+
+    echo ""
+    log_info "=== PHASE 3: ARO INSTALLATION ==="
+
+    install_aro_app
+
+    echo ""
+    log_info "=== PHASE 4: WATCHDOG SETUP ==="
+
     create_watchdog_service
-    
+
     systemctl enable aro-watchdog >/dev/null 2>&1
     systemctl start aro-watchdog
-    
+
     sleep 3
-    
+
     if systemctl is-active --quiet aro-watchdog; then
         log_success "Watchdog service started"
     else
@@ -1117,10 +1247,10 @@ do_full_install() {
         echo "Check: journalctl -u aro-watchdog -n 50"
         exit 1
     fi
-    
+
     echo ""
-    log_info "=== PHASE 3: VERIFICATION ==="
-    
+    log_info "=== PHASE 5: VERIFICATION ==="
+
     sleep 5
     
     echo ""
