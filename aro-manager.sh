@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v2.3.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v2.4.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="2.3.0"
+SCRIPT_VERSION="2.4.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -36,7 +36,7 @@ SYSTEMD_WATCHDOG_SERVICE="/etc/systemd/system/aro-watchdog.service"
 # Log files
 MAIN_LOG="$SCRIPT_DIR/aro-manager.log"
 WATCHDOG_LOG="$SCRIPT_DIR/aro-watchdog.log"
-WRAPPER_LOG="/var/log/aro-proxy-wrapper.log"
+WRAPPER_LOG="/tmp/aro-wrapper.log"
 
 # iptables
 IPTABLES_RULES_FILE="/etc/iptables/rules.v4"
@@ -114,7 +114,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v2.3.0         ║
+║         ARO Manager - Complete Node Management v2.4.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -211,10 +211,15 @@ detect_vnc_user() {
         exit 1
     fi
 
-    # Auto-detect display number from the VNC process command line
+    # Lấy full command line của VNC process (ps -eo args = chỉ cột COMMAND, không có TIME)
+    local vnc_cmd=""
+    vnc_cmd=$(ps -eo args 2>/dev/null \
+        | { grep -E '^/usr/(bin/)?X(tigervnc|vnc|org)' 2>/dev/null || true; } \
+        | head -n1 || true)
+
+    # Extract display number: token dạng ":N" đứng sau tên binary (có khoảng trắng bao quanh)
     local vnc_display=""
-    vnc_display=$({ ps aux | grep -E '[X](tigervnc|vnc)' 2>/dev/null || true; } \
-        | grep -oP ':\d+' | head -n1 || true)
+    vnc_display=$(echo "$vnc_cmd" | grep -oP '(?<=\s):\d+(?=\s|$)' | head -n1 || true)
     DISPLAY_NUM="${vnc_display:-:1}"
 
     CRD_USER="$user"
@@ -223,9 +228,11 @@ detect_vnc_user() {
     ARO_LOG_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork/logs"
     ARO_DATA_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork"
 
-    # TigerVNC XAUTHORITY: ~/.vnc/<hostname>:<display_num>.xauth
-    local display_num_only="${DISPLAY_NUM#:}"
-    XAUTHORITY_PATH="$EFFECTIVE_HOME/.vnc/$(hostname):${display_num_only}.xauth"
+    # Extract XAUTHORITY từ flag -auth của process Xtigervnc
+    XAUTHORITY_PATH=$(echo "$vnc_cmd" | grep -oP '(?<=-auth )\S+' | head -n1 || true)
+    # Fallback: ~/.Xauthority (TigerVNC default, cũng là path phổ biến nhất)
+    [[ -z "$XAUTHORITY_PATH" ]] || [[ ! -f "$XAUTHORITY_PATH" ]] && \
+        XAUTHORITY_PATH="$EFFECTIVE_HOME/.Xauthority"
 
     export DISPLAY="$DISPLAY_NUM"
     export XAUTHORITY="$XAUTHORITY_PATH"
@@ -621,7 +628,7 @@ create_wrapper_script() {
 # This wrapper ensures ARO only runs when proxy is healthy
 
 REAL_ARO="/usr/bin/ARO"
-LOG="/var/log/aro-proxy-wrapper.log"
+LOG="/tmp/aro-wrapper.log"
 REDSOCKS_PORT=12345
 
 log_msg() {
