@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.1.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.2.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.1.0"
+SCRIPT_VERSION="3.2.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -124,11 +124,11 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.1.0         ║
+║         ARO Manager - Complete Node Management v3.2.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
-║  X/Twitter: https://x.com/tuangg                              ║
+║  X/Twitter: https://x.com/nauthnael                           ║
 ╚═══════════════════════════════════════════════════════════════╝
 EOF
 }
@@ -136,8 +136,8 @@ EOF
 show_footer() {
     cat << 'EOF'
 ─────────────────────────────────────────────────────────────
- Thanks for using ARO Manager! Follow @tuangg on X/Twitter
- for updates, tips and new scripts: https://x.com/tuangg
+ Thanks for using ARO Manager! Follow @nauthnael on X/Twitter
+ for updates, tips and new scripts: https://x.com/nauthnael
 ─────────────────────────────────────────────────────────────
 EOF
 }
@@ -2527,6 +2527,13 @@ MAIN COMMANDS:
   full-install <proxy> [--token TOKEN] [--chatid ID]
                       Cài proxy + ARO + watchdog (VPS đã có sẵn XFCE/VNC)
 
+  setup vps [--ssh-key KEY]
+                      Cài VPS cơ bản: user, swap, SSH, XFCE, firewall
+  setup vnc [--vnc-pass PASS]
+                      Cài TigerVNC (XFCE đã có sẵn)
+  setup all [--ssh-key KEY] [--vnc-pass PASS]
+                      setup vps + setup vnc (chuẩn bị máy mẫu để clone)
+
   status              Show complete status (proxy + watchdog + ARO)
   report              Send daily report to Telegram immediately
   uninstall           Remove everything
@@ -2562,6 +2569,14 @@ EXAMPLES:
 
   # Re-enable
   sudo bash $SCRIPT_NAME proxy enable
+
+  # Chuẩn bị máy mẫu để clone nhiều LXC
+  sudo bash $SCRIPT_NAME setup all \
+    --ssh-key "ssh-rsa AAAA..." \
+    --vnc-pass "mypass123"
+
+  # Chỉ cài VNC (VPS đã có XFCE)
+  sudo bash $SCRIPT_NAME setup vnc --vnc-pass "mypass123"
 
 LOGS:
   Main log: $MAIN_LOG
@@ -2688,6 +2703,96 @@ main() {
             SHOW_FOOTER_ON_EXIT=1
             ;;
             
+        setup)
+            local subcmd="${1:-}"
+            shift || true
+
+            # Parse arguments dùng chung cho tất cả setup subcommands
+            local _ssh_key="" _vnc_pass=""
+            local _tmp_args=("$@")
+            local i=0
+            while [[ $i -lt ${#_tmp_args[@]} ]]; do
+                case "${_tmp_args[$i]}" in
+                    --ssh-key)
+                        i=$(( i + 1 ))
+                        _ssh_key="${_tmp_args[$i]:-}"
+                        ;;
+                    --vnc-pass)
+                        i=$(( i + 1 ))
+                        _vnc_pass="${_tmp_args[$i]:-}"
+                        ;;
+                esac
+                i=$(( i + 1 ))
+            done
+
+            case "$subcmd" in
+                vps)
+                    require_root
+                    check_os
+                    UBUNTU_SSH_KEY="$_ssh_key"
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        read -p "Nhập SSH public key cho user ubuntu: " -r UBUNTU_SSH_KEY
+                    fi
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        log_error "SSH key là bắt buộc"; exit 1
+                    fi
+                    log_info "Chạy Phase 0: VPS Preparation..."
+                    deploy_phase0_vps
+                    log_success "setup vps hoàn tất."
+                    ;;
+
+                vnc)
+                    require_root
+                    VNC_PASS="$_vnc_pass"
+                    if [[ -z "$VNC_PASS" ]]; then
+                        read -s -p "Nhập VNC password (tối thiểu 6 ký tự): " -r VNC_PASS
+                        echo ""
+                    fi
+                    if [[ ${#VNC_PASS} -lt 6 ]]; then
+                        log_error "VNC password tối thiểu 6 ký tự"; exit 1
+                    fi
+                    log_info "Chạy Phase 1: TigerVNC Setup..."
+                    deploy_phase1_vnc
+                    log_success "setup vnc hoàn tất."
+                    ;;
+
+                all)
+                    require_root
+                    check_os
+                    UBUNTU_SSH_KEY="$_ssh_key"
+                    VNC_PASS="$_vnc_pass"
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        read -p "Nhập SSH public key cho user ubuntu: " -r UBUNTU_SSH_KEY
+                    fi
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        log_error "SSH key là bắt buộc"; exit 1
+                    fi
+                    if [[ -z "$VNC_PASS" ]]; then
+                        read -s -p "Nhập VNC password (tối thiểu 6 ký tự): " -r VNC_PASS
+                        echo ""
+                    fi
+                    if [[ ${#VNC_PASS} -lt 6 ]]; then
+                        log_error "VNC password tối thiểu 6 ký tự"; exit 1
+                    fi
+                    log_info "Chạy Phase 0: VPS Preparation..."
+                    deploy_phase0_vps
+                    log_info "Chạy Phase 1: TigerVNC Setup..."
+                    deploy_phase1_vnc
+                    log_success "setup all hoàn tất. Máy sẵn sàng để clone."
+                    ;;
+
+                *)
+                    echo "Usage: $SCRIPT_NAME setup {vps|vnc|all} [options]"
+                    echo ""
+                    echo "  setup vps [--ssh-key KEY]"
+                    echo "  setup vnc [--vnc-pass PASS]"
+                    echo "  setup all [--ssh-key KEY] [--vnc-pass PASS]"
+                    exit 1
+                    ;;
+            esac
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
         watchdog)
             local subcmd="${1:-}"
             case "$subcmd" in
