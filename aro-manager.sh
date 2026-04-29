@@ -231,8 +231,9 @@ detect_vnc_user() {
     # Extract XAUTHORITY từ flag -auth của process Xtigervnc
     XAUTHORITY_PATH=$(echo "$vnc_cmd" | grep -oP '(?<=-auth )\S+' | head -n1 || true)
     # Fallback: ~/.Xauthority (TigerVNC default, cũng là path phổ biến nhất)
-    [[ -z "$XAUTHORITY_PATH" ]] || [[ ! -f "$XAUTHORITY_PATH" ]] && \
+    if [[ -z "$XAUTHORITY_PATH" ]] || [[ ! -f "$XAUTHORITY_PATH" ]]; then
         XAUTHORITY_PATH="$EFFECTIVE_HOME/.Xauthority"
+    fi
 
     export DISPLAY="$DISPLAY_NUM"
     export XAUTHORITY="$XAUTHORITY_PATH"
