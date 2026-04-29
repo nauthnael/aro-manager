@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.0.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.1.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.0.0"
+SCRIPT_VERSION="3.1.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -124,7 +124,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.0.0         ║
+║         ARO Manager - Complete Node Management v3.1.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -1396,6 +1396,19 @@ get_real_ip() {
     echo ""
 }
 
+get_local_ip() {
+    # Lấy IP nội bộ của interface chính (non-loopback, IPv4)
+    local ip=""
+    # Cách 1: dùng routing table để tìm src IP của default route
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null \
+        | grep -oP '(?<=src )\S+' | head -1 || true)
+    # Cách 2: fallback — lấy IP đầu tiên không phải loopback
+    if [[ -z "$ip" ]]; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    fi
+    echo "${ip:-N/A}"
+}
+
 verify_proxy_ip() {
     # Run as CRD user → goes through redsocks → must differ from real IP
     local real_ip="$1"
@@ -1962,7 +1975,14 @@ deploy_phase6_finish() {
 
     apt-get autoremove -y -qq 2>/dev/null || true
 
-    local machine_ip; machine_ip=$(get_real_ip)
+    local machine_ip=""
+    if [[ "$ENV_TYPE" == "lxc_vnc" ]]; then
+        machine_ip=$(get_local_ip)
+        log_info "LXC environment — dùng IP nội bộ: $machine_ip"
+    else
+        machine_ip=$(get_real_ip)
+        log_info "IP public: $machine_ip"
+    fi
 
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════╗"
