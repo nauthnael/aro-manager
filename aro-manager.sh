@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v2.2.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v2.3.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="2.2.0"
+SCRIPT_VERSION="2.3.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -79,8 +79,11 @@ EFFECTIVE_HOME=""
 ARO_LOG_DIR=""
 ARO_DATA_DIR=""
 HOSTNAME=$(hostname)
-export DISPLAY=":20"
-export XAUTHORITY=""
+
+# Environment detection
+ENV_TYPE=""           # "crd" | "lxc_vnc" | "unknown" — set by detect_environment()
+DISPLAY_NUM=":20"     # overridden by detect_desktop_user()
+XAUTHORITY_PATH=""    # overridden by detect_desktop_user()
 export LIBGL_ALWAYS_SOFTWARE="1"
 
 # ───────────────────────────────────────────────────────────────
@@ -111,7 +114,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v2.2.0         ║
+║         ARO Manager - Complete Node Management v2.3.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -164,11 +167,79 @@ check_os() {
     fi
 }
 
+detect_environment() {
+    # Detect LXC container
+    local virt; virt=$(systemd-detect-virt --container 2>/dev/null || true)
+    local is_lxc=0
+    [[ "$virt" == "lxc" ]] && is_lxc=1
+    # Secondary check: /proc/1/environ (works even without systemd-detect-virt)
+    if [[ $is_lxc -eq 0 ]]; then
+        { strings /proc/1/environ 2>/dev/null | grep -q '^container=lxc$' && is_lxc=1; } || true
+    fi
+
+    # Detect TigerVNC (Xtigervnc or Xvnc process)
+    local is_vnc=0
+    { pgrep -x Xtigervnc >/dev/null 2>&1 && is_vnc=1; } || true
+    { pgrep -x Xvnc      >/dev/null 2>&1 && is_vnc=1; } || true
+
+    if [[ $is_lxc -eq 1 ]] && [[ $is_vnc -eq 1 ]]; then
+        ENV_TYPE="lxc_vnc"
+    else
+        ENV_TYPE="crd"   # Chrome Remote Desktop (or bare-metal fallback)
+    fi
+
+    log_info "Environment: $ENV_TYPE (LXC=${is_lxc}, VNC=${is_vnc})"
+}
+
+detect_vnc_user() {
+    # Find owner of the TigerVNC/Xvnc process
+    local user=""
+    user=$({ ps aux | grep -E '[X](tigervnc|vnc)' 2>/dev/null || true; } \
+        | awk '{print $1}' | head -n1)
+
+    if [[ -z "$user" ]]; then
+        # Fallback: check common non-root users
+        for u in ubuntu adam; do
+            if id "$u" &>/dev/null; then user="$u"; break; fi
+        done
+    fi
+
+    if [[ -z "$user" ]]; then
+        log_error "Cannot detect VNC user. TigerVNC/Xvnc not running?"
+        echo ""
+        echo "Please start TigerVNC or check that the VNC server is running."
+        exit 1
+    fi
+
+    # Auto-detect display number from the VNC process command line
+    local vnc_display=""
+    vnc_display=$({ ps aux | grep -E '[X](tigervnc|vnc)' 2>/dev/null || true; } \
+        | grep -oP ':\d+' | head -n1 || true)
+    DISPLAY_NUM="${vnc_display:-:1}"
+
+    CRD_USER="$user"
+    EFFECTIVE_USER="$user"
+    EFFECTIVE_HOME=$(eval echo "~$user")
+    ARO_LOG_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork/logs"
+    ARO_DATA_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork"
+
+    # TigerVNC XAUTHORITY: ~/.vnc/<hostname>:<display_num>.xauth
+    local display_num_only="${DISPLAY_NUM#:}"
+    XAUTHORITY_PATH="$EFFECTIVE_HOME/.vnc/$(hostname):${display_num_only}.xauth"
+
+    export DISPLAY="$DISPLAY_NUM"
+    export XAUTHORITY="$XAUTHORITY_PATH"
+
+    log_info "Detected VNC user: $CRD_USER (home: $EFFECTIVE_HOME)"
+    log_info "VNC display: $DISPLAY_NUM | XAUTHORITY: $XAUTHORITY_PATH"
+}
+
 detect_crd_user() {
     # Detect Chrome Remote Desktop user
     local user
-    user=$(ps aux | grep '[c]hrome-remote-desktop' | awk '{print $1}' | head -n1)
-    
+    user=$({ ps aux | grep '[c]hrome-remote-desktop' 2>/dev/null || true; } \
+        | awk '{print $1}' | head -n1)
+
     if [[ -z "$user" ]]; then
         # Fallback: check common users
         for u in ubuntu adam; do
@@ -178,22 +249,41 @@ detect_crd_user() {
             fi
         done
     fi
-    
+
     if [[ -z "$user" ]]; then
         log_error "Cannot detect CRD user. Chrome Remote Desktop not running?"
         echo ""
         echo "Please start Chrome Remote Desktop or specify user manually."
         exit 1
     fi
-    
+
+    DISPLAY_NUM=":20"  # CRD default display
+
     CRD_USER="$user"
     EFFECTIVE_USER="$user"
     EFFECTIVE_HOME=$(eval echo "~$user")
     ARO_LOG_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork/logs"
     ARO_DATA_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork"
-    export XAUTHORITY="$EFFECTIVE_HOME/.Xauthority"
-    
+    XAUTHORITY_PATH="$EFFECTIVE_HOME/.Xauthority"
+
+    export DISPLAY="$DISPLAY_NUM"
+    export XAUTHORITY="$XAUTHORITY_PATH"
+
     log_info "Detected CRD user: $CRD_USER (home: $EFFECTIVE_HOME)"
+}
+
+# detect_desktop_user: auto-dispatches based on ENV_TYPE.
+# Always call detect_environment() first (done inside this function).
+detect_desktop_user() {
+    detect_environment
+    case "$ENV_TYPE" in
+        lxc_vnc)
+            detect_vnc_user
+            ;;
+        *)
+            detect_crd_user
+            ;;
+    esac
 }
 
 parse_proxy_string() {
@@ -333,6 +423,7 @@ PROXY_USER="$PROXY_USER"
 PROXY_PASS="$PROXY_PASS"
 CRD_USER="$CRD_USER"
 REDSOCKS_PORT="$REDSOCKS_PORT"
+ENV_TYPE="$ENV_TYPE"
 EOF
     
     chmod 600 "$PROXY_CONF_FILE"
@@ -818,12 +909,13 @@ kill_aro() {
 
 launch_aro() {
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
+    watchdog_log "  Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
         sudo -u "$EFFECTIVE_USER" \
-            env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" LIBGL_ALWAYS_SOFTWARE="1" \
+            env DISPLAY="$DISPLAY_NUM" XAUTHORITY="$XAUTHORITY_PATH" LIBGL_ALWAYS_SOFTWARE="1" \
             "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
     else
-        local launch_cmd="DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
+        local launch_cmd="DISPLAY=$DISPLAY_NUM XAUTHORITY=$XAUTHORITY_PATH LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
@@ -1040,6 +1132,13 @@ check_real_proxy() {
     return 0
 }
 
+check_disconnect_alert() {
+    # Returns 0 (true) if ARO has been disconnected for >= DISCONNECT_ALERT_MINUTES
+    local duration
+    duration=$(get_disconnect_duration)
+    [[ "$duration" -ge "$DISCONNECT_ALERT_MINUTES" ]]
+}
+
 state_get() {
     local key="$1"
     local default="${2:-}"
@@ -1080,7 +1179,9 @@ watchdog_loop() {
     watchdog_log "=== ARO Manager Watchdog Started ==="
     watchdog_log "Version: $SCRIPT_VERSION"
     watchdog_log "Host: $HOSTNAME"
+    watchdog_log "Env: $ENV_TYPE"
     watchdog_log "User: $EFFECTIVE_USER"
+    watchdog_log "Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
     watchdog_log "Proxy: $PROXY_HOST:$PROXY_PORT"
     watchdog_log "Check interval: ${CHECK_INTERVAL}s"
     
@@ -1384,7 +1485,7 @@ do_full_install() {
     
     # Parse inputs
     parse_proxy_string "$proxy_string"
-    detect_crd_user
+    detect_desktop_user
     
     if [[ -n "$token" ]]; then
         TG_BOT_TOKEN="$token"
@@ -1516,7 +1617,7 @@ do_status() {
     fi
     
     load_configs
-    detect_crd_user
+    detect_desktop_user
     parse_node_info
     get_last_online_info
 
@@ -1527,7 +1628,9 @@ do_status() {
 
     echo "📋 Node Info:"
     echo "  Host:    $HOSTNAME"
+    echo "  Env:     $ENV_TYPE"
     echo "  User:    $CRD_USER"
+    echo "  Display: $DISPLAY_NUM"
     echo "  Serial:  $SERIAL"
     echo "  Email:   $EMAIL"
     echo "  Pub IP:  $PUBLIC_IP"
@@ -1606,7 +1709,7 @@ do_proxy_test() {
     fi
     
     load_configs
-    detect_crd_user
+    detect_desktop_user
     
     log_info "Running IP leak test for user: $CRD_USER"
     echo ""
@@ -1666,7 +1769,7 @@ do_proxy_enable() {
     fi
     
     load_configs
-    detect_crd_user
+    detect_desktop_user
     
     log_info "Enabling proxy..."
     
@@ -2000,7 +2103,7 @@ main() {
         watchdog-loop)
             # Internal command - called by systemd service
             load_configs
-            detect_crd_user
+            detect_desktop_user
             watchdog_loop
             ;;
             
@@ -2011,7 +2114,7 @@ main() {
                 exit 1
             fi
             load_configs
-            detect_crd_user
+            detect_desktop_user
             if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
                 log_error "Telegram not configured. Check $WATCHDOG_CONF_FILE"
                 exit 1
