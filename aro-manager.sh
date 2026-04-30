@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.2.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.3.1
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.3.0"
+SCRIPT_VERSION="3.3.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -131,7 +131,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.2.0         ║
+║         ARO Manager - Complete Node Management v3.3.1         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -2794,6 +2794,106 @@ do_uninstall() {
     echo ""
 }
 
+do_update() {
+    require_root
+    show_banner
+    echo ""
+
+    if [[ ! -f "$PROXY_CONF_FILE" ]]; then
+        log_error "ARO Manager not installed. Run: $SCRIPT_NAME full-install <proxy>"
+        exit 1
+    fi
+
+    load_configs
+    detect_desktop_user
+
+    # ── Path check ──
+    local service_exec=""
+    if [[ -f "$SYSTEMD_WATCHDOG_SERVICE" ]]; then
+        service_exec=$(grep '^ExecStart=' "$SYSTEMD_WATCHDOG_SERVICE" | cut -d'=' -f2- | awk '{print $1}' || true)
+    fi
+
+    local current_script="$SCRIPT_DIR/$SCRIPT_NAME"
+    if [[ -n "$service_exec" ]] && [[ "$service_exec" != "$current_script" ]]; then
+        log_warn "Service is running from a different path: $service_exec"
+        log_warn "Current script path: $current_script"
+        echo ""
+        read -p "Copy this script to the service path? [Y/n] " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            cp "$current_script" "$service_exec"
+            chmod +x "$service_exec"
+            log_info "Script copied to $service_exec"
+        else
+            log_warn "Continuing without copying script..."
+        fi
+    fi
+
+    # ── Stop services ──
+    log_info "Step 1/5: Stopping watchdog..."
+    systemctl stop aro-watchdog 2>/dev/null || true
+    sleep 2
+
+    log_info "Step 2/5: Stopping ARO process..."
+    kill_aro
+    sleep 2
+
+    # ── Rebuild ──
+    log_info "Step 3/5: Rebuilding launch wrapper..."
+    create_wrapper_script
+
+    log_info "Step 4/5: Rebuilding watchdog service..."
+    create_watchdog_service
+    systemctl daemon-reload
+
+    # ── Restart ──
+    log_info "Step 5/5: Starting services..."
+
+    if ! systemctl is-active --quiet redsocks-aro; then
+        systemctl start redsocks-aro
+        sleep 3
+    fi
+
+    systemctl start aro-watchdog
+    sleep 3
+
+    # ── Verify & report ──
+    echo ""
+    echo "Update Verification:"
+    
+    local rs_status; rs_status=$(systemctl is-active redsocks-aro || echo "failed")
+    if [[ "$rs_status" == "active" ]]; then
+        echo "  ✓ Redsocks: Running"
+    else
+        echo "  ✗ Redsocks: $rs_status"
+    fi
+
+    local wd_status; wd_status=$(systemctl is-active aro-watchdog || echo "failed")
+    if [[ "$wd_status" == "active" ]]; then
+        echo "  ✓ Watchdog: Running"
+    else
+        echo "  ✗ Watchdog: $wd_status"
+    fi
+
+    if grep -q "ss -tlnp" "$WRAPPER_SCRIPT" 2>/dev/null; then
+        echo "  ✓ Wrapper: Updated (ss check)"
+    else
+        echo "  ⚠ Wrapper: Still using nc check (check script logic)"
+    fi
+
+    echo "  ✓ Version: $SCRIPT_VERSION @ $current_script"
+    echo ""
+
+    if [[ "$rs_status" == "active" ]] && [[ "$wd_status" == "active" ]]; then
+        log_success "Update complete. Watchdog will restart ARO in a few seconds."
+        echo "Monitor logs: sudo $SCRIPT_NAME watchdog log"
+    else
+        log_error "Update failed. Some services are not running."
+        echo "Debug: journalctl -u aro-watchdog -n 30"
+        exit 1
+    fi
+}
+
 # ───────────────────────────────────────────────────────────────
 # HELP & USAGE
 # ───────────────────────────────────────────────────────────────
@@ -2823,6 +2923,7 @@ MAIN COMMANDS:
                       setup vps + setup vnc (chuẩn bị máy mẫu để clone)
 
   status              Show complete status (proxy + watchdog + ARO)
+  update              Cập nhật script: rebuild wrapper + restart services
   report              Send daily report to Telegram immediately
   uninstall           Remove everything
 
@@ -3126,6 +3227,11 @@ main() {
             log_info "Sending report to Telegram..."
             send_daily_report
             log_success "Report sent."
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        update)
+            do_update
             SHOW_FOOTER_ON_EXIT=1
             ;;
 

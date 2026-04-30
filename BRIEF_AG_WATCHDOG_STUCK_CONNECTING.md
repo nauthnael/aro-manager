@@ -713,3 +713,81 @@ curl --socks5-hostname "${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}"
 ```
 
 Kiểm tra lại `check_real_proxy()` — nếu đang dùng format `USER:PASS@HOST:PORT` trong `--socks5-hostname` thì sửa lại thành `--proxy-user` riêng.
+
+---
+
+## 8. Thêm command `update` — để deploy script mới mà không cần cài lại từ đầu
+
+### Mục đích
+
+Khi có bản script mới, user cần 1 lệnh duy nhất để:
+- Rebuild wrapper (`/usr/local/bin/aro-launch`) — áp dụng mọi fix mới nhất
+- Rebuild watchdog service file — sync với SCRIPT_DIR hiện tại
+- Restart tất cả services theo đúng thứ tự
+- Verify kết quả và báo cáo
+
+### Vị trí thêm code
+
+**1. Thêm hàm `do_update()`** — đặt ngay trước `show_usage()` (section "HELP & USAGE")
+
+**2. Thêm case `update)` vào `main()`** — đặt ngay trước `uninstall)`:
+```
+        update)
+            do_update
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+```
+
+**3. Thêm dòng vào `show_usage()`** trong phần MAIN COMMANDS:
+```
+  update              Cập nhật script: rebuild wrapper + restart services
+```
+Đặt sau dòng `status` và trước dòng `report`.
+
+### Logic của `do_update()`
+
+```
+do_update():
+  1. require_root
+  2. Kiểm tra đã install chưa (PROXY_CONF_FILE tồn tại)
+  3. Load configs + detect_desktop_user
+
+  4. Path check — đọc ExecStart từ $SYSTEMD_WATCHDOG_SERVICE
+     → So sánh với "$SCRIPT_DIR/$SCRIPT_NAME" (script đang chạy)
+     → Nếu khác: hỏi user có muốn copy script mới vào đúng path không
+     → Nếu đồng ý: cp + chmod +x
+
+  5. Stop watchdog service (systemctl stop aro-watchdog)
+     → sleep 2
+
+  6. Kill ARO process (pkill -u "$EFFECTIVE_USER" -x ARO)
+     → Watchdog sẽ tự restart sau khi update xong
+     → sleep 2
+
+  7. Recreate wrapper: gọi create_wrapper_script()
+     → Đây là bước áp dụng fix nc→ss vào /usr/local/bin/aro-launch
+
+  8. Recreate service file: gọi create_watchdog_service()
+     → systemctl daemon-reload
+
+  9. Ensure redsocks running:
+     → if ! systemctl is-active redsocks-aro: systemctl start redsocks-aro + sleep 3
+
+  10. Start watchdog: systemctl start aro-watchdog + sleep 3
+
+  11. Verify và in kết quả:
+      ✓/✗ redsocks-aro active?
+      ✓/✗ aro-watchdog active?
+      ✓/⚠ wrapper dùng ss check? (grep "ss -tlnp" $WRAPPER_SCRIPT)
+      ✓   Script version + path
+
+  12. Nếu all OK: log_success + hướng dẫn theo dõi log
+      Nếu có lỗi: log_error + exit 1
+```
+
+### Checklist bổ sung vào Section 6
+
+- [ ] `sudo ./aro-manager.sh update` chạy thành công không lỗi
+- [ ] Sau update, không còn log `"Redsocks port 12345 not responding"`
+- [ ] Wrapper `/usr/local/bin/aro-launch` chứa `ss -tlnp` (không còn `nc -z`)
+- [ ] Watchdog tự detect ARO không chạy và restart trong vòng 60s sau update
