@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.3.1
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.3.1"
+SCRIPT_VERSION="3.4.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -73,6 +73,7 @@ CONNECTING_WAIT_SECS=300           # chờ ARO reconnect sau restart (5 phút)
 CONNECTING_POLL_INTERVAL=30        # poll interval trong khi chờ
 PROXY_RESTART_TIMEOUT_SECS=60      # timeout chờ proxy restart
 STUCK_THRESHOLD_MINUTES=5          # bao nhiêu phút "disconnected" = stuck
+REDSOCKS_QUEUE_THRESHOLD=500    # recv-Q vượt ngưỡng này = redsocks đang treo
 
 # Telegram
 TG_BOT_TOKEN=""
@@ -131,7 +132,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.3.1         ║
+║         ARO Manager - Complete Node Management v3.4.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -475,6 +476,7 @@ RESET_STABLE_HOURS=$RESET_STABLE_HOURS
 CONNECTING_GRACE_SECS=$CONNECTING_GRACE_SECS
 CONNECTING_WAIT_SECS=$CONNECTING_WAIT_SECS
 STUCK_THRESHOLD_MINUTES=$STUCK_THRESHOLD_MINUTES
+REDSOCKS_QUEUE_THRESHOLD=$REDSOCKS_QUEUE_THRESHOLD
 PROXY_RESTART_TIMEOUT_SECS=$PROXY_RESTART_TIMEOUT_SECS
 
 # === Restart Policy ===
@@ -926,21 +928,28 @@ is_log_fresh() {
     [[ $log_age -lt $((LOG_STALE_MINUTES * 60)) ]]
 }
 
+get_aro_tray_state() {
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+        echo ""
+        return 0
+    fi
+
+    # Grep tìm dòng "linux tray icon synced to state=" cuối cùng
+    local state
+    state=$(run_as_aro_user grep "linux tray icon synced to state=" "$LATEST_LOG_FILE" 2>/dev/null \
+        | tail -1 \
+        | grep -oP "state=\K[A-Za-z]+" 2>/dev/null || true)
+    
+    echo "$state"
+}
+
 # Returns 0 (true) nếu ARO đang connected theo log mới nhất
 # Returns 1 (false) nếu disconnected, hoặc không có entry nào
 is_aro_connected() {
-    LATEST_LOG_FILE=$(get_latest_aro_log)
-    [[ -z "$LATEST_LOG_FILE" ]] && return 1
-    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 1
-
-    local last_status
-    last_status=$(run_as_aro_user grep -oh '"connect":"[^"]*"' "$LATEST_LOG_FILE" 2>/dev/null \
-        | tail -1 \
-        | grep -o '"connect":"[^"]*"' \
-        | sed 's/"connect":"//;s/"//' \
-        || true)
-
-    [[ "$last_status" == "connected" ]]
+    local tray_state
+    tray_state=$(get_aro_tray_state)
+    [[ "$tray_state" == "Online" ]]
 }
 
 get_disconnect_duration() {
@@ -965,28 +974,21 @@ get_disconnect_duration() {
     echo "0"
 }
 
-# Returns số phút kể từ lần cuối ARO log thấy "connected"
-# Nếu chưa bao giờ connected trong log → dùng (now - mtime_log_file) thay thế
+# Returns số phút kể từ lần cuối ARO log thấy tray=Online
+# Nếu chưa bao giờ online trong log → dùng (now - last_restart) thay thế
 get_disconnected_since_minutes() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     [[ -z "$LATEST_LOG_FILE" ]] && echo "0" && return 0
     ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && echo "0" && return 0
 
-    local log_content
-    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null || true)
-
-    # Tìm dòng get_node_stat CUỐI CÙNG có "connected"
-    local last_connected_line
-    last_connected_line=$(echo "$log_content" \
-        | grep 'get_node_stat' \
-        | grep '"connect":"connected"' \
-        | tail -1 || true)
+    local last_online_line
+    last_online_line=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null | tail -1 || true)
 
     local now; now=$(date +%s)
 
-    if [[ -n "$last_connected_line" ]]; then
+    if [[ -n "$last_online_line" ]]; then
         local ts_str
-        ts_str=$(echo "$last_connected_line" \
+        ts_str=$(echo "$last_online_line" \
             | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
         if [[ -n "$ts_str" ]]; then
             local ep; ep=$(date -d "$ts_str" +%s 2>/dev/null || echo 0)
@@ -997,7 +999,6 @@ get_disconnected_since_minutes() {
         fi
     fi
 
-    # Không tìm thấy "connected" → dùng thời điểm last_restart từ state
     local last_restart
     last_restart=$(state_get "last_restart" "0")
     if [[ "$last_restart" -gt 0 ]]; then
@@ -1121,6 +1122,20 @@ send_notify_proxy_recovered() {
     send_telegram "$msg"
 }
 
+send_notify_redsocks_restarted() {
+    local msg="🔄 <b>[REDSOCKS RESTARTED] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+⚠️ Phát hiện: redsocks queue overflow
+✓ Đã tự động restart thành công
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
+
+<i>Watchdog đang chờ ARO reconnect...</i>"
+
+    send_telegram "$msg"
+}
+
 send_notify_aro_reconnected() {
     local context="${1:-unknown}"
     local elapsed_secs="${2:-0}"
@@ -1134,7 +1149,9 @@ send_notify_aro_reconnected() {
     local elapsed_min=$(( elapsed_secs / 60 ))
 
     local cause_label="Proxy OK, ARO restarted"
-    [[ "$context" == "proxy_recovered" ]] && cause_label="Proxy recovered + ARO restarted"
+    [[ "$context" == "proxy_recovered" ]]    && cause_label="Proxy recovered + ARO restarted"
+    [[ "$context" == "redsocks_recovered" ]] && cause_label="Redsocks hung → restarted → ARO reconnected"
+    [[ "$context" == "proxy_ok_aro_restarted" ]] && cause_label="Network OK, ARO app restarted"
 
     local msg="✅ <b>[ARO RECONNECTED] ${HOSTNAME}</b>
 ──────────────────────
@@ -1287,6 +1304,27 @@ check_proxy_health() {
         return 1
     fi
 
+    # Check recv-Q (detect hung service)
+    local recv_q
+    recv_q=$(ss -tlnp 2>/dev/null | grep "127.0.0.1:${REDSOCKS_PORT} " | awk '{print $2}' || echo "0")
+    if [[ "$recv_q" =~ ^[0-9]+$ ]] && [[ "$recv_q" -gt "$REDSOCKS_QUEUE_THRESHOLD" ]]; then
+        watchdog_log "WARNING: Redsocks recv-Q=${recv_q} > threshold=${REDSOCKS_QUEUE_THRESHOLD} — service hung!"
+        
+        # Attempt restart
+        watchdog_log "Restarting hung redsocks..."
+        systemctl restart redsocks-aro 2>/dev/null || true
+        sleep 5
+        
+        if systemctl is-active --quiet redsocks-aro; then
+            watchdog_log "SUCCESS: Redsocks restarted (queue cleared)"
+            send_notify_redsocks_restarted
+            return 0
+        else
+            watchdog_log "ERROR: Redsocks restart failed!"
+            return 1
+        fi
+    fi
+
     return 0
 }
 
@@ -1319,6 +1357,18 @@ check_real_proxy() {
     return 0
 }
 
+# ── Real functional path check ──────────────────────────────────
+# Tests if traffic from ubuntu user actually passes through transparent proxy.
+# Returns 0 if working, 1 if broken.
+check_redsocks_functional() {
+    local test_ip
+    test_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 10 https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ "$test_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
 check_disconnect_alert() {
     # Returns 0 (true) if ARO has been disconnected for >= DISCONNECT_ALERT_MINUTES
     local duration
@@ -1326,12 +1376,12 @@ check_disconnect_alert() {
     [[ "$duration" -ge "$DISCONNECT_ALERT_MINUTES" ]]
 }
 
-# Xử lý khi ARO process đang chạy nhưng không connect được
+# Xử lý khi ARO process đang chạy nhưng không connect được (tray state != Online)
 # Param $1: số phút đã disconnected
 handle_stuck_connecting() {
     local stuck_mins="${1:-0}"
 
-    # ── Grace period: vừa khởi động, chưa đến lúc phán ─────────
+    # ── Grace period check ─────────────────────────────────────
     local last_restart; last_restart=$(state_get "last_restart" "0")
     local now; now=$(date +%s)
     local since_launch=$(( now - last_restart ))
@@ -1342,65 +1392,76 @@ handle_stuck_connecting() {
         return 0
     fi
 
-    watchdog_log "ARO stuck disconnected for ${stuck_mins}m — starting recovery"
+    watchdog_log "ARO stuck NoInternet for ${stuck_mins}m — starting recovery"
 
-    # ── Kiểm tra proxy thực sự ──────────────────────────────────
-    local proxy_ok=false
-    if check_real_proxy 2>/dev/null; then
-        proxy_ok=true
-    fi
-
-    if $proxy_ok; then
-        # ── CASE A: Proxy ok, lỗi ở phía ARO ──────────────────
-        watchdog_log "Proxy OK — restarting ARO (stuck connecting)"
+    # ── Bước 1: Test path thực sự của ARO (ubuntu traffic) ──────
+    if ! check_redsocks_functional; then
+        # Redsocks transparent proxy bị broken (hung hoặc lỗi iptables)
+        watchdog_log "Transparent proxy BROKEN — redsocks issue"
         kill_aro
-        launch_aro
-        state_set "last_restart" "$(date +%s)"
-        _restart_aro_and_wait "proxy_ok"
-    else
-        # ── CASE B: Proxy offline gây ARO stuck ────────────────
-        watchdog_log "Proxy DOWN — killing ARO, attempting proxy restart"
-        kill_aro
-
-        # Restart proxy và poll đến khi live hoặc timeout
+        
+        # Restart redsocks và poll đến khi functional hoặc timeout
         systemctl restart redsocks-aro 2>/dev/null || true
         local proxy_wait_start; proxy_wait_start=$(date +%s)
-        local proxy_recovered=false
-
+        local redsocks_ok=false
+        
         while true; do
             local elapsed=$(( $(date +%s) - proxy_wait_start ))
             if [[ "$elapsed" -ge "$PROXY_RESTART_TIMEOUT_SECS" ]]; then
                 break
             fi
             sleep 5
-            if check_real_proxy 2>/dev/null; then
-                proxy_recovered=true
+            if check_redsocks_functional; then
+                redsocks_ok=true
                 break
             fi
         done
-
-        if $proxy_recovered; then
-            watchdog_log "Proxy recovered — launching ARO"
+        
+        if $redsocks_ok; then
+            watchdog_log "Redsocks recovered — launching ARO"
             send_notify_proxy_recovered "stuck_connecting"
             launch_aro
             state_set "last_restart" "$(date +%s)"
-            _restart_aro_and_wait "proxy_recovered"
+            _wait_for_aro_online "redsocks_recovered"
         else
-            watchdog_log "Proxy restart FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
+            watchdog_log "Redsocks recovery FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
             send_notify_proxy_dead
-            # ARO ở tắt, chờ manual
+            # ARO tắt, chờ can thiệp thủ công
         fi
+        return 0
     fi
+
+    # ── Bước 2: Redsocks functional nhưng ARO vẫn NoInternet ───
+    # Kiểm tra upstream proxy server (SOCKS5 target)
+    watchdog_log "Transparent proxy OK — checking upstream proxy server"
+    
+    if ! check_real_proxy 2>/dev/null; then
+        # Proxy server thực sự offline
+        watchdog_log "Upstream proxy server DOWN — killing ARO to protect IP"
+        kill_aro
+        send_notify_proxy_down "proxy server unreachable"
+        return 0
+    fi
+
+    # ── Bước 3: Mạng OK hết nhưng ARO vẫn stuck ────────────────
+    # Có thể app gặp vấn đề nội bộ
+    watchdog_log "Network path OK but ARO still stuck — restarting ARO app"
+    kill_aro
+    sleep 3
+    launch_aro
+    state_set "last_restart" "$(date +%s)"
+    
+    _wait_for_aro_online "proxy_ok_aro_restarted"
 }
 
-# Helper: chờ ARO connect sau khi đã launch, poll mỗi CONNECTING_POLL_INTERVAL
-# Param $1: context label ("proxy_ok" | "proxy_recovered") dùng cho log
-_restart_aro_and_wait() {
+# Helper: chờ ARO Online (tray state), poll mỗi CONNECTING_POLL_INTERVAL
+# Param $1: context label dùng cho log & notification
+_wait_for_aro_online() {
     local context="${1:-unknown}"
     local wait_start; wait_start=$(date +%s)
     local retry_count; retry_count=$(state_get "retry_count" "0")
 
-    watchdog_log "Waiting up to ${CONNECTING_WAIT_SECS}s for ARO to connect (context: $context)..."
+    watchdog_log "Waiting up to ${CONNECTING_WAIT_SECS}s for ARO tray=Online (context: $context)..."
 
     while true; do
         local elapsed=$(( $(date +%s) - wait_start ))
@@ -1409,20 +1470,23 @@ _restart_aro_and_wait() {
         fi
         sleep "$CONNECTING_POLL_INTERVAL"
 
-        if is_aro_connected; then
-            watchdog_log "ARO reconnected successfully after ${elapsed}s (context: $context)"
+        local tray_state
+        tray_state=$(get_aro_tray_state)
+        watchdog_log "Waiting... tray=${tray_state:-unknown} ${elapsed}s / ${CONNECTING_WAIT_SECS}s"
+
+        if [[ "$tray_state" == "Online" ]]; then
+            watchdog_log "ARO online successfully after ${elapsed}s (context: $context)"
             send_notify_aro_reconnected "$context" "$elapsed"
             state_set "retry_count" "0"
             state_set "stable_since" "$(date +%s)"
             return 0
         fi
-        watchdog_log "Still waiting... ${elapsed}s / ${CONNECTING_WAIT_SECS}s"
     done
 
-    # Hết thời gian, vẫn không connect
+    # Hết thời gian, vẫn không online
     retry_count=$(( retry_count + 1 ))
     state_set "retry_count" "$retry_count"
-    watchdog_log "ARO still not connected after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
+    watchdog_log "ARO still not online after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
 
     if [[ "$retry_count" -le "$MAX_RETRIES" ]]; then
         send_notify_aro_stuck_manual "$retry_count" "$context"
@@ -1509,38 +1573,65 @@ watchdog_loop() {
             LATEST_LOG_FILE=$(get_latest_aro_log)
             
             if is_log_fresh; then
-                # Log đang được ghi đều — check status thực sự
-                if is_aro_connected; then
-                    # ── ARO connected & healthy ──────────────────────
-                    local retry_count
-                    retry_count=$(state_get "retry_count" "0")
+                # Log đang được ghi đều — check tray state thực sự
+                local tray_state
+                tray_state=$(get_aro_tray_state)
+                local now; now=$(date +%s)
 
-                    if [[ $retry_count -gt 0 ]]; then
-                        watchdog_log "ARO healthy after recovery (retry count: $retry_count)"
-                    fi
+                case "$tray_state" in
+                    Online)
+                        # ── ARO connected & healthy ──────────────────────
+                        local retry_count
+                        retry_count=$(state_get "retry_count" "0")
 
-                    local stable_since; stable_since=$(state_get "stable_since")
-                    local stable_duration=$(( $(date +%s) - stable_since ))
-                    local reset_threshold=$(( RESET_STABLE_HOURS * 3600 ))
+                        if [[ $retry_count -gt 0 ]]; then
+                            watchdog_log "ARO healthy (tray=Online) after recovery"
+                        fi
 
-                    if [[ $stable_duration -gt $reset_threshold ]] && [[ $retry_count -gt 0 ]]; then
-                        watchdog_log "ARO stable for ${RESET_STABLE_HOURS}h, resetting retry counter"
-                        state_set "retry_count" "0"
-                    fi
-                else
-                    # ── Log fresh nhưng status DISCONNECTED — stuck! ──
-                    local stuck_mins
-                    stuck_mins=$(get_disconnected_since_minutes)
-                    watchdog_log "ARO process running, log fresh, but DISCONNECTED for ${stuck_mins}m"
+                        local stable_since; stable_since=$(state_get "stable_since")
+                        local stable_duration=$(( now - stable_since ))
+                        local reset_threshold=$(( RESET_STABLE_HOURS * 3600 ))
 
-                    if [[ "$stuck_mins" -ge "$STUCK_THRESHOLD_MINUTES" ]]; then
-                        handle_stuck_connecting "$stuck_mins"
-                    else
-                        watchdog_log "Disconnected ${stuck_mins}m < threshold ${STUCK_THRESHOLD_MINUTES}m, monitoring..."
-                    fi
-                fi
+                        if [[ $stable_duration -gt $reset_threshold ]] && [[ $retry_count -gt 0 ]]; then
+                            watchdog_log "ARO stable for ${RESET_STABLE_HOURS}h, resetting retry counter"
+                            state_set "retry_count" "0"
+                        fi
+                        ;;
+                    
+                    Offline)
+                        # Vừa khởi động hoặc đang check mạng — kiểm tra grace period
+                        local last_restart; last_restart=$(state_get "last_restart" "0")
+                        local since_launch=$(( now - last_restart ))
+
+                        if [[ "$last_restart" -gt 0 ]] && [[ "$since_launch" -lt "$CONNECTING_GRACE_SECS" ]]; then
+                            watchdog_log "ARO tray=Offline, in startup grace period (${since_launch}s)"
+                        else
+                            watchdog_log "ARO tray=Offline beyond grace period — treating as stuck"
+                            local stuck_mins=$(( since_launch / 60 ))
+                            handle_stuck_connecting "$stuck_mins"
+                        fi
+                        ;;
+
+                    NoInternet)
+                        # Stuck — tính thời gian
+                        local stuck_mins
+                        stuck_mins=$(get_disconnected_since_minutes)
+                        watchdog_log "ARO process running, tray=NoInternet for ${stuck_mins}m"
+
+                        if [[ "$stuck_mins" -ge "$STUCK_THRESHOLD_MINUTES" ]]; then
+                            handle_stuck_connecting "$stuck_mins"
+                        else
+                            watchdog_log "Monitoring... (${stuck_mins}m < threshold ${STUCK_THRESHOLD_MINUTES}m)"
+                        fi
+                        ;;
+
+                    *)
+                        # State không xác định hoặc log chưa có entry tray
+                        watchdog_log "ARO tray state unknown ('${tray_state}') — monitoring"
+                        ;;
+                esac
             else
-                # ── Log stale (>LOG_STALE_MINUTES) — logic cũ giữ nguyên ──
+                # ── Log stale (>LOG_STALE_MINUTES) ──
                 watchdog_log "ARO process running but log is stale (>${LOG_STALE_MINUTES}m)"
 
                 if check_disconnect_alert; then
