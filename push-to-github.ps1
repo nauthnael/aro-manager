@@ -47,7 +47,7 @@ git status
 Write-Host ""
 Write-Host "[4/5] Committing..." -ForegroundColor Yellow
 $DATE = Get-Date -Format "yyyy-MM-dd HH:mm"
-git commit -m "feat: add SOCKS5 IP leak check + auto ARO install ($DATE)"
+git commit -m "feat: fix nc bug, add stuck-connecting watchdog and reward persistence v3.3.0 ($DATE)"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[INFO] Nothing to commit (file may already be up to date)." -ForegroundColor Gray
 }

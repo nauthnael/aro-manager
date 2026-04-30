@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.0.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.2.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.0.0"
+SCRIPT_VERSION="3.3.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -66,6 +66,13 @@ DAILY_REPORT_HOUR=7
 PROXY_CHECK_INTERVAL=300          # real proxy test every 5 minutes
 PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour when proxy is down
 PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))  # = 240s between alerts
+
+# ── Stuck-connecting watchdog ───────────────────────────────────
+CONNECTING_GRACE_SECS=180          # grace period sau launch (3 phút)
+CONNECTING_WAIT_SECS=300           # chờ ARO reconnect sau restart (5 phút)
+CONNECTING_POLL_INTERVAL=30        # poll interval trong khi chờ
+PROXY_RESTART_TIMEOUT_SECS=60      # timeout chờ proxy restart
+STUCK_THRESHOLD_MINUTES=5          # bao nhiêu phút "disconnected" = stuck
 
 # Telegram
 TG_BOT_TOKEN=""
@@ -124,11 +131,11 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.0.0         ║
+║         ARO Manager - Complete Node Management v3.2.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
-║  X/Twitter: https://x.com/tuangg                              ║
+║  X/Twitter: https://x.com/nauthnael                           ║
 ╚═══════════════════════════════════════════════════════════════╝
 EOF
 }
@@ -136,8 +143,8 @@ EOF
 show_footer() {
     cat << 'EOF'
 ─────────────────────────────────────────────────────────────
- Thanks for using ARO Manager! Follow @tuangg on X/Twitter
- for updates, tips and new scripts: https://x.com/tuangg
+ Thanks for using ARO Manager! Follow @nauthnael on X/Twitter
+ for updates, tips and new scripts: https://x.com/nauthnael
 ─────────────────────────────────────────────────────────────
 EOF
 }
@@ -465,6 +472,10 @@ LOG_STALE_MINUTES=$LOG_STALE_MINUTES
 DISCONNECT_ALERT_MINUTES=$DISCONNECT_ALERT_MINUTES
 STARTUP_TIMEOUT=$STARTUP_TIMEOUT
 RESET_STABLE_HOURS=$RESET_STABLE_HOURS
+CONNECTING_GRACE_SECS=$CONNECTING_GRACE_SECS
+CONNECTING_WAIT_SECS=$CONNECTING_WAIT_SECS
+STUCK_THRESHOLD_MINUTES=$STUCK_THRESHOLD_MINUTES
+PROXY_RESTART_TIMEOUT_SECS=$PROXY_RESTART_TIMEOUT_SECS
 
 # === Restart Policy ===
 MAX_RETRIES=$MAX_RETRIES
@@ -654,9 +665,9 @@ if ! systemctl is-active --quiet redsocks-aro; then
     exit 1
 fi
 
-# Check 2: Is redsocks port listening?
-if ! timeout 3 nc -z 127.0.0.1 "$REDSOCKS_PORT" 2>/dev/null; then
-    log_msg "CRITICAL: Redsocks port $REDSOCKS_PORT not responding!"
+# Check 2: Is redsocks port listening? (ss check is more reliable for transparent proxy)
+if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
+    log_msg "CRITICAL: Redsocks port $REDSOCKS_PORT not in LISTEN state!"
     log_msg "ARO launch BLOCKED (kill-switch active)"
     exit 1
 fi
@@ -712,6 +723,11 @@ PUBLIC_IP="N/A"
 LATEST_LOG_FILE=""
 LAST_ONLINE_LABEL="❓ No connection history"
 LAST_ONLINE_AGO=""
+
+# Cache reward values — giữ lại giá trị cuối cùng lấy được khi API lỗi
+_CACHED_REWARD_TODAY="0"
+_CACHED_REWARD_YESTERDAY="0"
+_CACHED_UPTIME="0"
 
 # Run a command as EFFECTIVE_USER if needed
 run_as_aro_user() {
@@ -810,13 +826,28 @@ parse_node_info() {
     [[ -n "$val" ]] && CONNECT_STATUS="$val"
 
     val=$(echo "$lines" | grep -oP '(?<="today":)[0-9.]+' 2>/dev/null | tail -1 || true)
-    [[ -n "$val" ]] && REWARD_TODAY="$val"
+    if [[ -n "$val" ]]; then
+        REWARD_TODAY="$val"
+        _CACHED_REWARD_TODAY="$val"
+    else
+        REWARD_TODAY="$_CACHED_REWARD_TODAY"
+    fi
 
     val=$(echo "$lines" | grep -oP '(?<="yesterday":)[0-9.]+' 2>/dev/null | tail -1 || true)
-    [[ -n "$val" ]] && REWARD_YESTERDAY="$val"
+    if [[ -n "$val" ]]; then
+        REWARD_YESTERDAY="$val"
+        _CACHED_REWARD_YESTERDAY="$val"
+    else
+        REWARD_YESTERDAY="$_CACHED_REWARD_YESTERDAY"
+    fi
 
     val=$(echo "$lines" | grep -oP '(?<="uptime":)[0-9.]+' 2>/dev/null | tail -1 || true)
-    [[ -n "$val" ]] && UPTIME_RATIO="$val"
+    if [[ -n "$val" ]]; then
+        UPTIME_RATIO="$val"
+        _CACHED_UPTIME="$val"
+    else
+        UPTIME_RATIO="$_CACHED_UPTIME"
+    fi
 
     val=$(echo "$lines" | grep -oP '(?<="publicIp":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && PUBLIC_IP="$val"
@@ -895,6 +926,23 @@ is_log_fresh() {
     [[ $log_age -lt $((LOG_STALE_MINUTES * 60)) ]]
 }
 
+# Returns 0 (true) nếu ARO đang connected theo log mới nhất
+# Returns 1 (false) nếu disconnected, hoặc không có entry nào
+is_aro_connected() {
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    [[ -z "$LATEST_LOG_FILE" ]] && return 1
+    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 1
+
+    local last_status
+    last_status=$(run_as_aro_user grep -oh '"connect":"[^"]*"' "$LATEST_LOG_FILE" 2>/dev/null \
+        | tail -1 \
+        | grep -o '"connect":"[^"]*"' \
+        | sed 's/"connect":"//;s/"//' \
+        || true)
+
+    [[ "$last_status" == "connected" ]]
+}
+
 get_disconnect_duration() {
     if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
         echo "0"; return 0
@@ -915,6 +963,48 @@ get_disconnect_duration() {
         fi
     fi
     echo "0"
+}
+
+# Returns số phút kể từ lần cuối ARO log thấy "connected"
+# Nếu chưa bao giờ connected trong log → dùng (now - mtime_log_file) thay thế
+get_disconnected_since_minutes() {
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    [[ -z "$LATEST_LOG_FILE" ]] && echo "0" && return 0
+    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && echo "0" && return 0
+
+    local log_content
+    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null || true)
+
+    # Tìm dòng get_node_stat CUỐI CÙNG có "connected"
+    local last_connected_line
+    last_connected_line=$(echo "$log_content" \
+        | grep 'get_node_stat' \
+        | grep '"connect":"connected"' \
+        | tail -1 || true)
+
+    local now; now=$(date +%s)
+
+    if [[ -n "$last_connected_line" ]]; then
+        local ts_str
+        ts_str=$(echo "$last_connected_line" \
+            | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
+        if [[ -n "$ts_str" ]]; then
+            local ep; ep=$(date -d "$ts_str" +%s 2>/dev/null || echo 0)
+            if [[ "$ep" -gt 0 ]]; then
+                echo $(( (now - ep) / 60 ))
+                return 0
+            fi
+        fi
+    fi
+
+    # Không tìm thấy "connected" → dùng thời điểm last_restart từ state
+    local last_restart
+    last_restart=$(state_get "last_restart" "0")
+    if [[ "$last_restart" -gt 0 ]]; then
+        echo $(( (now - last_restart) / 60 ))
+    else
+        echo "0"
+    fi
 }
 
 kill_aro() {
@@ -1016,11 +1106,90 @@ send_notify_proxy_down() {
 }
 
 send_notify_proxy_recovered() {
+    local context="${1:-routine}"   # "routine" | "stuck_connecting"
+    local context_label="Auto-recovery (routine check)"
+    [[ "$context" == "stuck_connecting" ]] && context_label="Recovery triggered by ARO stuck-connecting"
+
     local msg="✅ <b>[PROXY RECOVERED] ${HOSTNAME}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-✓ Redsocks service restarted successfully
+✓ Redsocks service restarted OK
+🔧 Context: ${context_label}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    send_telegram "$msg"
+}
+
+send_notify_aro_reconnected() {
+    local context="${1:-unknown}"
+    local elapsed_secs="${2:-0}"
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    parse_node_info
+    get_last_online_info
+
+    local f_today; f_today=$(format_number "$REWARD_TODAY")
+    local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
+    local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
+    local elapsed_min=$(( elapsed_secs / 60 ))
+
+    local cause_label="Proxy OK, ARO restarted"
+    [[ "$context" == "proxy_recovered" ]] && cause_label="Proxy recovered + ARO restarted"
+
+    local msg="✅ <b>[ARO RECONNECTED] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+👤 User: ${EFFECTIVE_USER}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🌐 Exit IP: ${PUBLIC_IP}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+──────────────────────
+🔧 Cause: ${cause_label}
+⏱️ Recovery time: ${elapsed_min}m ${elapsed_secs}s
+💰 Reward today:     ${f_today} pts
+💰 Reward yesterday: ${f_yest} pts
+📶 Uptime: ${f_up}%
+${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    send_telegram "$msg"
+}
+
+send_notify_aro_stuck_manual() {
+    local retry_count="${1:-?}"
+    local context="${2:-unknown}"
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    parse_node_info
+
+    local cause_label="Proxy OK nhưng ARO không reconnect"
+    [[ "$context" == "proxy_recovered" ]] && cause_label="Proxy đã recover nhưng ARO vẫn không connect"
+
+    local msg="⚠️ <b>[ARO STUCK] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+──────────────────────
+❌ ARO không kết nối được sau ${CONNECTING_WAIT_SECS}s
+🔧 Context: ${cause_label}
+🔄 Retry: ${retry_count}/${MAX_RETRIES}
+👉 <b>Cần kiểm tra thủ công!</b>
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    send_telegram "$msg"
+}
+
+send_notify_proxy_dead() {
+    local msg="🚨 <b>[PROXY DEAD] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+⏱️ Timeout: ${PROXY_RESTART_TIMEOUT_SECS}s
+❌ Redsocks restart FAILED — ARO đang tắt
+🛑 Kill-switch đang hoạt động
+👉 <b>Cần can thiệp thủ công!</b>
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
     send_telegram "$msg"
@@ -1112,9 +1281,9 @@ check_proxy_health() {
         fi
     fi
 
-    # Check redsocks port
-    if ! nc -z 127.0.0.1 "$REDSOCKS_PORT" 2>/dev/null; then
-        watchdog_log "WARNING: Redsocks port $REDSOCKS_PORT not responding"
+    # Check redsocks port via ss (nc không reliable với transparent proxy)
+    if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
+        watchdog_log "WARNING: Redsocks port $REDSOCKS_PORT not in LISTEN state"
         return 1
     fi
 
@@ -1132,7 +1301,7 @@ check_real_proxy() {
     local exit_ip=""
     for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
         exit_ip=$(curl -s --max-time 10 \
-            --socks5-hostname "${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" \
+            --socks5-hostname "${PROXY_HOST}:${PROXY_PORT}" --proxy-user "${PROXY_USER}:${PROXY_PASS}" \
             "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
         if [[ "$exit_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             break
@@ -1155,6 +1324,113 @@ check_disconnect_alert() {
     local duration
     duration=$(get_disconnect_duration)
     [[ "$duration" -ge "$DISCONNECT_ALERT_MINUTES" ]]
+}
+
+# Xử lý khi ARO process đang chạy nhưng không connect được
+# Param $1: số phút đã disconnected
+handle_stuck_connecting() {
+    local stuck_mins="${1:-0}"
+
+    # ── Grace period: vừa khởi động, chưa đến lúc phán ─────────
+    local last_restart; last_restart=$(state_get "last_restart" "0")
+    local now; now=$(date +%s)
+    local since_launch=$(( now - last_restart ))
+
+    if [[ "$last_restart" -gt 0 ]] && [[ "$since_launch" -lt "$CONNECTING_GRACE_SECS" ]]; then
+        local remaining=$(( CONNECTING_GRACE_SECS - since_launch ))
+        watchdog_log "ARO disconnected ${stuck_mins}m but within grace period (${remaining}s remaining)"
+        return 0
+    fi
+
+    watchdog_log "ARO stuck disconnected for ${stuck_mins}m — starting recovery"
+
+    # ── Kiểm tra proxy thực sự ──────────────────────────────────
+    local proxy_ok=false
+    if check_real_proxy 2>/dev/null; then
+        proxy_ok=true
+    fi
+
+    if $proxy_ok; then
+        # ── CASE A: Proxy ok, lỗi ở phía ARO ──────────────────
+        watchdog_log "Proxy OK — restarting ARO (stuck connecting)"
+        kill_aro
+        launch_aro
+        state_set "last_restart" "$(date +%s)"
+        _restart_aro_and_wait "proxy_ok"
+    else
+        # ── CASE B: Proxy offline gây ARO stuck ────────────────
+        watchdog_log "Proxy DOWN — killing ARO, attempting proxy restart"
+        kill_aro
+
+        # Restart proxy và poll đến khi live hoặc timeout
+        systemctl restart redsocks-aro 2>/dev/null || true
+        local proxy_wait_start; proxy_wait_start=$(date +%s)
+        local proxy_recovered=false
+
+        while true; do
+            local elapsed=$(( $(date +%s) - proxy_wait_start ))
+            if [[ "$elapsed" -ge "$PROXY_RESTART_TIMEOUT_SECS" ]]; then
+                break
+            fi
+            sleep 5
+            if check_real_proxy 2>/dev/null; then
+                proxy_recovered=true
+                break
+            fi
+        done
+
+        if $proxy_recovered; then
+            watchdog_log "Proxy recovered — launching ARO"
+            send_notify_proxy_recovered "stuck_connecting"
+            launch_aro
+            state_set "last_restart" "$(date +%s)"
+            _restart_aro_and_wait "proxy_recovered"
+        else
+            watchdog_log "Proxy restart FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
+            send_notify_proxy_dead
+            # ARO ở tắt, chờ manual
+        fi
+    fi
+}
+
+# Helper: chờ ARO connect sau khi đã launch, poll mỗi CONNECTING_POLL_INTERVAL
+# Param $1: context label ("proxy_ok" | "proxy_recovered") dùng cho log
+_restart_aro_and_wait() {
+    local context="${1:-unknown}"
+    local wait_start; wait_start=$(date +%s)
+    local retry_count; retry_count=$(state_get "retry_count" "0")
+
+    watchdog_log "Waiting up to ${CONNECTING_WAIT_SECS}s for ARO to connect (context: $context)..."
+
+    while true; do
+        local elapsed=$(( $(date +%s) - wait_start ))
+        if [[ "$elapsed" -ge "$CONNECTING_WAIT_SECS" ]]; then
+            break
+        fi
+        sleep "$CONNECTING_POLL_INTERVAL"
+
+        if is_aro_connected; then
+            watchdog_log "ARO reconnected successfully after ${elapsed}s (context: $context)"
+            send_notify_aro_reconnected "$context" "$elapsed"
+            state_set "retry_count" "0"
+            state_set "stable_since" "$(date +%s)"
+            return 0
+        fi
+        watchdog_log "Still waiting... ${elapsed}s / ${CONNECTING_WAIT_SECS}s"
+    done
+
+    # Hết thời gian, vẫn không connect
+    retry_count=$(( retry_count + 1 ))
+    state_set "retry_count" "$retry_count"
+    watchdog_log "ARO still not connected after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
+
+    if [[ "$retry_count" -le "$MAX_RETRIES" ]]; then
+        send_notify_aro_stuck_manual "$retry_count" "$context"
+    else
+        watchdog_log "MAX RETRIES reached ($MAX_RETRIES) — giving up"
+        send_notify_max_retries
+        state_set "retry_count" "0"
+    fi
 }
 
 state_get() {
@@ -1230,31 +1506,43 @@ watchdog_loop() {
         
         # Check if ARO is running
         if is_aro_running; then
-            # ARO is running - check if healthy
+            LATEST_LOG_FILE=$(get_latest_aro_log)
+            
             if is_log_fresh; then
-                # ARO is healthy
-                local retry_count
-                retry_count=$(state_get "retry_count" "0")
-                
-                if [[ $retry_count -gt 0 ]]; then
-                    watchdog_log "ARO healthy after recovery (retry count: $retry_count)"
-                fi
-                
-                # Reset retry counter after stable period
-                local stable_since
-                stable_since=$(state_get "stable_since")
-                local stable_duration=$(( $(date +%s) - stable_since ))
-                local reset_threshold=$((RESET_STABLE_HOURS * 3600))
-                
-                if [[ $stable_duration -gt $reset_threshold ]] && [[ $retry_count -gt 0 ]]; then
-                    watchdog_log "ARO stable for ${RESET_STABLE_HOURS}h, resetting retry counter"
-                    state_set "retry_count" "0"
+                # Log đang được ghi đều — check status thực sự
+                if is_aro_connected; then
+                    # ── ARO connected & healthy ──────────────────────
+                    local retry_count
+                    retry_count=$(state_get "retry_count" "0")
+
+                    if [[ $retry_count -gt 0 ]]; then
+                        watchdog_log "ARO healthy after recovery (retry count: $retry_count)"
+                    fi
+
+                    local stable_since; stable_since=$(state_get "stable_since")
+                    local stable_duration=$(( $(date +%s) - stable_since ))
+                    local reset_threshold=$(( RESET_STABLE_HOURS * 3600 ))
+
+                    if [[ $stable_duration -gt $reset_threshold ]] && [[ $retry_count -gt 0 ]]; then
+                        watchdog_log "ARO stable for ${RESET_STABLE_HOURS}h, resetting retry counter"
+                        state_set "retry_count" "0"
+                    fi
+                else
+                    # ── Log fresh nhưng status DISCONNECTED — stuck! ──
+                    local stuck_mins
+                    stuck_mins=$(get_disconnected_since_minutes)
+                    watchdog_log "ARO process running, log fresh, but DISCONNECTED for ${stuck_mins}m"
+
+                    if [[ "$stuck_mins" -ge "$STUCK_THRESHOLD_MINUTES" ]]; then
+                        handle_stuck_connecting "$stuck_mins"
+                    else
+                        watchdog_log "Disconnected ${stuck_mins}m < threshold ${STUCK_THRESHOLD_MINUTES}m, monitoring..."
+                    fi
                 fi
             else
-                # ARO is running but log is stale
+                # ── Log stale (>LOG_STALE_MINUTES) — logic cũ giữ nguyên ──
                 watchdog_log "ARO process running but log is stale (>${LOG_STALE_MINUTES}m)"
-                
-                # Check for disconnect alert
+
                 if check_disconnect_alert; then
                     watchdog_log "Recent disconnect detected, attempting restart"
                     
@@ -1394,6 +1682,19 @@ get_real_ip() {
         fi
     done
     echo ""
+}
+
+get_local_ip() {
+    # Lấy IP nội bộ của interface chính (non-loopback, IPv4)
+    local ip=""
+    # Cách 1: dùng routing table để tìm src IP của default route
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null \
+        | grep -oP '(?<=src )\S+' | head -1 || true)
+    # Cách 2: fallback — lấy IP đầu tiên không phải loopback
+    if [[ -z "$ip" ]]; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    fi
+    echo "${ip:-N/A}"
 }
 
 verify_proxy_ip() {
@@ -1962,7 +2263,14 @@ deploy_phase6_finish() {
 
     apt-get autoremove -y -qq 2>/dev/null || true
 
-    local machine_ip; machine_ip=$(get_real_ip)
+    local machine_ip=""
+    if [[ "$ENV_TYPE" == "lxc_vnc" ]]; then
+        machine_ip=$(get_local_ip)
+        log_info "LXC environment — dùng IP nội bộ: $machine_ip"
+    else
+        machine_ip=$(get_real_ip)
+        log_info "IP public: $machine_ip"
+    fi
 
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -2507,6 +2815,13 @@ MAIN COMMANDS:
   full-install <proxy> [--token TOKEN] [--chatid ID]
                       Cài proxy + ARO + watchdog (VPS đã có sẵn XFCE/VNC)
 
+  setup vps [--ssh-key KEY]
+                      Cài VPS cơ bản: user, swap, SSH, XFCE, firewall
+  setup vnc [--vnc-pass PASS]
+                      Cài TigerVNC (XFCE đã có sẵn)
+  setup all [--ssh-key KEY] [--vnc-pass PASS]
+                      setup vps + setup vnc (chuẩn bị máy mẫu để clone)
+
   status              Show complete status (proxy + watchdog + ARO)
   report              Send daily report to Telegram immediately
   uninstall           Remove everything
@@ -2542,6 +2857,14 @@ EXAMPLES:
 
   # Re-enable
   sudo bash $SCRIPT_NAME proxy enable
+
+  # Chuẩn bị máy mẫu để clone nhiều LXC
+  sudo bash $SCRIPT_NAME setup all \
+    --ssh-key "ssh-rsa AAAA..." \
+    --vnc-pass "mypass123"
+
+  # Chỉ cài VNC (VPS đã có XFCE)
+  sudo bash $SCRIPT_NAME setup vnc --vnc-pass "mypass123"
 
 LOGS:
   Main log: $MAIN_LOG
@@ -2668,6 +2991,96 @@ main() {
             SHOW_FOOTER_ON_EXIT=1
             ;;
             
+        setup)
+            local subcmd="${1:-}"
+            shift || true
+
+            # Parse arguments dùng chung cho tất cả setup subcommands
+            local _ssh_key="" _vnc_pass=""
+            local _tmp_args=("$@")
+            local i=0
+            while [[ $i -lt ${#_tmp_args[@]} ]]; do
+                case "${_tmp_args[$i]}" in
+                    --ssh-key)
+                        i=$(( i + 1 ))
+                        _ssh_key="${_tmp_args[$i]:-}"
+                        ;;
+                    --vnc-pass)
+                        i=$(( i + 1 ))
+                        _vnc_pass="${_tmp_args[$i]:-}"
+                        ;;
+                esac
+                i=$(( i + 1 ))
+            done
+
+            case "$subcmd" in
+                vps)
+                    require_root
+                    check_os
+                    UBUNTU_SSH_KEY="$_ssh_key"
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        read -p "Nhập SSH public key cho user ubuntu: " -r UBUNTU_SSH_KEY
+                    fi
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        log_error "SSH key là bắt buộc"; exit 1
+                    fi
+                    log_info "Chạy Phase 0: VPS Preparation..."
+                    deploy_phase0_vps
+                    log_success "setup vps hoàn tất."
+                    ;;
+
+                vnc)
+                    require_root
+                    VNC_PASS="$_vnc_pass"
+                    if [[ -z "$VNC_PASS" ]]; then
+                        read -s -p "Nhập VNC password (tối thiểu 6 ký tự): " -r VNC_PASS
+                        echo ""
+                    fi
+                    if [[ ${#VNC_PASS} -lt 6 ]]; then
+                        log_error "VNC password tối thiểu 6 ký tự"; exit 1
+                    fi
+                    log_info "Chạy Phase 1: TigerVNC Setup..."
+                    deploy_phase1_vnc
+                    log_success "setup vnc hoàn tất."
+                    ;;
+
+                all)
+                    require_root
+                    check_os
+                    UBUNTU_SSH_KEY="$_ssh_key"
+                    VNC_PASS="$_vnc_pass"
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        read -p "Nhập SSH public key cho user ubuntu: " -r UBUNTU_SSH_KEY
+                    fi
+                    if [[ -z "$UBUNTU_SSH_KEY" ]]; then
+                        log_error "SSH key là bắt buộc"; exit 1
+                    fi
+                    if [[ -z "$VNC_PASS" ]]; then
+                        read -s -p "Nhập VNC password (tối thiểu 6 ký tự): " -r VNC_PASS
+                        echo ""
+                    fi
+                    if [[ ${#VNC_PASS} -lt 6 ]]; then
+                        log_error "VNC password tối thiểu 6 ký tự"; exit 1
+                    fi
+                    log_info "Chạy Phase 0: VPS Preparation..."
+                    deploy_phase0_vps
+                    log_info "Chạy Phase 1: TigerVNC Setup..."
+                    deploy_phase1_vnc
+                    log_success "setup all hoàn tất. Máy sẵn sàng để clone."
+                    ;;
+
+                *)
+                    echo "Usage: $SCRIPT_NAME setup {vps|vnc|all} [options]"
+                    echo ""
+                    echo "  setup vps [--ssh-key KEY]"
+                    echo "  setup vnc [--vnc-pass PASS]"
+                    echo "  setup all [--ssh-key KEY] [--vnc-pass PASS]"
+                    exit 1
+                    ;;
+            esac
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
         watchdog)
             local subcmd="${1:-}"
             case "$subcmd" in
