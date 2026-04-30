@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.1
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.0"
+SCRIPT_VERSION="3.4.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -76,6 +76,7 @@ STUCK_THRESHOLD_MINUTES=5          # bao nhiêu phút "disconnected" = stuck
 REDSOCKS_QUEUE_THRESHOLD=500    # recv-Q vượt ngưỡng này = redsocks đang treo
 
 # Telegram
+TRAY_STATUS="unknown"              # Trạng thái thực của ARO app (từ tray state log)
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 
@@ -132,7 +133,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.0         ║
+║         ARO Manager - Complete Node Management v3.4.1         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -854,6 +855,11 @@ parse_node_info() {
     val=$(echo "$lines" | grep -oP '(?<="publicIp":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && PUBLIC_IP="$val"
 
+    # Lấy tray state thực — đây là trạng thái thực của app, không phải API cache
+    local ts
+    ts=$(get_aro_tray_state 2>/dev/null || true)
+    [[ -n "$ts" ]] && TRAY_STATUS="$ts" || TRAY_STATUS="unknown"
+
     return 0
 }
 
@@ -861,51 +867,74 @@ get_last_online_info() {
     LAST_ONLINE_LABEL="❓ No connection history"
     LAST_ONLINE_AGO=""
 
-    [[ -z "$LATEST_LOG_FILE" ]] && return 0
-    ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && return 0
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    if [[ -z "$LATEST_LOG_FILE" ]] || ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+        return 0
+    fi
 
     local now; now=$(date +%s)
-    local log_content
-    log_content=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null || true)
+    local tray_state; tray_state=$(get_aro_tray_state)
 
-    local last_connected_line
-    last_connected_line=$(echo "$log_content" | grep '"connect":"connected"' 2>/dev/null | tail -1 || true)
-    if [[ -z "$last_connected_line" ]]; then
-        LAST_ONLINE_LABEL="❓ Never connected in recent log"
-        return 0
-    fi
+    # Tìm timestamp Net init gần nhất (startup hiện tại)
+    local net_init_ts
+    net_init_ts=$(run_as_aro_user tail -n 1000 "$LATEST_LOG_FILE" 2>/dev/null \
+        | grep "Net init" \
+        | tail -1 \
+        | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
 
-    local last_ts_str
-    last_ts_str=$(echo "$last_connected_line" \
-        | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null | tr -d '[' || true)
-    local last_epoch=0
-    [[ -n "$last_ts_str" ]] && last_epoch=$(date -d "$last_ts_str" +%s 2>/dev/null || echo 0)
-    if [[ "$last_epoch" -eq 0 ]]; then
-        LAST_ONLINE_LABEL="❓ Could not parse timestamp"
-        return 0
-    fi
+    if [[ "$tray_state" == "Online" ]]; then
+        # Tìm dòng tray=Online ĐẦU TIÊN sau Net init hiện tại
+        local online_ts=""
+        if [[ -n "$net_init_ts" ]]; then
+            online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+                | awk -v cutoff="$net_init_ts" '$0 > cutoff' \
+                | head -1 \
+                | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
+        fi
 
-    local elapsed=$(( now - last_epoch ))
-    local ago_str; ago_str=$(format_time_ago "$elapsed")
-
-    if [[ "$CONNECT_STATUS" == "connected" ]]; then
-        local first_conn_ts
-        first_conn_ts=$(echo "$log_content" | grep '"connect":"connected"' 2>/dev/null | head -1 \
-            | grep -oP '\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null | tr -d '[' || true)
-        local sess_epoch=0
-        [[ -n "$first_conn_ts" ]] && sess_epoch=$(date -d "$first_conn_ts" +%s 2>/dev/null || echo 0)
-        if [[ "$sess_epoch" -gt 0 ]]; then
-            LAST_ONLINE_LABEL="🟢 Online since"
-            LAST_ONLINE_AGO=$(format_time_ago $(( now - sess_epoch )))
+        if [[ -n "$online_ts" ]]; then
+            local ep; ep=$(date -d "$online_ts" +%s 2>/dev/null || echo 0)
+            if [[ "$ep" -gt 0 ]]; then
+                LAST_ONLINE_LABEL="🟢 Online since"
+                LAST_ONLINE_AGO=$(format_time_ago $(( now - ep )))
+            fi
         else
             LAST_ONLINE_LABEL="🟢 Currently online"
-            LAST_ONLINE_AGO="$ago_str"
+            LAST_ONLINE_AGO=""
+        fi
+    elif [[ "$tray_state" == "NoInternet" ]] || [[ "$tray_state" == "Offline" ]]; then
+        # Tìm lần Online cuối cùng trong log
+        local last_online_ts
+        last_online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+            | tail -1 \
+            | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
+        
+        if [[ -n "$last_online_ts" ]]; then
+            local ep; ep=$(date -d "$last_online_ts" +%s 2>/dev/null || echo 0)
+            if [[ "$ep" -gt 0 ]]; then
+                LAST_ONLINE_LABEL="🔴 Last online"
+                LAST_ONLINE_AGO=$(format_time_ago $(( now - ep )))
+            fi
+        else
+            LAST_ONLINE_LABEL="❓ Never connected in recent log"
+            LAST_ONLINE_AGO=""
         fi
     else
-        LAST_ONLINE_LABEL="🔴 Last online"
-        LAST_ONLINE_AGO="$ago_str"
+        # Fallback về cách cũ nhưng chỉ 200 dòng cuối
+        local last_conn
+        last_conn=$(run_as_aro_user tail -n 200 "$LATEST_LOG_FILE" 2>/dev/null \
+            | grep '"connect":"connected"' \
+            | tail -1 \
+            | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
+        
+        if [[ -n "$last_conn" ]]; then
+            local ep; ep=$(date -d "$last_conn" +%s 2>/dev/null || echo 0)
+            if [[ "$ep" -gt 0 ]]; then
+                LAST_ONLINE_LABEL="📡 Connected (api)"
+                LAST_ONLINE_AGO=$(format_time_ago $(( now - ep )))
+            fi
+        fi
     fi
-    return 0
 }
 
 # ── Process helpers ─────────────────────────────────────────────
@@ -1227,21 +1256,29 @@ send_daily_report() {
     local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
     local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
 
+    local tray_display
+    case "$TRAY_STATUS" in
+        Online)     tray_display="🟢 Online (connected)" ;;
+        NoInternet) tray_display="🔴 NoInternet (connecting...)" ;;
+        Offline)    tray_display="🟡 Offline" ;;
+        *)          tray_display="❓ ${CONNECT_STATUS:-unknown}" ;;
+    esac
+
     local msg="📊 <b>[ARO DAILY REPORT] ${HOSTNAME}</b>
 ──────────────────────
-🖥️ VPS: ${HOSTNAME}
-🔢 Serial: ${SERIAL}
-📧 Account: ${EMAIL}
-🌐 IP: ${PUBLIC_IP}
-🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-─────── Reward ───────
-💰 Today:     ${f_today} pts
-💰 Yesterday: ${f_yest} pts
-${trend}
-📶 Uptime: ${f_up}%
-🟢 Status: ${CONNECT_STATUS}
-${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
-📅 Date: $(date '+%Y-%m-%d %H:%M:%S')"
+22: 🖥️ VPS: ${HOSTNAME}
+23: 🔢 Serial: ${SERIAL}
+24: 📧 Account: ${EMAIL}
+25: 🌐 IP: ${PUBLIC_IP}
+26: 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+27: ─────── Reward ───────
+28: 💰 Today:     ${f_today} pts
+29: 💰 Yesterday: ${f_yest} pts
+30: ${trend}
+31: 📶 Uptime: ${f_up}%
+32: 📡 Status: ${tray_display}
+33: ${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+34: 📅 Date: $(date '+%Y-%m-%d %H:%M:%S')"
 
     send_telegram "$msg"
 }
@@ -1361,11 +1398,13 @@ check_real_proxy() {
 # Tests if traffic from ubuntu user actually passes through transparent proxy.
 # Returns 0 if working, 1 if broken.
 check_redsocks_functional() {
-    local test_ip
-    test_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 10 https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)
-    if [[ "$test_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        return 0
-    fi
+    local test_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        test_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 5 "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
+        if [[ "$test_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            return 0
+        fi
+    done
     return 1
 }
 
@@ -2581,7 +2620,16 @@ do_status() {
     echo "  Serial:  $SERIAL"
     echo "  Email:   $EMAIL"
     echo "  Pub IP:  $PUBLIC_IP"
-    echo "  Status:  $CONNECT_STATUS"
+
+    local _tray_display
+    case "$TRAY_STATUS" in
+        Online)     _tray_display="🟢 Online" ;;
+        NoInternet) _tray_display="🔴 NoInternet (connecting...)" ;;
+        Offline)    _tray_display="🟡 Offline" ;;
+        *)          _tray_display="❓ ${CONNECT_STATUS:-unknown} (api)" ;;
+    esac
+    echo "  Status:  $_tray_display"
+
     echo "  $LAST_ONLINE_LABEL${LAST_ONLINE_AGO:+ $LAST_ONLINE_AGO}"
     echo ""
 
