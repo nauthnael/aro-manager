@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.5
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.6
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.5"
+SCRIPT_VERSION="3.4.6"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -82,6 +82,11 @@ TRAY_STATUS_TS=0                   # Epoch khi TRAY_STATUS được set
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 
+# Throttle states
+_last_proxy_down_notify=0
+_last_pre_restart_notify=0
+PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
+
 # Guard flags
 _WAIT_FOR_ARO_ONLINE_RUNNING=false
 
@@ -138,7 +143,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.5         ║
+║         ARO Manager - Complete Node Management v3.4.6         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -1162,6 +1167,7 @@ launch_aro() {
 # ── Telegram notification templates ────────────────────────────
 
 send_notify_restart_success() {
+    _last_pre_restart_notify=0   # Reset throttle — ARO đã healthy
     local retry_count=$1
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
@@ -1207,13 +1213,22 @@ send_notify_max_retries() {
     send_telegram "$msg"
 }
 
-_last_proxy_down_notify=0
+
 
 send_notify_pre_restart() {
     local reason="$1"          # Mô tả lý do kỹ thuật
     local tray_state="$2"      # tray state lúc phát hiện
     local stuck_mins="${3:-0}" # Số phút đã stuck (nếu có)
     local retry_count="${4:-?}"
+
+    # Throttle: không spam — chỉ gửi nếu đã qua cooldown
+    local now; now=$(date +%s)
+    local since=$(( now - _last_pre_restart_notify ))
+    if [[ $_last_pre_restart_notify -gt 0 ]] && [[ $since -lt $PRE_RESTART_NOTIFY_COOLDOWN ]]; then
+        watchdog_log "Pre-restart notification throttled (${since}s since last, cooldown ${PRE_RESTART_NOTIFY_COOLDOWN}s)"
+        return 0
+    fi
+    _last_pre_restart_notify=$now
 
     local msg="⚠️ <b>[ARO RESTARTING] ${HOSTNAME}</b>
 ──────────────────────
@@ -1288,6 +1303,7 @@ send_notify_redsocks_restarted() {
 }
 
 send_notify_aro_reconnected() {
+    _last_pre_restart_notify=0   # Reset throttle — ARO đã online
     local context="${1:-unknown}"
     local elapsed_secs="${2:-0}"
     LATEST_LOG_FILE=$(get_latest_aro_log)
@@ -2760,9 +2776,8 @@ do_status() {
     
     load_configs
     detect_desktop_user
-    if is_tray_status_stale 120; then
-        parse_node_info
-    fi
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    parse_node_info
     get_last_online_info
 
     echo "═══════════════════════════════════════════════════════════════"
@@ -2780,12 +2795,17 @@ do_status() {
     echo "  Pub IP:  $PUBLIC_IP"
 
     local _tray_display
-    case "$TRAY_STATUS" in
-        Online)     _tray_display="🟢 Online" ;;
-        NoInternet) _tray_display="🔴 NoInternet (connecting...)" ;;
-        Offline)    _tray_display="🟡 Offline" ;;
-        *)          _tray_display="❓ ${CONNECT_STATUS:-unknown} (api)" ;;
-    esac
+    if ! is_aro_running; then
+        # Process dead → override bất kể log nói gì
+        _tray_display="⚫ Stopped (process not running)"
+    else
+        case "$TRAY_STATUS" in
+            Online)     _tray_display="🟢 Online" ;;
+            NoInternet) _tray_display="🔴 NoInternet (connecting...)" ;;
+            Offline)    _tray_display="🟡 Offline" ;;
+            *)          _tray_display="❓ ${CONNECT_STATUS:-unknown} (api)" ;;
+        esac
+    fi
     echo "  Status:  $_tray_display"
 
     echo "  $LAST_ONLINE_LABEL${LAST_ONLINE_AGO:+ $LAST_ONLINE_AGO}"
