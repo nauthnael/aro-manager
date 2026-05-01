@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.3
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.4
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.3"
+SCRIPT_VERSION="3.4.4"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -77,8 +77,12 @@ REDSOCKS_QUEUE_THRESHOLD=500    # recv-Q vượt ngưỡng này = redsocks đang
 
 # Telegram
 TRAY_STATUS="unknown"              # Trạng thái thực của ARO app (từ tray state log)
+TRAY_STATUS_TS=0                   # Epoch khi TRAY_STATUS được set
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
+
+# Guard flags
+_WAIT_FOR_ARO_ONLINE_RUNNING=false
 
 # Runtime
 CURRENT_USER=$(whoami)
@@ -133,7 +137,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.3         ║
+║         ARO Manager - Complete Node Management v3.4.4         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -656,10 +660,53 @@ persist_iptables_rules() {
     log_success "iptables rules persisted"
 }
 
+verify_wrapper_script() {
+    local wrapper="$WRAPPER_SCRIPT"
+    [[ -f "$wrapper.new" ]] && wrapper="$wrapper.new"
+    
+    # 1. File tồn tại và executable
+    if [[ ! -x "$wrapper" ]]; then
+        log_error "Wrapper not found or not executable: $wrapper"
+        return 1
+    fi
+    
+    # 2. Shebang hợp lệ
+    if ! head -1 "$wrapper" | grep -q "^#!/"; then
+        log_error "Wrapper missing shebang"
+        return 1
+    fi
+    
+    # 3. Các thành phần bắt buộc có mặt
+    local checks=("redsocks-aro" "ss -tlnp" "REDSOCKS_PORT" "REAL_ARO" 'exec "$REAL_ARO"')
+    for check in "${checks[@]}"; do
+        if ! grep -q "$check" "$wrapper" 2>/dev/null; then
+            log_error "Wrapper missing required component: $check"
+            return 1
+        fi
+    done
+    
+    # 4. Bash syntax check
+    if ! bash -n "$wrapper" 2>/dev/null; then
+        log_error "Wrapper has syntax errors"
+        return 1
+    fi
+    
+    return 0
+}
+
 create_wrapper_script() {
     log_info "Creating ARO launch wrapper with proxy checks..."
     
-    cat > "$WRAPPER_SCRIPT" << 'EOF'
+    # Backup existing wrapper nếu có
+    if [[ -f "$WRAPPER_SCRIPT" ]]; then
+        local backup="${WRAPPER_SCRIPT}.bak"
+        cp "$WRAPPER_SCRIPT" "$backup"
+        log_info "Backed up existing wrapper to $backup"
+    fi
+    
+    # Ghi ra file tạm trước
+    local tmp_wrapper="${WRAPPER_SCRIPT}.new"
+    cat > "$tmp_wrapper" << 'EOF'
 #!/bin/bash
 # ARO Manager - Launch Wrapper with Proxy Protection
 # This wrapper ensures ARO only runs when proxy is healthy
@@ -699,8 +746,17 @@ log_msg "✓ Proxy checks passed. Launching ARO..."
 exec "$REAL_ARO" "$@"
 EOF
     
-    chmod +x "$WRAPPER_SCRIPT"
-    log_success "Wrapper created at $WRAPPER_SCRIPT"
+    chmod +x "$tmp_wrapper"
+    
+    # Verify file tạm trước khi replace
+    if verify_wrapper_script; then
+        mv "$tmp_wrapper" "$WRAPPER_SCRIPT"
+        log_success "Wrapper created and verified at $WRAPPER_SCRIPT"
+    else
+        rm -f "$tmp_wrapper"
+        log_error "New wrapper failed verification — keeping existing wrapper"
+        return 1
+    fi
 }
 
 start_redsocks_service() {
@@ -799,6 +855,16 @@ format_uptime() {
     fi
 }
 
+get_tray_status_age() {
+    local now; now=$(date +%s)
+    echo $(( now - TRAY_STATUS_TS ))
+}
+
+is_tray_status_stale() {
+    local max_age="${1:-120}"  # default: stale nếu > 2 phút
+    [[ $(get_tray_status_age) -gt $max_age ]]
+}
+
 format_time_ago() {
     local seconds="$1"
     if [[ -z "$seconds" ]] || ! [[ "$seconds" =~ ^[0-9]+$ ]]; then echo "unknown"; return 0; fi
@@ -876,7 +942,12 @@ parse_node_info() {
     # Lấy tray state thực — đây là trạng thái thực của app, không phải API cache
     local ts
     ts=$(get_aro_tray_state 2>/dev/null || true)
-    [[ -n "$ts" ]] && TRAY_STATUS="$ts" || TRAY_STATUS="unknown"
+    if [[ -n "$ts" ]]; then
+        TRAY_STATUS="$ts"
+    else
+        TRAY_STATUS="unknown"
+    fi
+    TRAY_STATUS_TS=$(date +%s)
 
     return 0
 }
@@ -1541,6 +1612,13 @@ handle_stuck_connecting() {
 # Param $1: context label dùng cho log & notification
 _wait_for_aro_online() {
     local context="${1:-unknown}"
+    
+    # Guard: không cho chạy lồng nhau
+    if [[ "$_WAIT_FOR_ARO_ONLINE_RUNNING" == "true" ]]; then
+        watchdog_log "WARNING: _wait_for_aro_online already running (context: $context) — skipping"
+        return 0
+    fi
+    _WAIT_FOR_ARO_ONLINE_RUNNING=true
     local wait_start; wait_start=$(date +%s)
     local retry_count; retry_count=$(state_get "retry_count" "0")
 
@@ -1562,6 +1640,7 @@ _wait_for_aro_online() {
             send_notify_aro_reconnected "$context" "$elapsed"
             state_set "retry_count" "0"
             state_set "stable_since" "$(date +%s)"
+            _WAIT_FOR_ARO_ONLINE_RUNNING=false
             return 0
         fi
     done
@@ -1577,6 +1656,9 @@ _wait_for_aro_online() {
         send_notify_max_retries
         state_set "retry_count" "0"
     fi
+    
+    _WAIT_FOR_ARO_ONLINE_RUNNING=false
+    return 0
 }
 
 state_get() {
@@ -2652,7 +2734,9 @@ do_status() {
     
     load_configs
     detect_desktop_user
-    parse_node_info
+    if is_tray_status_stale 120; then
+        parse_node_info
+    fi
     get_last_online_info
 
     echo "═══════════════════════════════════════════════════════════════"
@@ -3414,6 +3498,17 @@ main() {
             log_info "Sending report to Telegram..."
             send_daily_report
             log_success "Report sent."
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        rollback-wrapper)
+            if [[ -f "${WRAPPER_SCRIPT}.bak" ]]; then
+                cp "${WRAPPER_SCRIPT}.bak" "$WRAPPER_SCRIPT"
+                chmod +x "$WRAPPER_SCRIPT"
+                log_success "Wrapper rolled back from backup"
+            else
+                log_error "No backup found at ${WRAPPER_SCRIPT}.bak"
+            fi
             SHOW_FOOTER_ON_EXIT=1
             ;;
 
