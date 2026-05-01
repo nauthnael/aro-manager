@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.8
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.9
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.8"
+SCRIPT_VERSION="3.4.9"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -45,6 +45,8 @@ IPTABLES_RULES_FILE="/etc/iptables/rules.v4"
 # Runtime files
 PID_FILE="/tmp/aro_watchdog_manager.pid"
 STATE_FILE="/tmp/aro_watchdog_state_manager"
+MAINTENANCE_FLAG="/tmp/aro_maintenance"
+MAINTENANCE_EXPIRE_MINS=60    # Tự hết hạn sau 60 phút
 
 # Proxy settings
 REDSOCKS_PORT=12345
@@ -144,7 +146,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.8         ║
+║         ARO Manager - Complete Node Management v3.4.9         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -1704,6 +1706,43 @@ _wait_for_aro_online() {
     return 0
 }
 
+# ── Maintenance mode helpers ────────────────────────────────────
+
+# Set maintenance mode (tạo flag file)
+maintenance_set() {
+    touch "$MAINTENANCE_FLAG"
+    watchdog_log "Maintenance mode ENABLED by user"
+}
+
+# Clear maintenance mode (xóa flag file)
+maintenance_clear() {
+    rm -f "$MAINTENANCE_FLAG"
+    watchdog_log "Maintenance mode CLEARED"
+}
+
+# Check có đang trong maintenance mode không (kể cả check expire)
+is_maintenance_mode() {
+    [[ ! -f "$MAINTENANCE_FLAG" ]] && return 1   # không có flag → không maintenance
+    
+    # Kiểm tra expiry: nếu file cũ hơn MAINTENANCE_EXPIRE_MINS → tự expire
+    if find "$MAINTENANCE_FLAG" -mmin +"$MAINTENANCE_EXPIRE_MINS" 2>/dev/null | grep -q .; then
+        rm -f "$MAINTENANCE_FLAG"
+        watchdog_log "Maintenance mode expired (>${MAINTENANCE_EXPIRE_MINS}m) — auto-cleared"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Trả về số phút maintenance đã active
+maintenance_age_mins() {
+    if [[ -f "$MAINTENANCE_FLAG" ]]; then
+        echo $(( ( $(date +%s) - $(stat -c %Y "$MAINTENANCE_FLAG" 2>/dev/null || echo 0) ) / 60 ))
+    else
+        echo "0"
+    fi
+}
+
 state_get() {
     local key="$1"
     local default="${2:-}"
@@ -1761,6 +1800,14 @@ watchdog_loop() {
 
     while true; do
         local now; now=$(date +%s)
+
+        # ── Maintenance mode check ──────────────────────────────────
+        if is_maintenance_mode; then
+            local maint_age; maint_age=$(maintenance_age_mins)
+            watchdog_log "Maintenance mode active (${maint_age}m) — skipping ARO checks"
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
 
         # ── Real proxy check every PROXY_CHECK_INTERVAL (5 min) ──
         if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
@@ -2951,6 +2998,13 @@ _do_debug_inner() {
         _issue "ARO process NOT running"
     fi
     
+    # Maintenance mode check
+    if is_maintenance_mode; then
+        local maint_age; maint_age=$(maintenance_age_mins)
+        _warn "Maintenance mode is ACTIVE (${maint_age}m) — ARO intentionally stopped by user"
+        _info "Run 'sudo ./aro-manager.sh start' to resume"
+    fi
+    
     # Tray state
     local tray; tray=$(get_aro_tray_state)
     _info "Tray state (from log): ${tray:-unknown}"
@@ -3172,7 +3226,11 @@ _do_debug_inner() {
     
     # Pattern: ARO not running
     if printf '%s\n' "${ISSUES[@]}" 2>/dev/null | grep -q "ARO process NOT running"; then
-        echo "  💡 ARO not running → force start: sudo ./aro-manager.sh start"
+        if is_maintenance_mode; then
+            echo "  💡 ARO is in maintenance mode → resume: sudo ./aro-manager.sh start"
+        else
+            echo "  💡 ARO not running → force start: sudo ./aro-manager.sh start"
+        fi
         has_suggestions=true
     fi
     
@@ -3212,6 +3270,141 @@ _do_debug_inner() {
     echo "═══════════════════════════════════════════════════════════════"
     echo "  Debug complete — $(date '+%Y-%m-%d %H:%M:%S')"
     echo "═══════════════════════════════════════════════════════════════"
+}
+
+# ───────────────────────────────────────────────────────────────
+# COMMAND: ARO DIRECT CONTROL (v3.4.9)
+# ───────────────────────────────────────────────────────────────
+
+do_aro_stop() {
+    require_root
+    load_configs
+    detect_desktop_user
+
+    log_info "Stopping ARO and enabling maintenance mode..."
+
+    # 1. Set maintenance mode TRƯỚC — để watchdog không restart ngay khi ARO bị kill
+    maintenance_set
+
+    # 2. Kill ARO
+    if is_aro_running; then
+        kill_aro
+        log_success "ARO process stopped"
+    else
+        log_info "ARO was not running"
+    fi
+
+    # 3. Warn nếu watchdog đang chạy
+    if systemctl is-active --quiet aro-watchdog; then
+        log_warn "Watchdog is still running but will NOT restart ARO (maintenance mode active)"
+        log_warn "Maintenance mode auto-expires in ${MAINTENANCE_EXPIRE_MINS} minutes"
+        log_info "To resume: sudo ./aro-manager.sh start"
+    fi
+
+    log_success "ARO stopped. Maintenance mode ON — watchdog paused."
+}
+
+do_aro_start() {
+    require_root
+    load_configs
+    detect_desktop_user
+
+    log_info "Starting ARO..."
+
+    # 1. Check proxy trước — nếu redsocks không chạy thì báo lỗi rõ ràng
+    if ! systemctl is-active --quiet redsocks-aro; then
+        log_error "Redsocks proxy is NOT running — cannot start ARO safely (kill-switch active)"
+        log_error "Fix: sudo systemctl start redsocks-aro"
+        exit 1
+    fi
+
+    if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
+        log_error "Redsocks port $REDSOCKS_PORT is not listening — proxy not ready"
+        log_error "Fix: sudo systemctl restart redsocks-aro"
+        exit 1
+    fi
+
+    # 2. Clear maintenance mode
+    if is_maintenance_mode; then
+        log_info "Clearing maintenance mode..."
+        maintenance_clear
+    fi
+
+    # 3. Nếu ARO đã đang chạy thì báo và thoát
+    if is_aro_running; then
+        local pid; pid=$(get_aro_pid)
+        log_info "ARO is already running (PID: $pid)"
+        return 0
+    fi
+
+    # 4. Nếu watchdog đang stop → start lại watchdog (watchdog sẽ tự launch ARO)
+    if ! systemctl is-active --quiet aro-watchdog; then
+        log_info "Watchdog is not running — starting watchdog (it will launch ARO)..."
+        systemctl start aro-watchdog
+        sleep 3
+        if systemctl is-active --quiet aro-watchdog; then
+            log_success "Watchdog started — ARO will launch within ${CHECK_INTERVAL}s"
+        else
+            log_error "Failed to start watchdog"
+            exit 1
+        fi
+        return 0
+    fi
+
+    # 5. Watchdog đang chạy → launch ARO trực tiếp luôn (không đợi next cycle)
+    log_info "Launching ARO directly..."
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    launch_aro
+    state_set "last_restart" "$(date +%s)"
+    state_set "stable_since" "$(date +%s)"
+
+    # 6. Poll tối đa 30s cho ARO start
+    log_info "Waiting for ARO to start (up to 30s)..."
+    local wait_start; wait_start=$(date +%s)
+    while true; do
+        local elapsed=$(( $(date +%s) - wait_start ))
+        if [[ $elapsed -ge 30 ]]; then
+            break
+        fi
+        sleep 3
+        if is_aro_running; then
+            local pid; pid=$(get_aro_pid)
+            log_success "ARO started successfully (PID: $pid)"
+            return 0
+        fi
+        echo -n "."
+    done
+    echo ""
+
+    # 7. Kiểm tra wrapper log để diagnose nếu thất bại
+    if ! is_aro_running; then
+        log_error "ARO failed to start after 30s"
+        log_error "Check wrapper log for details:"
+        tail -5 "$WRAPPER_LOG" 2>/dev/null | sed 's/^/  /' || true
+        log_info "Run 'sudo ./aro-manager.sh debug' for full diagnosis"
+        exit 1
+    fi
+}
+
+do_aro_restart() {
+    require_root
+    load_configs
+    detect_desktop_user
+
+    log_info "Restarting ARO..."
+
+    # Stop (set maintenance + kill)
+    maintenance_set
+    if is_aro_running; then
+        kill_aro
+        log_info "ARO stopped"
+    fi
+
+    sleep 3
+
+    # Clear maintenance và start
+    maintenance_clear
+    do_aro_start
 }
 
 # ───────────────────────────────────────────────────────────────
@@ -3286,8 +3479,16 @@ do_status() {
     else
         echo "  Status: ✗ Not running"
     fi
-    local retry_count
-    retry_count=$(state_get "retry_count" "0")
+
+    # Maintenance mode indicator
+    if is_maintenance_mode; then
+        local maint_age; maint_age=$(maintenance_age_mins)
+        local maint_expire_remaining=$(( MAINTENANCE_EXPIRE_MINS - maint_age ))
+        echo "  ⏸️  Maintenance: ACTIVE (set ${maint_age}m ago, auto-expires in ${maint_expire_remaining}m)"
+        echo "       ARO will NOT auto-restart until: sudo ./aro-manager.sh start"
+    fi
+
+    local retry_count; retry_count=$(state_get "retry_count" "0")
     echo "  Check Interval: ${CHECK_INTERVAL}s"
     echo "  Max Retries:    $MAX_RETRIES"
     echo "  Retry Count:    $retry_count/$MAX_RETRIES"
@@ -3554,7 +3755,10 @@ do_uninstall() {
     log_info "Configuration removed"
     
     # Remove state files
-    rm -f "$PID_FILE" "$STATE_FILE" "${STATE_FILE}.lock"
+    rm -f "$PID_FILE"
+    rm -f "$STATE_FILE"
+    rm -f "$MAINTENANCE_FLAG"
+    log_info "State files removed"
     
     echo ""
     log_success "Uninstall complete"
@@ -3696,6 +3900,9 @@ MAIN COMMANDS:
   debug               Run full diagnostic: services, logs, network live test
                       Auto-detects issues and suggests fixes
                       Output saved to: aro-debug-YYYYMMDD-HHMMSS.log
+  start               Start ARO manually (clears maintenance mode, starts watchdog if needed)
+  stop                Stop ARO and pause watchdog auto-restart (maintenance mode ON)
+  restart             Stop then start ARO
   fix-wrapper         Recreate the ARO launch wrapper script (use if ARO is blocked by wrapper error)
   update              Cập nhật script: rebuild wrapper + restart services
   report              Send daily report to Telegram immediately
@@ -3720,6 +3927,15 @@ EXAMPLES:
 
   # Check status
   sudo bash $SCRIPT_NAME status
+
+  # Stop ARO (watchdog paused — won't auto-restart)
+  sudo bash $SCRIPT_NAME stop
+
+  # Start ARO again (clears maintenance mode)
+  sudo bash $SCRIPT_NAME start
+
+  # Quick restart
+  sudo bash $SCRIPT_NAME restart
 
   # Test proxy
   sudo bash $SCRIPT_NAME proxy test
@@ -3864,6 +4080,21 @@ main() {
                 log_error "Wrapper fix failed — check logs"
                 exit 1
             fi
+            ;;
+
+        start)
+            do_aro_start
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        stop)
+            do_aro_stop
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        restart)
+            do_aro_restart
+            SHOW_FOOTER_ON_EXIT=1
             ;;
             
         proxy)
