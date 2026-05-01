@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.1
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.2
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.1"
+SCRIPT_VERSION="3.4.2"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -133,7 +133,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.1         ║
+║         ARO Manager - Complete Node Management v3.4.2         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -654,7 +654,7 @@ create_wrapper_script() {
 
 REAL_ARO="/usr/bin/ARO"
 LOG="/tmp/aro-wrapper.log"
-REDSOCKS_PORT=12345
+REDSOCKS_PORT=$(grep '^REDSOCKS_PORT=' /etc/aro-manager/proxy.conf 2>/dev/null | cut -d'=' -f2 || echo "12345")
 
 log_msg() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
@@ -1053,7 +1053,7 @@ launch_aro() {
             env DISPLAY="$DISPLAY_NUM" XAUTHORITY="$XAUTHORITY_PATH" LIBGL_ALWAYS_SOFTWARE="1" \
             "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
     else
-        local launch_cmd="DISPLAY=$DISPLAY_NUM XAUTHORITY=$XAUTHORITY_PATH LIBGL_ALWAYS_SOFTWARE=1 $WRAPPER_SCRIPT"
+        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 \"${WRAPPER_SCRIPT}\""
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
@@ -1561,15 +1561,15 @@ state_set() {
         flock -w 5 200 || exit 1
         
         if [[ -f "$STATE_FILE" ]]; then
-            grep -v "^${key}=" "$STATE_FILE" > "$temp" 2>/dev/null || true
+            grep -v "^${key}=" "$STATE_FILE" > "$temp" 2>/dev/null
         else
             : > "$temp"
         fi
         
         echo "${key}=${value}" >> "$temp"
-        mv "$temp" "$STATE_FILE"
+        [[ -f "$temp" ]] && mv "$temp" "$STATE_FILE" || return 1
         
-    ) 200>"$lock"
+    ) 200>"$lock" || watchdog_log "WARNING: state_set '$key' failed (flock timeout or write error)"
 }
 
 watchdog_loop() {
