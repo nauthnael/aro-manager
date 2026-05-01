@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.9
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.9"
+SCRIPT_VERSION="3.5.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -146,7 +146,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.9         ║
+║         ARO Manager - Complete Node Management v3.5.0         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -992,13 +992,43 @@ get_last_online_info() {
         | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
 
     if [[ "$tray_state" == "Online" ]]; then
-        # Tìm dòng tray=Online ĐẦU TIÊN sau Net init hiện tại
         local online_ts=""
+
         if [[ -n "$net_init_ts" ]]; then
-            online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
-                | awk -v cutoff="$net_init_ts" '$0 > cutoff' \
-                | head -1 \
-                | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
+            # Convert net_init_ts sang epoch để so sánh chính xác
+            local net_init_ep; net_init_ep=$(date -d "$net_init_ts" +%s 2>/dev/null || echo 0)
+
+            if [[ "$net_init_ep" -gt 0 ]]; then
+                # Tìm dòng tray=Online ĐẦU TIÊN có timestamp > net_init_ep
+                online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+                    | while IFS= read -r line; do
+                        ts=$(echo "$line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
+                        [[ -z "$ts" ]] && continue
+                        ep=$(date -d "$ts" +%s 2>/dev/null || echo 0)
+                        if [[ "$ep" -gt "$net_init_ep" ]]; then
+                            echo "$ts"
+                            break
+                        fi
+                    done || true)
+            fi
+        fi
+
+        # Fallback: nếu không tìm được qua Net init, dùng last_restart từ state file
+        if [[ -z "$online_ts" ]]; then
+            local last_restart; last_restart=$(state_get "last_restart" "0")
+            if [[ "$last_restart" -gt 0 ]]; then
+                # Tìm dòng tray=Online đầu tiên sau last_restart
+                online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+                    | while IFS= read -r line; do
+                        ts=$(echo "$line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
+                        [[ -z "$ts" ]] && continue
+                        ep=$(date -d "$ts" +%s 2>/dev/null || echo 0)
+                        if [[ "$ep" -gt "$last_restart" ]]; then
+                            echo "$ts"
+                            break
+                        fi
+                    done || true)
+            fi
         fi
 
         if [[ -n "$online_ts" ]]; then
@@ -1008,6 +1038,7 @@ get_last_online_info() {
                 LAST_ONLINE_AGO=$(format_time_ago $(( now - ep )))
             fi
         else
+            # Đang online nhưng không tìm được timestamp → hiện "Currently online"
             LAST_ONLINE_LABEL="🟢 Currently online"
             LAST_ONLINE_AGO=""
         fi
@@ -1181,7 +1212,8 @@ send_notify_restart_success() {
     local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
     local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
 
-    local msg="✅ <b>[ARO RESTARTED] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="✅ <b>[ARO RESTARTED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 👤 User: ${EFFECTIVE_USER}
@@ -1189,6 +1221,7 @@ send_notify_restart_success() {
 📧 Account: ${EMAIL}
 🌐 IP: ${PUBLIC_IP}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 🔄 Retry: ${retry_count}/${MAX_RETRIES}
 ──────────────────────
 💰 Reward today:     ${f_today} pts
@@ -1204,11 +1237,13 @@ send_notify_max_retries() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
 
-    local msg="🚨 <b>[ARO MAX RETRIES] ${HOSTNAME}</b>
+    local msg="🚨 <b>[ARO MAX RETRIES] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔢 Serial: ${SERIAL}
 📧 Account: ${EMAIL}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   $(get_vnc_access_ip):${VNC_PORT}
 ⚠️ Failed after ${MAX_RETRIES} attempts
 🛑 Watchdog stopped retrying
 👉 Manual intervention required!
@@ -1234,11 +1269,13 @@ send_notify_pre_restart() {
     fi
     _last_pre_restart_notify=$now
 
-    local msg="⚠️ <b>[ARO RESTARTING] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="⚠️ <b>[ARO RESTARTING] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 👤 User: ${EFFECTIVE_USER}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 🔄 Retry: ${retry_count}/${MAX_RETRIES}
 ──────────────────────
 📊 Tray state: ${tray_state:-unknown}
@@ -1263,10 +1300,12 @@ send_notify_proxy_down() {
     fi
     _last_proxy_down_notify=$now
 
-    local msg="🚨 <b>[PROXY DOWN] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="🚨 <b>[PROXY DOWN] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 ⚠️ Reason: ${reason}
 🛡️ ARO launch blocked (kill-switch active)
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
@@ -1281,7 +1320,7 @@ send_notify_proxy_recovered() {
     local context_label="Auto-recovery (routine check)"
     [[ "$context" == "stuck_connecting" ]] && context_label="Recovery triggered by ARO stuck-connecting"
 
-    local msg="✅ <b>[PROXY RECOVERED] ${HOSTNAME}</b>
+    local msg="✅ <b>[PROXY RECOVERED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
@@ -1293,7 +1332,7 @@ send_notify_proxy_recovered() {
 }
 
 send_notify_redsocks_restarted() {
-    local msg="🔄 <b>[REDSOCKS RESTARTED] ${HOSTNAME}</b>
+    local msg="🔄 <b>[REDSOCKS RESTARTED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
@@ -1324,7 +1363,8 @@ send_notify_aro_reconnected() {
     [[ "$context" == "redsocks_recovered" ]] && cause_label="Redsocks hung → restarted → ARO reconnected"
     [[ "$context" == "proxy_ok_aro_restarted" ]] && cause_label="Network OK, ARO app restarted"
 
-    local msg="✅ <b>[ARO RECONNECTED] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="✅ <b>[ARO RECONNECTED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 👤 User: ${EFFECTIVE_USER}
@@ -1332,6 +1372,7 @@ send_notify_aro_reconnected() {
 📧 Account: ${EMAIL}
 🌐 Exit IP: ${PUBLIC_IP}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 ──────────────────────
 🔧 Cause: ${cause_label}
 ⏱️ Recovery time: ${elapsed_min}m ${elapsed_secs}s
@@ -1353,12 +1394,14 @@ send_notify_aro_stuck_manual() {
     local cause_label="Proxy OK nhưng ARO không reconnect"
     [[ "$context" == "proxy_recovered" ]] && cause_label="Proxy đã recover nhưng ARO vẫn không connect"
 
-    local msg="⚠️ <b>[ARO STUCK] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="⚠️ <b>[ARO STUCK] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔢 Serial: ${SERIAL}
 📧 Account: ${EMAIL}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 ──────────────────────
 ❌ ARO không kết nối được sau ${CONNECTING_WAIT_SECS}s
 🔧 Context: ${cause_label}
@@ -1370,10 +1413,11 @@ send_notify_aro_stuck_manual() {
 }
 
 send_notify_proxy_dead() {
-    local msg="🚨 <b>[PROXY DEAD] ${HOSTNAME}</b>
+    local msg="🚨 <b>[PROXY DEAD] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   $(get_vnc_access_ip):${VNC_PORT}
 ⏱️ Timeout: ${PROXY_RESTART_TIMEOUT_SECS}s
 ❌ Redsocks restart FAILED — ARO đang tắt
 🛑 Kill-switch đang hoạt động
@@ -1406,21 +1450,23 @@ send_daily_report() {
         *)          tray_display="❓ ${CONNECT_STATUS:-unknown}" ;;
     esac
 
-    local msg="📊 <b>[ARO DAILY REPORT] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="📊 <b>[ARO DAILY REPORT] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
-22: 🖥️ VPS: ${HOSTNAME}
-23: 🔢 Serial: ${SERIAL}
-24: 📧 Account: ${EMAIL}
-25: 🌐 IP: ${PUBLIC_IP}
-26: 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-27: ─────── Reward ───────
-28: 💰 Today:     ${f_today} pts
-29: 💰 Yesterday: ${f_yest} pts
-30: ${trend}
-31: 📶 Uptime: ${f_up}%
-32: 📡 Status: ${tray_display}
-33: ${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
-34: 📅 Date: $(date '+%Y-%m-%d %H:%M:%S')"
+🖥️ VPS: ${HOSTNAME}
+🔢 Serial: ${SERIAL}
+📧 Account: ${EMAIL}
+🌐 IP: ${PUBLIC_IP}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
+─────── Reward ───────
+💰 Today:     ${f_today} pts
+💰 Yesterday: ${f_yest} pts
+${trend}
+📶 Uptime: ${f_up}%
+📡 Status: ${tray_display}
+${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
+📅 Date: $(date '+%Y-%m-%d %H:%M:%S')"
 
     send_telegram "$msg"
 }
@@ -1435,7 +1481,8 @@ send_notify_setup_success() {
     local f_yest;  f_yest=$(format_number "$REWARD_YESTERDAY")
     local f_up;    f_up=$(format_uptime "$UPTIME_RATIO")
 
-    local msg="🚀 <b>[ARO MANAGER INSTALLED] ${HOSTNAME}</b>
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
+    local msg="🚀 <b>[ARO MANAGER INSTALLED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 👤 ARO User: ${EFFECTIVE_USER}
@@ -1443,6 +1490,7 @@ send_notify_setup_success() {
 📧 Account: ${EMAIL}
 🌐 IP: ${PUBLIC_IP}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 🤖 Watchdog: ${mode} mode
 ──────────────────────
 💰 Reward today:     ${f_today} pts
@@ -2048,6 +2096,17 @@ get_local_ip() {
     echo "${ip:-N/A}"
 }
 
+get_vnc_access_ip() {
+    # LXC/VM → dùng IP LAN của interface chính
+    # VPS/bare metal → dùng public IP
+    if [[ "$ENV_TYPE" == "lxc_vnc" ]] || [[ "$ENV_TYPE" == "lxc_crd" ]]; then
+        get_local_ip
+    else
+        # VPS: dùng public IP
+        get_real_ip
+    fi
+}
+
 verify_proxy_ip() {
     # Run as CRD user → goes through redsocks → must differ from real IP
     local real_ip="$1"
@@ -2349,7 +2408,7 @@ _send_deploy_report() {
     local vnc_or_crd="VNC (port $VNC_PORT)"
     [[ "$REMOTE_MODE" == "crd" ]] && vnc_or_crd="Chrome Remote Desktop"
 
-    local msg="🚀 <b>[ARO DEPLOY COMPLETE] ${HOSTNAME}</b>
+    local msg="🚀 <b>[ARO DEPLOY COMPLETE] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ Host:     ${HOSTNAME}
 🌐 IP:       ${machine_ip}
@@ -2358,13 +2417,14 @@ _send_deploy_report() {
 👤 User:     ubuntu
 ──────────────────────
 🔌 Proxy:    ${PROXY_HOST}:${PROXY_PORT}
+🖥️ VNC:      $(get_vnc_access_ip):${VNC_PORT}
 🤖 Watchdog: ✅ Active
 ──────────────────────
 🔢 Serial:   ${SERIAL:-Chờ ARO kết nối...}
 📧 Account:  ${EMAIL:-N/A}
 ──────────────────────
 📡 Kết nối:
-   <code>${machine_ip}:${VNC_PORT}</code>
+   <code>$(get_vnc_access_ip):${VNC_PORT}</code>
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
     send_telegram "$msg"
