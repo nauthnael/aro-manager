@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.2
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.3
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.2"
+SCRIPT_VERSION="3.4.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -133,7 +133,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.2         ║
+║         ARO Manager - Complete Node Management v3.4.3         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -344,10 +344,16 @@ send_telegram() {
     local escaped_msg
     escaped_msg=$(echo "$message" | sed 's/"/\\"/g')
     
-    curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" \
         -d "{\"chat_id\":\"${TG_CHAT_ID}\",\"text\":\"${escaped_msg}\",\"parse_mode\":\"HTML\"}" \
-        > /dev/null 2>&1 || true
+        --max-time 10 2>/dev/null || echo "000")
+    
+    if [[ "$http_code" != "200" ]]; then
+        watchdog_log "WARNING: Telegram notification failed (HTTP $http_code)"
+    fi
 }
 
 validate_telegram_credentials() {
@@ -593,8 +599,14 @@ setup_iptables_rules() {
     proxy_ip=$(getent hosts "$PROXY_HOST" | awk '{ print $1 }' | head -n1)
     
     if [[ -z "$proxy_ip" ]]; then
-        log_warn "Cannot resolve proxy hostname, using hostname directly"
-        proxy_ip="$PROXY_HOST"
+        # Fallback: dùng dig
+        proxy_ip=$(dig +short "$PROXY_HOST" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+    fi
+    
+    if [[ -z "$proxy_ip" ]] || [[ ! "$proxy_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        log_error "Cannot resolve proxy hostname '$PROXY_HOST' to IP. Setup aborted."
+        log_error "Check DNS or provide IP directly in config."
+        return 1
     fi
     
     log_info "Proxy IP: $proxy_ip"
@@ -778,7 +790,13 @@ format_number() {
 format_uptime() {
     local ratio="$1"
     if [[ -z "$ratio" ]] || [[ "$ratio" == "N/A" ]]; then echo "N/A"; return 0; fi
-    echo "$ratio" | awk '{printf "%.1f", $1 * 100}' || echo "N/A"
+    local result
+    result=$(echo "$ratio" | awk '{printf "%.1f", $1 * 100}' 2>/dev/null)
+    if [[ -z "$result" ]]; then
+        echo "N/A"
+    else
+        echo "$result"
+    fi
 }
 
 format_time_ago() {
@@ -1107,8 +1125,30 @@ send_notify_max_retries() {
     send_telegram "$msg"
 }
 
-# Epoch of last proxy-down Telegram alert (throttle state, in-memory)
 _last_proxy_down_notify=0
+
+send_notify_pre_restart() {
+    local reason="$1"          # Mô tả lý do kỹ thuật
+    local tray_state="$2"      # tray state lúc phát hiện
+    local stuck_mins="${3:-0}" # Số phút đã stuck (nếu có)
+    local retry_count="${4:-?}"
+
+    local msg="⚠️ <b>[ARO RESTARTING] ${HOSTNAME}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+👤 User: ${EFFECTIVE_USER}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🔄 Retry: ${retry_count}/${MAX_RETRIES}
+──────────────────────
+📊 Tray state: ${tray_state:-unknown}
+⏱️ Stuck duration: ${stuck_mins}m
+❌ Reason: ${reason}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
+
+<i>Attempting restart...</i>"
+
+    send_telegram "$msg"
+}
 
 send_notify_proxy_down() {
     local reason="${1:-redsocks service not running}"
@@ -1434,9 +1474,11 @@ handle_stuck_connecting() {
     watchdog_log "ARO stuck NoInternet for ${stuck_mins}m — starting recovery"
 
     # ── Bước 1: Test path thực sự của ARO (ubuntu traffic) ──────
+    local tray_state; tray_state=$(get_aro_tray_state)
     if ! check_redsocks_functional; then
         # Redsocks transparent proxy bị broken (hung hoặc lỗi iptables)
         watchdog_log "Transparent proxy BROKEN — redsocks issue"
+        send_notify_pre_restart "Transparent proxy broken (redsocks hung/iptables error)" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
         kill_aro
         
         # Restart redsocks và poll đến khi functional hoặc timeout
@@ -1477,6 +1519,7 @@ handle_stuck_connecting() {
     if ! check_real_proxy 2>/dev/null; then
         # Proxy server thực sự offline
         watchdog_log "Upstream proxy server DOWN — killing ARO to protect IP"
+        send_notify_pre_restart "Upstream SOCKS5 proxy server unreachable" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
         kill_aro
         send_notify_proxy_down "proxy server unreachable"
         return 0
@@ -1485,6 +1528,7 @@ handle_stuck_connecting() {
     # ── Bước 3: Mạng OK hết nhưng ARO vẫn stuck ────────────────
     # Có thể app gặp vấn đề nội bộ
     watchdog_log "Network path OK but ARO still stuck — restarting ARO app"
+    send_notify_pre_restart "Network OK but ARO app stuck internally" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
     kill_aro
     sleep 3
     launch_aro
@@ -1523,11 +1567,10 @@ _wait_for_aro_online() {
     done
 
     # Hết thời gian, vẫn không online
-    retry_count=$(( retry_count + 1 ))
-    state_set "retry_count" "$retry_count"
-    watchdog_log "ARO still not online after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
-
-    if [[ "$retry_count" -le "$MAX_RETRIES" ]]; then
+    if [[ "$retry_count" -lt "$MAX_RETRIES" ]]; then
+        retry_count=$(( retry_count + 1 ))
+        state_set "retry_count" "$retry_count"
+        watchdog_log "ARO still not online after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
         send_notify_aro_stuck_manual "$retry_count" "$context"
     else
         watchdog_log "MAX RETRIES reached ($MAX_RETRIES) — giving up"
@@ -1676,13 +1719,11 @@ watchdog_loop() {
                 if check_disconnect_alert; then
                     watchdog_log "Recent disconnect detected, attempting restart"
                     
-                    # Increment retry counter
-                    local retry_count
-                    retry_count=$(state_get "retry_count" "0")
-                    retry_count=$((retry_count + 1))
-                    state_set "retry_count" "$retry_count"
-                    
-                    if [[ $retry_count -le $MAX_RETRIES ]]; then
+                    local retry_count; retry_count=$(state_get "retry_count" "0")
+                    if [[ $retry_count -lt $MAX_RETRIES ]]; then
+                        retry_count=$((retry_count + 1))
+                        state_set "retry_count" "$retry_count"
+                        
                         # Apply backoff delay
                         local backoff_array=($BACKOFF_TIMES)
                         local backoff_index=$((retry_count - 1))
@@ -1699,6 +1740,10 @@ watchdog_loop() {
                             sleep "$backoff_delay"
                         fi
                         
+                        # Notify BEFORE kill
+                        local disc_mins; disc_mins=$(get_disconnect_duration)
+                        send_notify_pre_restart "Log stale >$LOG_STALE_MINUTES min, disconnected ${disc_mins}min" "$(get_aro_tray_state)" "$disc_mins" "$retry_count"
+
                         # Kill and restart
                         kill_aro
                         sleep 3
@@ -1730,10 +1775,13 @@ watchdog_loop() {
             
             local retry_count
             retry_count=$(state_get "retry_count" "0")
-            retry_count=$((retry_count + 1))
-            state_set "retry_count" "$retry_count"
             
-            if [[ $retry_count -le $MAX_RETRIES ]]; then
+            if [[ $retry_count -lt $MAX_RETRIES ]]; then
+                retry_count=$((retry_count + 1))
+                state_set "retry_count" "$retry_count"
+                watchdog_log "ARO not running, starting... (Retry $retry_count/$MAX_RETRIES)"
+                
+                send_notify_pre_restart "ARO process not found (crashed or killed)" "not_running" "0" "$retry_count"
                 launch_aro
                 state_set "last_restart" "$(date +%s)"
                 state_set "stable_since" "$(date +%s)"
@@ -1747,7 +1795,7 @@ watchdog_loop() {
                     watchdog_log "ARO failed to start"
                 fi
             else
-                watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - not attempting start"
+                watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up"
                 send_notify_max_retries
                 state_set "retry_count" "0"
             fi
