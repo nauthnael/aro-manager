@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.4
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.5
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.4"
+SCRIPT_VERSION="3.4.5"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -52,28 +52,29 @@ PROXY_PORT=""
 PROXY_USER=""
 PROXY_PASS=""
 
-# Watchdog settings (defaults)
-CHECK_INTERVAL=30
-LOG_STALE_MINUTES=10
-DISCONNECT_ALERT_MINUTES=15
-STARTUP_TIMEOUT=120
-RESET_STABLE_HOURS=2
-MAX_RETRIES=5
-BACKOFF_TIMES="0 0 30 60 120"
-DAILY_REPORT_HOUR=7
+# ── Watchdog timing ──────────────────────────────────────────────
+CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không waste CPU
+LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
+DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
+STARTUP_TIMEOUT=120         # Chờ app init (VNC/X11) trước khi check log
+RESET_STABLE_HOURS=2        # Sau 2h stable liên tục, reset retry counter về 0
+MAX_RETRIES=5               # 5 lần retry với backoff trước khi give up
+BACKOFF_TIMES="0 0 30 60 120"  # retry 1&2: ngay lập tức; 3: 30s; 4: 60s; 5: 120s
+DAILY_REPORT_HOUR=7         # Giờ gửi daily report (0–23, không dùng leading zero)
 
 # Proxy connectivity check
 PROXY_CHECK_INTERVAL=300          # real proxy test every 5 minutes
-PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour when proxy is down
-PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))  # = 240s between alerts
+PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour khi proxy server lỗi
+PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))
 
 # ── Stuck-connecting watchdog ───────────────────────────────────
-CONNECTING_GRACE_SECS=180          # grace period sau launch (3 phút)
-CONNECTING_WAIT_SECS=300           # chờ ARO reconnect sau restart (5 phút)
-CONNECTING_POLL_INTERVAL=30        # poll interval trong khi chờ
-PROXY_RESTART_TIMEOUT_SECS=60      # timeout chờ proxy restart
-STUCK_THRESHOLD_MINUTES=5          # bao nhiêu phút "disconnected" = stuck
-REDSOCKS_QUEUE_THRESHOLD=500    # recv-Q vượt ngưỡng này = redsocks đang treo
+STUCK_THRESHOLD_MINUTES=5   # tray=NoInternet >5m = stuck thực sự (không phải fluctuation)
+CONNECTING_GRACE_SECS=180   # Sau launch, cho ARO 3 phút để connect trước khi coi là stuck
+CONNECTING_WAIT_SECS=300    # Chờ tối đa 5 phút cho ARO reconnect sau restart
+CONNECTING_POLL_INTERVAL=30 # Poll tray state mỗi 30s
+PROXY_RESTART_TIMEOUT_SECS=60 # Chờ tối đa 60s cho redsocks restart functional
+REDSOCKS_QUEUE_THRESHOLD=500  # recv-Q >500 bytes = redsocks backpressure, coi là hung
+                             # (empirically: healthy redsocks thường <100)
 
 # Telegram
 TRAY_STATUS="unknown"              # Trạng thái thực của ARO app (từ tray state log)
@@ -137,7 +138,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.4         ║
+║         ARO Manager - Complete Node Management v3.4.5         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -247,7 +248,12 @@ detect_vnc_user() {
 
     CRD_USER="$user"
     EFFECTIVE_USER="$user"
-    EFFECTIVE_HOME=$(eval echo "~$user")
+    EFFECTIVE_HOME=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+    if [[ -z "$EFFECTIVE_HOME" ]]; then
+        # Fallback cho trường hợp getent không có (container minimal)
+        EFFECTIVE_HOME="/home/$user"
+        [[ "$user" == "root" ]] && EFFECTIVE_HOME="/root"
+    fi
     ARO_LOG_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork/logs"
     ARO_DATA_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork"
 
@@ -292,7 +298,12 @@ detect_crd_user() {
 
     CRD_USER="$user"
     EFFECTIVE_USER="$user"
-    EFFECTIVE_HOME=$(eval echo "~$user")
+    EFFECTIVE_HOME=$(getent passwd "$user" 2>/dev/null | cut -d: -f6)
+    if [[ -z "$EFFECTIVE_HOME" ]]; then
+        # Fallback cho trường hợp getent không có (container minimal)
+        EFFECTIVE_HOME="/home/$user"
+        [[ "$user" == "root" ]] && EFFECTIVE_HOME="/root"
+    fi
     ARO_LOG_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork/logs"
     ARO_DATA_DIR="$EFFECTIVE_HOME/.local/share/com.aro.ARONetwork"
     XAUTHORITY_PATH="$EFFECTIVE_HOME/.Xauthority"
@@ -1526,18 +1537,32 @@ check_disconnect_alert() {
     [[ "$duration" -ge "$DISCONNECT_ALERT_MINUTES" ]]
 }
 
+# Trả về 0 (true) nếu đang trong grace period sau launch
+is_in_grace_period() {
+    local last_restart; last_restart=$(state_get "last_restart" "0")
+    local now; now=$(date +%s)
+    local since_launch=$(( now - last_restart ))
+    
+    [[ "$last_restart" -gt 0 ]] && [[ "$since_launch" -lt "$CONNECTING_GRACE_SECS" ]]
+}
+
+# Trả về số giây còn lại trong grace period
+grace_period_remaining() {
+    local last_restart; last_restart=$(state_get "last_restart" "0")
+    local now; now=$(date +%s)
+    local since_launch=$(( now - last_restart ))
+    local remaining=$(( CONNECTING_GRACE_SECS - since_launch ))
+    echo $(( remaining > 0 ? remaining : 0 ))
+}
+
 # Xử lý khi ARO process đang chạy nhưng không connect được (tray state != Online)
 # Param $1: số phút đã disconnected
 handle_stuck_connecting() {
     local stuck_mins="${1:-0}"
 
     # ── Grace period check ─────────────────────────────────────
-    local last_restart; last_restart=$(state_get "last_restart" "0")
-    local now; now=$(date +%s)
-    local since_launch=$(( now - last_restart ))
-
-    if [[ "$last_restart" -gt 0 ]] && [[ "$since_launch" -lt "$CONNECTING_GRACE_SECS" ]]; then
-        local remaining=$(( CONNECTING_GRACE_SECS - since_launch ))
+    if is_in_grace_period; then
+        local remaining; remaining=$(grace_period_remaining)
         watchdog_log "ARO disconnected ${stuck_mins}m but within grace period (${remaining}s remaining)"
         return 0
     fi
@@ -1767,8 +1792,9 @@ watchdog_loop() {
                         local last_restart; last_restart=$(state_get "last_restart" "0")
                         local since_launch=$(( now - last_restart ))
 
-                        if [[ "$last_restart" -gt 0 ]] && [[ "$since_launch" -lt "$CONNECTING_GRACE_SECS" ]]; then
-                            watchdog_log "ARO tray=Offline, in startup grace period (${since_launch}s)"
+                        if is_in_grace_period; then
+                            local remaining=$(( CONNECTING_GRACE_SECS - since_launch ))
+                            watchdog_log "ARO tray=Offline, in startup grace period (${remaining}s remaining)"
                         else
                             watchdog_log "ARO tray=Offline beyond grace period — treating as stuck"
                             local stuck_mins=$(( since_launch / 60 ))
@@ -1885,7 +1911,7 @@ watchdog_loop() {
         
         # Daily report
         local current_hour
-        current_hour=$(date +%H | sed 's/^0//')
+        current_hour=$(( 10#$(date +%H) ))   # Force base-10, an toàn với 08, 09
         
         if [[ $current_hour -eq $DAILY_REPORT_HOUR ]] && [[ $last_daily_hour -ne $current_hour ]]; then
             watchdog_log "Sending daily report..."
