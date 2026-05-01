@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.7
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.4.8
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.4.7"
+SCRIPT_VERSION="3.4.8"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -144,7 +144,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.4.7         ║
+║         ARO Manager - Complete Node Management v3.4.8         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -730,7 +730,8 @@ create_wrapper_script() {
 
 REAL_ARO="/usr/bin/ARO"
 LOG="/tmp/aro-wrapper.log"
-REDSOCKS_PORT=$(grep '^REDSOCKS_PORT=' /etc/aro-manager/proxy.conf 2>/dev/null | cut -d'=' -f2 || echo "12345")
+REDSOCKS_PORT=$(grep '^REDSOCKS_PORT=' /etc/aro-manager/proxy.conf 2>/dev/null | cut -d'=' -f2 | tr -d '[:space:]')
+REDSOCKS_PORT="${REDSOCKS_PORT:-12345}"   # fallback nếu config không có
 
 log_msg() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
@@ -3695,6 +3696,7 @@ MAIN COMMANDS:
   debug               Run full diagnostic: services, logs, network live test
                       Auto-detects issues and suggests fixes
                       Output saved to: aro-debug-YYYYMMDD-HHMMSS.log
+  fix-wrapper         Recreate the ARO launch wrapper script (use if ARO is blocked by wrapper error)
   update              Cập nhật script: rebuild wrapper + restart services
   report              Send daily report to Telegram immediately
   uninstall           Remove everything
@@ -3847,6 +3849,21 @@ main() {
         debug)
             do_debug
             SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        fix-wrapper)
+            require_root
+            load_configs
+            detect_desktop_user
+            log_info "Recreating wrapper script..."
+            create_wrapper_script
+            if verify_wrapper_script; then
+                log_success "Wrapper fixed successfully at $WRAPPER_SCRIPT"
+                log_info "You can now run: sudo ./aro-manager.sh start"
+            else
+                log_error "Wrapper fix failed — check logs"
+                exit 1
+            fi
             ;;
             
         proxy)
