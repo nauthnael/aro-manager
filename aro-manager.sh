@@ -148,9 +148,9 @@ watchdog_log() {
 }
 
 show_banner() {
-    cat << 'EOF'
+    cat << EOF
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.5.1         ║
+║         ARO Manager - Complete Node Management v${SCRIPT_VERSION}         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
