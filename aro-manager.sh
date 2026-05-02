@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.1
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.2
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.1"
+SCRIPT_VERSION="3.5.2"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -55,6 +55,9 @@ PROXY_PORT=""
 PROXY_USER=""
 PROXY_PASS=""
 USE_PROXY=1    # 1 = dùng proxy (default), 0 = no-proxy mode
+
+# Telegram fallback endpoint (Cloudflare Worker — dùng khi api.telegram.org bị chặn)
+TG_API_FALLBACK_URL="https://tele-api.nauthnael.workers.dev"
 
 # ── Watchdog timing ──────────────────────────────────────────────
 CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không waste CPU
@@ -370,24 +373,45 @@ parse_proxy_string() {
 
 send_telegram() {
     local message="$1"
-    
+
     if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
         return 0
     fi
-    
+
     local escaped_msg
     escaped_msg=$(echo "$message" | sed 's/"/\\"/g')
-    
+
+    local payload="{\"chat_id\":\"${TG_CHAT_ID}\",\"text\":\"${escaped_msg}\",\"parse_mode\":\"HTML\"}"
+
+    # Hướng 1: Direct — api.telegram.org
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" \
-        -d "{\"chat_id\":\"${TG_CHAT_ID}\",\"text\":\"${escaped_msg}\",\"parse_mode\":\"HTML\"}" \
+        -d "$payload" \
         --max-time 10 2>/dev/null || echo "000")
-    
-    if [[ "$http_code" != "200" ]]; then
-        watchdog_log "WARNING: Telegram notification failed (HTTP $http_code)"
+
+    if [[ "$http_code" == "200" ]]; then
+        return 0
     fi
+
+    watchdog_log "WARNING: Telegram direct failed (HTTP $http_code) — trying fallback..."
+
+    # Hướng 2: Fallback — Cloudflare Worker proxy
+    local fallback_url="${TG_API_FALLBACK_URL:-https://tele-api.nauthnael.workers.dev}"
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        "${fallback_url}/bot${TG_BOT_TOKEN}/sendMessage" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --max-time 10 2>/dev/null || echo "000")
+
+    if [[ "$http_code" == "200" ]]; then
+        watchdog_log "Telegram sent via fallback (HTTP $http_code)"
+        return 0
+    fi
+
+    watchdog_log "WARNING: Telegram fallback also failed (HTTP $http_code)"
+    return 1
 }
 
 validate_telegram_credentials() {
@@ -519,6 +543,7 @@ save_watchdog_config() {
 # === Telegram ===
 TG_BOT_TOKEN="$TG_BOT_TOKEN"
 TG_CHAT_ID="$TG_CHAT_ID"
+TG_API_FALLBACK_URL="$TG_API_FALLBACK_URL"
 
 # === Timing ===
 CHECK_INTERVAL=$CHECK_INTERVAL
@@ -4097,6 +4122,7 @@ MAIN COMMANDS:
   fix-wrapper         Recreate the ARO launch wrapper script (use if ARO is blocked by wrapper error)
   update              Cập nhật script: rebuild wrapper + restart services
   report              Send daily report to Telegram immediately
+  test-telegram       Gửi tin nhắn Telegram thử để kiểm tra kết nối
   uninstall           Remove everything
 
 PROXY COMMANDS:
@@ -4488,6 +4514,31 @@ main() {
         uninstall)
             do_uninstall
             SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        test-telegram)
+            load_configs
+            if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
+                log_error "TG_BOT_TOKEN hoặc TG_CHAT_ID chưa được cấu hình"
+                log_info "Chạy deploy trước hoặc kiểm tra: $WATCHDOG_CONF_FILE"
+                exit 1
+            fi
+            log_info "Testing Telegram connection..."
+            log_info "  Direct:   https://api.telegram.org"
+            log_info "  Fallback: ${TG_API_FALLBACK_URL:-https://tele-api.nauthnael.workers.dev}"
+
+            local test_msg="🔧 <b>[ARO TEST] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+✅ Telegram connection OK
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+            if send_telegram "$test_msg"; then
+                log_success "Telegram test passed!"
+            else
+                log_error "Telegram test FAILED — cả direct lẫn fallback đều không kết nối được"
+                log_error "Kiểm tra bot token và chat ID có đúng không"
+                exit 1
+            fi
             ;;
 
         -h|--help|help)
