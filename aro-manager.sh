@@ -2115,8 +2115,9 @@ watchdog_loop() {
 
 create_watchdog_service() {
     log_info "Creating watchdog systemd service..."
-    
-    cat > "$SYSTEMD_WATCHDOG_SERVICE" << EOF
+
+    if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+        cat > "$SYSTEMD_WATCHDOG_SERVICE" << EOF
 [Unit]
 Description=ARO Manager Watchdog with Proxy Protection
 After=network.target redsocks-aro.service
@@ -2132,7 +2133,24 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-    
+    else
+        cat > "$SYSTEMD_WATCHDOG_SERVICE" << EOF
+[Unit]
+Description=ARO Manager Watchdog (No-Proxy Mode)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$SCRIPT_DIR/$SCRIPT_NAME watchdog-loop
+Restart=on-failure
+RestartSec=10s
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+
     systemctl daemon-reload
     log_success "Watchdog service created"
 }
