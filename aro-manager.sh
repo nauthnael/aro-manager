@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.2"
+SCRIPT_VERSION="3.5.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2344,10 +2344,27 @@ _setup_ssh_key() {
 }
 
 _create_swap() {
+    local min_swap_mb=1024   # Tối thiểu 1GB swap cho ARO + CRD/VNC
+
+    # Kiểm tra swap hiện tại
+    local current_swap_mb; current_swap_mb=$(free -m | awk '/^Swap:/ {print $2}' || echo 0)
+
+    if [[ "${current_swap_mb:-0}" -ge "$min_swap_mb" ]]; then
+        log_info "[SKIP] Swap đã đủ: ${current_swap_mb}MB (>= ${min_swap_mb}MB)"
+        return 0
+    fi
+
+    # Nếu có swap file cũ nhỏ hơn min → tắt và xóa trước khi tạo mới
+    if [[ "${current_swap_mb:-0}" -gt 0 ]] && [[ -f /swapfile ]]; then
+        log_info "Swap hiện tại ${current_swap_mb}MB < ${min_swap_mb}MB — đang resize..."
+        swapoff /swapfile 2>/dev/null || true
+        rm -f /swapfile
+    fi
+
     local disk_total_gb; disk_total_gb=$(df -BG / | awk 'NR==2 {gsub("G",""); print $2}' || echo 20)
     local swap_size=""
     local swap_mb=0
-    
+
     if [[ "$disk_total_gb" -lt 16 ]]; then
         swap_size="1G"; swap_mb=1024
     elif [[ "$disk_total_gb" -lt 30 ]]; then
@@ -2355,17 +2372,24 @@ _create_swap() {
     else
         swap_size="4G"; swap_mb=4096
     fi
-    
-    log_info "Disk: ${disk_total_gb}GB — Sẽ tạo swap ${swap_size}..."
-    fallocate -l "$swap_size" /swapfile || dd if=/dev/zero of=/swapfile bs=1M count="$swap_mb" status=progress
+
+    # Đảm bảo tối thiểu min_swap_mb dù disk nhỏ
+    if [[ "$swap_mb" -lt "$min_swap_mb" ]]; then
+        swap_mb=$min_swap_mb
+        swap_size="${min_swap_mb}M"
+    fi
+
+    log_info "RAM: $(free -m | awk '/^Mem:/ {print $2}')MB | Disk: ${disk_total_gb}GB — Tạo swap ${swap_size}..."
+    fallocate -l "$swap_size" /swapfile 2>/dev/null \
+        || dd if=/dev/zero of=/swapfile bs=1M count="$swap_mb" status=progress
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
-    
+
     if ! grep -q '/swapfile' /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
-    log_success "Đã tạo và kích hoạt swap ${swap_size}."
+    log_success "Đã tạo và kích hoạt swap ${swap_size} (total: $(free -m | awk '/^Swap:/ {print $2}')MB)"
 }
 
 _apply_swap_optimization() {
@@ -2587,12 +2611,7 @@ deploy_phase0_vps() {
     if [[ $is_lxc -eq 1 ]]; then
         log_info "[SKIP] Môi trường LXC — bỏ qua cấu hình swap"
     else
-        local swap_total; swap_total=$(free -m | awk '/^Swap:/ {print $2}' || echo 0)
-        if [[ "${swap_total:-0}" -gt 0 ]]; then
-            log_info "[SKIP] Swap đã tồn tại: ${swap_total}MB"
-        else
-            _create_swap
-        fi
+        _create_swap
         _apply_swap_optimization
     fi
 
@@ -3515,17 +3534,19 @@ do_aro_start() {
 
     log_info "Starting ARO..."
 
-    # 1. Check proxy trước — nếu redsocks không chạy thì báo lỗi rõ ràng
-    if ! systemctl is-active --quiet redsocks-aro; then
-        log_error "Redsocks proxy is NOT running — cannot start ARO safely (kill-switch active)"
-        log_error "Fix: sudo systemctl start redsocks-aro"
-        exit 1
-    fi
+    # 1. Check proxy trước — chỉ khi USE_PROXY=1
+    if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+        if ! systemctl is-active --quiet redsocks-aro; then
+            log_error "Redsocks proxy is NOT running — cannot start ARO safely (kill-switch active)"
+            log_error "Fix: sudo systemctl start redsocks-aro"
+            exit 1
+        fi
 
-    if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
-        log_error "Redsocks port $REDSOCKS_PORT is not listening — proxy not ready"
-        log_error "Fix: sudo systemctl restart redsocks-aro"
-        exit 1
+        if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
+            log_error "Redsocks port $REDSOCKS_PORT is not listening — proxy not ready"
+            log_error "Fix: sudo systemctl restart redsocks-aro"
+            exit 1
+        fi
     fi
 
     # 2. Clear maintenance mode
