@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.1
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.0"
+SCRIPT_VERSION="3.5.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -54,6 +54,7 @@ PROXY_HOST=""
 PROXY_PORT=""
 PROXY_USER=""
 PROXY_PASS=""
+USE_PROXY=1    # 1 = dùng proxy (default), 0 = no-proxy mode
 
 # ── Watchdog timing ──────────────────────────────────────────────
 CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không waste CPU
@@ -146,7 +147,7 @@ watchdog_log() {
 show_banner() {
     cat << 'EOF'
 ╔═══════════════════════════════════════════════════════════════╗
-║         ARO Manager - Complete Node Management v3.5.0         ║
+║         ARO Manager - Complete Node Management v3.5.1         ║
 ║      Transparent Proxy + Watchdog + Kill-Switch Protection    ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  GitHub: https://github.com/nauthnael/aro-node-manager        ║
@@ -339,6 +340,16 @@ detect_desktop_user() {
 parse_proxy_string() {
     local proxy_str="$1"
     
+    # No-proxy mode: không cần parse
+    if [[ "$USE_PROXY" -eq 0 ]]; then
+        PROXY_HOST=""
+        PROXY_PORT=""
+        PROXY_USER=""
+        PROXY_PASS=""
+        log_info "No-proxy mode: skipping proxy string parse"
+        return 0
+    fi
+    
     # Format: host:port:user:pass
     if [[ ! "$proxy_str" =~ ^[^:]+:[0-9]+:[^:]+:.+$ ]]; then
         log_error "Invalid proxy format. Expected: host:port:username:password"
@@ -447,15 +458,26 @@ install_packages() {
     export DEBIAN_FRONTEND=noninteractive
     
     apt-get update -qq
-    apt-get install -y -qq \
-        redsocks \
-        iptables \
-        iptables-persistent \
-        netfilter-persistent \
-        netcat-openbsd \
-        curl \
-        psmisc \
-        > /dev/null 2>&1
+    
+    if [[ "$USE_PROXY" -eq 1 ]]; then
+        apt-get install -y -qq \
+            redsocks \
+            iptables \
+            iptables-persistent \
+            netfilter-persistent \
+            netcat-openbsd \
+            curl \
+            psmisc \
+            > /dev/null 2>&1
+    else
+        # No-proxy mode: không cần redsocks và iptables-persistent
+        apt-get install -y -qq \
+            iptables \
+            netcat-openbsd \
+            curl \
+            psmisc \
+            > /dev/null 2>&1
+    fi
     
     log_success "Packages installed"
 }
@@ -480,6 +502,7 @@ PROXY_PASS="$PROXY_PASS"
 CRD_USER="$CRD_USER"
 REDSOCKS_PORT="$REDSOCKS_PORT"
 ENV_TYPE="$ENV_TYPE"
+USE_PROXY=$USE_PROXY
 EOF
     
     chmod 600 "$PROXY_CONF_FILE"
@@ -711,6 +734,51 @@ verify_wrapper_script() {
     fi
     
     return 0
+}
+
+create_wrapper_script_no_proxy() {
+    log_info "Creating ARO launch wrapper (no-proxy mode)..."
+    
+    # Backup existing wrapper nếu có
+    if [[ -f "$WRAPPER_SCRIPT" ]]; then
+        cp "$WRAPPER_SCRIPT" "${WRAPPER_SCRIPT}.bak"
+        log_info "Backed up existing wrapper to ${WRAPPER_SCRIPT}.bak"
+    fi
+    
+    local tmp_wrapper="${WRAPPER_SCRIPT}.new"
+    
+    cat > "$tmp_wrapper" << 'EOF'
+#!/bin/bash
+# ARO Manager - Launch Wrapper (No-Proxy Mode)
+# Direct launch without proxy protection
+
+REAL_ARO="/usr/bin/ARO"
+LOG="/tmp/aro-wrapper.log"
+
+log_msg() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"
+}
+
+# Check ARO binary exists
+if [[ ! -x "$REAL_ARO" ]]; then
+    log_msg "ERROR: ARO binary not found at $REAL_ARO"
+    exit 1
+fi
+
+log_msg "No-proxy mode: launching ARO directly..."
+exec "$REAL_ARO" "$@"
+EOF
+    
+    chmod +x "$tmp_wrapper"
+    
+    if bash -n "$tmp_wrapper" 2>/dev/null && grep -q 'exec "$REAL_ARO"' "$tmp_wrapper"; then
+        mv "$tmp_wrapper" "$WRAPPER_SCRIPT"
+        log_success "No-proxy wrapper created at $WRAPPER_SCRIPT"
+    else
+        rm -f "$tmp_wrapper"
+        log_error "No-proxy wrapper failed verification"
+        return 1
+    fi
 }
 
 create_wrapper_script() {
@@ -1237,13 +1305,14 @@ send_notify_max_retries() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
 
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
     local msg="🚨 <b>[ARO MAX RETRIES] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔢 Serial: ${SERIAL}
 📧 Account: ${EMAIL}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-🖥️ VNC:   $(get_vnc_access_ip):${VNC_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 ⚠️ Failed after ${MAX_RETRIES} attempts
 🛑 Watchdog stopped retrying
 👉 Manual intervention required!
@@ -1413,11 +1482,12 @@ send_notify_aro_stuck_manual() {
 }
 
 send_notify_proxy_dead() {
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
     local msg="🚨 <b>[PROXY DEAD] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS: ${HOSTNAME}
 🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
-🖥️ VNC:   $(get_vnc_access_ip):${VNC_PORT}
+🖥️ VNC:   ${vnc_ip}:${VNC_PORT}
 ⏱️ Timeout: ${PROXY_RESTART_TIMEOUT_SECS}s
 ❌ Redsocks restart FAILED — ARO đang tắt
 🛑 Kill-switch đang hoạt động
@@ -1858,16 +1928,20 @@ watchdog_loop() {
         fi
 
         # ── Real proxy check every PROXY_CHECK_INTERVAL (5 min) ──
-        if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
-            check_real_proxy || true   # failure already logged + notified inside
-            last_proxy_check_epoch=$(date +%s)
+        if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+            if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
+                check_real_proxy || true   # failure already logged + notified inside
+                last_proxy_check_epoch=$(date +%s)
+            fi
         fi
 
         # ── Redsocks service / port check (every cycle) ──
-        if ! check_proxy_health; then
-            watchdog_log "Proxy unhealthy, skipping ARO checks this cycle"
-            sleep "$CHECK_INTERVAL"
-            continue
+        if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+            if ! check_proxy_health; then
+                watchdog_log "Proxy unhealthy, skipping ARO checks this cycle"
+                sleep "$CHECK_INTERVAL"
+                continue
+            fi
         fi
         
         # Check if ARO is running
@@ -2408,6 +2482,7 @@ _send_deploy_report() {
     local vnc_or_crd="VNC (port $VNC_PORT)"
     [[ "$REMOTE_MODE" == "crd" ]] && vnc_or_crd="Chrome Remote Desktop"
 
+    local vnc_ip; vnc_ip=$(get_vnc_access_ip)
     local msg="🚀 <b>[ARO DEPLOY COMPLETE] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ Host:     ${HOSTNAME}
@@ -2417,14 +2492,14 @@ _send_deploy_report() {
 👤 User:     ubuntu
 ──────────────────────
 🔌 Proxy:    ${PROXY_HOST}:${PROXY_PORT}
-🖥️ VNC:      $(get_vnc_access_ip):${VNC_PORT}
+🖥️ VNC:      ${vnc_ip}:${VNC_PORT}
 🤖 Watchdog: ✅ Active
 ──────────────────────
 🔢 Serial:   ${SERIAL:-Chờ ARO kết nối...}
 📧 Account:  ${EMAIL:-N/A}
 ──────────────────────
 📡 Kết nối:
-   <code>$(get_vnc_access_ip):${VNC_PORT}</code>
+   <code>${vnc_ip}:${VNC_PORT}</code>
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
     send_telegram "$msg"
@@ -2628,6 +2703,19 @@ deploy_phase1_crd() {
 
 deploy_phase2_proxy() {
     log_info "=== PHASE 2: PROXY SETUP ==="
+
+    if [[ "$USE_PROXY" -eq 0 ]]; then
+        log_info "No-proxy mode: skipping redsocks/iptables setup"
+        install_packages
+        create_config_directory
+        # save_proxy_config vẫn chạy để lưu USE_PROXY=0 và CRD_USER vào config
+        save_proxy_config
+        save_watchdog_config
+        # Tạo wrapper không có proxy check
+        create_wrapper_script_no_proxy
+        return 0
+    fi
+
     install_packages
     create_config_directory
     save_proxy_config
@@ -2641,6 +2729,11 @@ deploy_phase2_proxy() {
 }
 
 deploy_phase3_ip_verify() {
+    if [[ "$USE_PROXY" -eq 0 ]]; then
+        log_info "=== PHASE 3: IP VERIFICATION — skipped (no-proxy mode) ==="
+        return 0
+    fi
+
     log_info "=== PHASE 3: IP VERIFICATION (ANTI-LEAK CHECK) ==="
     echo "Waiting 5s for iptables rules to stabilise..."
     sleep 5
@@ -2748,7 +2841,11 @@ do_deploy() {
     echo ""
     log_info "Kế hoạch triển khai:"
     echo "  • Remote mode: $REMOTE_MODE"
-    echo "  • Proxy:       $PROXY_HOST:$PROXY_PORT"
+    if [[ "$USE_PROXY" -eq 1 ]]; then
+        echo "  • Proxy:       $PROXY_HOST:$PROXY_PORT"
+    else
+        echo "  • Proxy:       DISABLED (no-proxy mode)"
+    fi
     echo "  • SSH key:     ${UBUNTU_SSH_KEY:0:40}..."
     echo "  • Telegram:    $([ -n "$TG_BOT_TOKEN" ] && echo "Enabled" || echo "Disabled")"
     echo ""
@@ -2806,7 +2903,11 @@ do_full_install() {
     
     echo ""
     log_info "Installation plan:"
-    echo "  • Proxy: $PROXY_HOST:$PROXY_PORT"
+    if [[ "$USE_PROXY" -eq 1 ]]; then
+        echo "  • Proxy: $PROXY_HOST:$PROXY_PORT"
+    else
+        echo "  • Proxy: DISABLED (no-proxy mode)"
+    fi
     echo "  • CRD User: $CRD_USER"
     echo "  • Telegram: $([ -n "$TG_BOT_TOKEN" ] && echo "Enabled" || echo "Disabled")"
     echo ""
@@ -3524,12 +3625,16 @@ do_status() {
     echo ""
 
     echo "🔌 Proxy:"
-    echo "  Server:        $PROXY_HOST:$PROXY_PORT"
-    echo "  Redsocks Port: $REDSOCKS_PORT"
-    if systemctl is-active --quiet redsocks-aro; then
-        echo "  Status: ✓ Running"
+    if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+        echo "  Mode:   ⚪ No-proxy (direct connection)"
     else
-        echo "  Status: ✗ Not running"
+        echo "  Server:        $PROXY_HOST:$PROXY_PORT"
+        echo "  Redsocks Port: $REDSOCKS_PORT"
+        if systemctl is-active --quiet redsocks-aro; then
+            echo "  Status: ✓ Running"
+        else
+            echo "  Status: ✗ Not running"
+        fi
     fi
     echo ""
 
@@ -3874,7 +3979,11 @@ do_update() {
 
     # ── Rebuild ──
     log_info "Step 3/5: Rebuilding launch wrapper..."
-    create_wrapper_script
+    if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+        create_wrapper_script_no_proxy
+    else
+        create_wrapper_script
+    fi
 
     log_info "Step 4/5: Rebuilding watchdog service..."
     create_watchdog_service
@@ -3883,9 +3992,11 @@ do_update() {
     # ── Restart ──
     log_info "Step 5/5: Starting services..."
 
-    if ! systemctl is-active --quiet redsocks-aro; then
-        systemctl start redsocks-aro
-        sleep 3
+    if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+        if ! systemctl is-active --quiet redsocks-aro; then
+            systemctl start redsocks-aro
+            sleep 3
+        fi
     fi
 
     systemctl start aro-watchdog
@@ -3895,11 +4006,16 @@ do_update() {
     echo ""
     echo "Update Verification:"
     
-    local rs_status; rs_status=$(systemctl is-active redsocks-aro || echo "failed")
-    if [[ "$rs_status" == "active" ]]; then
-        echo "  ✓ Redsocks: Running"
+    if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+        echo "  ⚪ Redsocks: Disabled (no-proxy mode)"
+        rs_status="active" # fake active so it doesn't fail the update check
     else
-        echo "  ✗ Redsocks: $rs_status"
+        local rs_status; rs_status=$(systemctl is-active redsocks-aro || echo "failed")
+        if [[ "$rs_status" == "active" ]]; then
+            echo "  ✓ Redsocks: Running"
+        else
+            echo "  ✗ Redsocks: $rs_status"
+        fi
     fi
 
     local wd_status; wd_status=$(systemctl is-active aro-watchdog || echo "failed")
@@ -3940,14 +4056,11 @@ USAGE:
   $SCRIPT_NAME <command> [arguments]
 
 MAIN COMMANDS:
-  deploy <proxy> --ssh-key KEY [--vnc-pass PASS] [--token TOKEN] [--chatid ID]
-                      Triển khai hoàn chỉnh: VPS + VNC + Proxy + ARO + Watchdog
+  deploy <proxy> --ssh-key KEY [--vnc-pass PASS] [--crd] [--no-proxy]
+                      --no-proxy: deploy without SOCKS5 proxy (direct connection)
 
-  deploy <proxy> --crd --ssh-key KEY [--token TOKEN] [--chatid ID]
-                      Như trên nhưng dùng Chrome Remote Desktop thay VNC
-
-  full-install <proxy> [--token TOKEN] [--chatid ID]
-                      Cài proxy + ARO + watchdog (VPS đã có sẵn XFCE/VNC)
+  full-install [<proxy>] [--no-proxy] [--token TOKEN] [--chatid ID]
+                      --no-proxy: install without proxy (proxy string optional)
 
   setup vps [--ssh-key KEY]
                       Cài VPS cơ bản: user, swap, SSH, XFCE, firewall
@@ -3984,6 +4097,12 @@ EXAMPLES:
   # Full installation
   sudo bash $SCRIPT_NAME full-install "proxy.com:1234:user:pass" \\
     --token "123456:ABC..." --chatid "987654321"
+
+  # Deploy với CRD, không dùng proxy
+  sudo bash $SCRIPT_NAME deploy --crd --ssh-key "ssh-rsa AAAA..." --no-proxy
+
+  # Full install không proxy
+  sudo bash $SCRIPT_NAME full-install --no-proxy --token "123:ABC..." --chatid "987"
 
   # Check status
   sudo bash $SCRIPT_NAME status
@@ -4046,12 +4165,11 @@ main() {
     
     case "$cmd" in
         deploy)
-            local proxy_str="${1:-}"
-            if [[ -z "$proxy_str" ]]; then
-                log_error "Proxy string là bắt buộc"
-                exit 1
+            local proxy_str=""
+            if [[ ! "${1:-}" == --* ]]; then
+                proxy_str="${1:-}"
+                shift || true
             fi
-            shift || true
 
             local has_vnc_pass=0
             local has_crd=0
@@ -4063,9 +4181,15 @@ main() {
                     --ssh-key)  UBUNTU_SSH_KEY="$2";                 shift 2 ;;
                     --token)    TG_BOT_TOKEN="$2";                   shift 2 ;;
                     --chatid)   TG_CHAT_ID="$2";                     shift 2 ;;
+                    --no-proxy) USE_PROXY=0;                         shift   ;;
                     *) shift ;;
                 esac
             done
+
+            if [[ -z "$proxy_str" ]] && [[ "$USE_PROXY" -eq 1 ]]; then
+                log_error "Proxy string là bắt buộc (hoặc dùng --no-proxy)"
+                exit 1
+            fi
 
             # Conflict check
             if [[ $has_vnc_pass -eq 1 ]] && [[ $has_crd -eq 1 ]]; then
@@ -4083,16 +4207,11 @@ main() {
             ;;
 
         full-install)
-            if [[ -z "${1:-}" ]]; then
-                log_error "Proxy string required"
-                echo ""
-                echo "Usage: $SCRIPT_NAME full-install <proxy> [--token TOKEN] [--chatid ID]"
-                echo ""
-                exit 1
+            local proxy_str=""
+            if [[ ! "${1:-}" == --* ]]; then
+                proxy_str="${1:-}"
+                shift || true
             fi
-            
-            local proxy_str="$1"
-            shift || true
             
             local token=""
             local chatid=""
@@ -4107,11 +4226,24 @@ main() {
                         chatid="$2"
                         shift 2
                         ;;
+                    --no-proxy)
+                        USE_PROXY=0
+                        shift
+                        ;;
                     *)
                         shift
                         ;;
                 esac
             done
+
+            if [[ -z "$proxy_str" ]] && [[ "$USE_PROXY" -eq 1 ]]; then
+                log_error "Proxy string required (or use --no-proxy)"
+                echo ""
+                echo "Usage: $SCRIPT_NAME full-install <proxy> [--token TOKEN] [--chatid ID]"
+                echo "       $SCRIPT_NAME full-install --no-proxy [--token TOKEN] [--chatid ID]"
+                echo ""
+                exit 1
+            fi
             
             do_full_install "$proxy_str" "$token" "$chatid"
             SHOW_FOOTER_ON_EXIT=1
@@ -4132,7 +4264,11 @@ main() {
             load_configs
             detect_desktop_user
             log_info "Recreating wrapper script..."
-            create_wrapper_script
+            if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+                create_wrapper_script_no_proxy
+            else
+                create_wrapper_script
+            fi
             if verify_wrapper_script; then
                 log_success "Wrapper fixed successfully at $WRAPPER_SCRIPT"
                 log_info "You can now run: sudo ./aro-manager.sh start"
