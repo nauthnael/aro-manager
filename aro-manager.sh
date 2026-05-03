@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.3"
+SCRIPT_VERSION="3.5.4"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -92,6 +92,9 @@ TG_CHAT_ID=""
 # Throttle states
 _last_proxy_down_notify=0
 _last_pre_restart_notify=0
+_last_known_exit_ip=""
+_grace_period_last_log=0
+_nointernet_last_log=0
 PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
 
 # Guard flags
@@ -1093,7 +1096,8 @@ get_last_online_info() {
 
             if [[ "$net_init_ep" -gt 0 ]]; then
                 # Tìm dòng tray=Online ĐẦU TIÊN có timestamp > net_init_ep
-                online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+                online_ts=$(run_as_aro_user tail -n 2000 "$LATEST_LOG_FILE" 2>/dev/null \
+                    | grep "linux tray icon synced to state=Online" \
                     | while IFS= read -r line; do
                         ts=$(echo "$line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
                         [[ -z "$ts" ]] && continue
@@ -1111,7 +1115,8 @@ get_last_online_info() {
             local last_restart; last_restart=$(state_get "last_restart" "0")
             if [[ "$last_restart" -gt 0 ]]; then
                 # Tìm dòng tray=Online đầu tiên sau last_restart
-                online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+                online_ts=$(run_as_aro_user tail -n 2000 "$LATEST_LOG_FILE" 2>/dev/null \
+                    | grep "linux tray icon synced to state=Online" \
                     | while IFS= read -r line; do
                         ts=$(echo "$line" | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' 2>/dev/null || true)
                         [[ -z "$ts" ]] && continue
@@ -1138,7 +1143,8 @@ get_last_online_info() {
     elif [[ "$tray_state" == "NoInternet" ]] || [[ "$tray_state" == "Offline" ]]; then
         # Tìm lần Online cuối cùng trong log
         local last_online_ts
-        last_online_ts=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null \
+        last_online_ts=$(run_as_aro_user tail -n 2000 "$LATEST_LOG_FILE" 2>/dev/null \
+            | grep "linux tray icon synced to state=Online" \
             | tail -1 \
             | grep -oP '\[\K\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' || true)
         
@@ -1199,7 +1205,8 @@ get_aro_tray_state() {
 
     # Grep tìm dòng "linux tray icon synced to state=" cuối cùng
     local state
-    state=$(run_as_aro_user grep "linux tray icon synced to state=" "$LATEST_LOG_FILE" 2>/dev/null \
+    state=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null \
+        | grep "linux tray icon synced to state=" \
         | tail -1 \
         | grep -oP "state=\K[A-Za-z]+" 2>/dev/null || true)
     
@@ -1244,7 +1251,9 @@ get_disconnected_since_minutes() {
     ! run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null && echo "0" && return 0
 
     local last_online_line
-    last_online_line=$(run_as_aro_user grep "linux tray icon synced to state=Online" "$LATEST_LOG_FILE" 2>/dev/null | tail -1 || true)
+    last_online_line=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null \
+        | grep "linux tray icon synced to state=Online" \
+        | tail -1 || true)
 
     local now; now=$(date +%s)
 
@@ -1675,7 +1684,10 @@ check_real_proxy() {
         return 1
     fi
 
-    watchdog_log "Real proxy check OK — exit IP: ${exit_ip}"
+    if [[ "$exit_ip" != "$_last_known_exit_ip" ]]; then
+        watchdog_log "Real proxy check OK — exit IP: ${exit_ip}${_last_known_exit_ip:+ (was: $_last_known_exit_ip)}"
+        _last_known_exit_ip="$exit_ip"
+    fi
     return 0
 }
 
@@ -1821,7 +1833,9 @@ _wait_for_aro_online() {
 
         local tray_state
         tray_state=$(get_aro_tray_state)
-        watchdog_log "Waiting... tray=${tray_state:-unknown} ${elapsed}s / ${CONNECTING_WAIT_SECS}s"
+        if [[ $(( elapsed % 60 )) -lt "$CONNECTING_POLL_INTERVAL" ]]; then
+            watchdog_log "Waiting... tray=${tray_state:-unknown} ${elapsed}s / ${CONNECTING_WAIT_SECS}s"
+        fi
 
         if [[ "$tray_state" == "Online" ]]; then
             watchdog_log "ARO online successfully after ${elapsed}s (context: $context)"
@@ -2006,7 +2020,11 @@ watchdog_loop() {
 
                         if is_in_grace_period; then
                             local remaining=$(( CONNECTING_GRACE_SECS - since_launch ))
-                            watchdog_log "ARO tray=Offline, in startup grace period (${remaining}s remaining)"
+                            local now_ts; now_ts=$(date +%s)
+                            if [[ $(( now_ts - _grace_period_last_log )) -ge 60 ]]; then
+                                watchdog_log "ARO tray=Offline, in startup grace period (${remaining}s remaining)"
+                                _grace_period_last_log=$now_ts
+                            fi
                         else
                             watchdog_log "ARO tray=Offline beyond grace period — treating as stuck"
                             local stuck_mins=$(( since_launch / 60 ))
@@ -2018,12 +2036,15 @@ watchdog_loop() {
                         # Stuck — tính thời gian
                         local stuck_mins
                         stuck_mins=$(get_disconnected_since_minutes)
-                        watchdog_log "ARO process running, tray=NoInternet for ${stuck_mins}m"
 
                         if [[ "$stuck_mins" -ge "$STUCK_THRESHOLD_MINUTES" ]]; then
                             handle_stuck_connecting "$stuck_mins"
                         else
-                            watchdog_log "Monitoring... (${stuck_mins}m < threshold ${STUCK_THRESHOLD_MINUTES}m)"
+                            local now_ts; now_ts=$(date +%s)
+                            if [[ $(( now_ts - _nointernet_last_log )) -ge 120 ]]; then
+                                watchdog_log "ARO tray=NoInternet for ${stuck_mins}m (threshold: ${STUCK_THRESHOLD_MINUTES}m)"
+                                _nointernet_last_log=$now_ts
+                            fi
                         fi
                         ;;
 
