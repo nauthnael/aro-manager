@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.4"
+SCRIPT_VERSION="3.5.5"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2365,44 +2365,36 @@ _setup_ssh_key() {
 }
 
 _create_swap() {
-    local min_swap_mb=1024   # Tối thiểu 1GB swap cho ARO + CRD/VNC
+    local ram_mb; ram_mb=$(free -m | awk '/^Mem:/ {print $2}' || echo 9999)
+    local swap_target_mb=1024
+    local swap_target="1G"
 
-    # Kiểm tra swap hiện tại
-    local current_swap_mb; current_swap_mb=$(free -m | awk '/^Swap:/ {print $2}' || echo 0)
-
-    if [[ "${current_swap_mb:-0}" -ge "$min_swap_mb" ]]; then
-        log_info "[SKIP] Swap đã đủ: ${current_swap_mb}MB (>= ${min_swap_mb}MB)"
+    # Máy có RAM >= 1GB → không can thiệp swap
+    if [[ "${ram_mb:-9999}" -ge 1024 ]]; then
+        log_info "[SKIP] RAM ${ram_mb}MB >= 1GB — bỏ qua cấu hình swap"
         return 0
     fi
 
-    # Nếu có swap file cũ nhỏ hơn min → tắt và xóa trước khi tạo mới
+    # RAM < 1GB → đảm bảo có đúng 1GB swap
+    log_info "RAM ${ram_mb}MB < 1GB — kiểm tra swap..."
+
+    local current_swap_mb; current_swap_mb=$(free -m | awk '/^Swap:/ {print $2}' || echo 0)
+
+    if [[ "${current_swap_mb:-0}" -ge "$swap_target_mb" ]]; then
+        log_info "[SKIP] Swap đã đủ: ${current_swap_mb}MB"
+        return 0
+    fi
+
+    # Swap chưa đủ → tạo mới (hoặc replace nếu đã có nhỏ hơn)
     if [[ "${current_swap_mb:-0}" -gt 0 ]] && [[ -f /swapfile ]]; then
-        log_info "Swap hiện tại ${current_swap_mb}MB < ${min_swap_mb}MB — đang resize..."
+        log_info "Swap hiện tại ${current_swap_mb}MB < ${swap_target_mb}MB — thay thế..."
         swapoff /swapfile 2>/dev/null || true
         rm -f /swapfile
     fi
 
-    local disk_total_gb; disk_total_gb=$(df -BG / | awk 'NR==2 {gsub("G",""); print $2}' || echo 20)
-    local swap_size=""
-    local swap_mb=0
-
-    if [[ "$disk_total_gb" -lt 16 ]]; then
-        swap_size="1G"; swap_mb=1024
-    elif [[ "$disk_total_gb" -lt 30 ]]; then
-        swap_size="2G"; swap_mb=2048
-    else
-        swap_size="4G"; swap_mb=4096
-    fi
-
-    # Đảm bảo tối thiểu min_swap_mb dù disk nhỏ
-    if [[ "$swap_mb" -lt "$min_swap_mb" ]]; then
-        swap_mb=$min_swap_mb
-        swap_size="${min_swap_mb}M"
-    fi
-
-    log_info "RAM: $(free -m | awk '/^Mem:/ {print $2}')MB | Disk: ${disk_total_gb}GB — Tạo swap ${swap_size}..."
-    fallocate -l "$swap_size" /swapfile 2>/dev/null \
-        || dd if=/dev/zero of=/swapfile bs=1M count="$swap_mb" status=progress
+    log_info "Tạo swap ${swap_target} cho máy RAM ${ram_mb}MB..."
+    fallocate -l "$swap_target" /swapfile 2>/dev/null \
+        || dd if=/dev/zero of=/swapfile bs=1M count="$swap_target_mb" status=progress
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
@@ -2410,7 +2402,8 @@ _create_swap() {
     if ! grep -q '/swapfile' /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
-    log_success "Đã tạo và kích hoạt swap ${swap_size} (total: $(free -m | awk '/^Swap:/ {print $2}')MB)"
+
+    log_success "Swap ${swap_target} đã được kích hoạt (RAM: ${ram_mb}MB)"
 }
 
 _apply_swap_optimization() {
