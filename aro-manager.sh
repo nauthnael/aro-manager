@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.5"
+SCRIPT_VERSION="3.5.6"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -252,11 +252,22 @@ detect_vnc_user() {
 
     # Lấy full command line của VNC process (ps -eo args = chỉ cột COMMAND, không có TIME)
     local vnc_cmd=""
-    vnc_cmd=$(ps -eo args 2>/dev/null \
-        | { grep -E '^/usr/(bin/)?X(tigervnc|vnc|org)' 2>/dev/null || true; } \
-        | head -n1 || true)
+    local retries=0
+    while [[ -z "$vnc_cmd" ]] && [[ $retries -lt 6 ]]; do
+        vnc_cmd=$(ps -eo args 2>/dev/null \
+            | { grep -E '^/usr/(bin/)?X(tigervnc|vnc|org)' 2>/dev/null || true; } \
+            | head -n1 || true)
+        if [[ -z "$vnc_cmd" ]]; then
+            [[ $retries -eq 0 ]] && log_info "VNC process not found yet, waiting..."
+            sleep 5
+            retries=$(( retries + 1 ))
+        fi
+    done
 
-    # Extract display number: token dạng ":N" đứng sau tên binary (có khoảng trắng bao quanh)
+    if [[ -z "$vnc_cmd" ]]; then
+        log_error "VNC process not found after $((retries * 5))s — using fallback DISPLAY=:1"
+    fi
+
     local vnc_display=""
     vnc_display=$(echo "$vnc_cmd" | grep -oP '(?<=\s):\d+(?=\s|$)' | head -n1 || true)
     DISPLAY_NUM="${vnc_display:-:1}"
@@ -332,14 +343,14 @@ detect_crd_user() {
 # detect_desktop_user: auto-dispatches based on ENV_TYPE.
 # Always call detect_environment() first (done inside this function).
 detect_desktop_user() {
-    detect_environment
+    # Nếu ENV_TYPE đã được load từ config → dùng luôn, không detect lại
+    # Chỉ gọi detect_environment() khi ENV_TYPE rỗng (lần đầu cài đặt)
+    if [[ -z "$ENV_TYPE" ]]; then
+        detect_environment
+    fi
     case "$ENV_TYPE" in
-        lxc_vnc)
-            detect_vnc_user
-            ;;
-        *)
-            detect_crd_user
-            ;;
+        lxc_vnc) detect_vnc_user ;;
+        *)       detect_crd_user ;;
     esac
 }
 
@@ -1335,6 +1346,74 @@ ${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
     send_telegram "$msg"
 }
 
+get_aro_start_error() {
+    local log_file
+    log_file=$(get_latest_aro_log)
+    [[ -z "$log_file" ]] || [[ ! -f "$log_file" ]] && echo "No ARO log found" && return
+
+    # Lấy ERROR/panic từ 30 dòng cuối (đủ để cover lần start mới nhất)
+    local err
+    err=$(tail -30 "$log_file" 2>/dev/null \
+        | grep -E '\[ERROR\]|\[panic\]|FATAL|Permission denied|error encountered' \
+        | tail -3 \
+        | sed 's/\[20[0-9-]* [0-9:\.]*\] //g')   # strip timestamp để ngắn hơn
+
+    if [[ -n "$err" ]]; then
+        echo "$err"
+    else
+        # Fallback: lấy 3 dòng cuối bất kể level
+        tail -3 "$log_file" 2>/dev/null | sed 's/\[20[0-9-]* [0-9:\.]*\] //g' \
+            || echo "Cannot read ARO log"
+    fi
+}
+
+send_notify_aro_start_failed() {
+    local retry_count="${1:-?}"
+    local error_msg="${2:-unknown error}"
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    parse_node_info
+
+    local msg="❌ <b>[ARO START FAILED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+🖥️ VPS: ${HOSTNAME}
+👤 User: ${EFFECTIVE_USER}
+🖥️ Display: ${DISPLAY_NUM}
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🔄 Retry: ${retry_count}/${MAX_RETRIES}
+──────────────────────
+❌ Error:
+<code>${error_msg}</code>
+──────────────────────
+💡 Possible causes:
+• Wrong DISPLAY (currently: ${DISPLAY_NUM})
+• X server not accessible
+• Permission issue on tray icon socket
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    send_telegram "$msg"
+}
+
+check_display_accessible() {
+    # Verify DISPLAY thực sự accessible bởi EFFECTIVE_USER
+    # Dùng xdpyinfo nếu có, fallback sang check socket file
+    local display="${DISPLAY_NUM:-:1}"
+    local socket="/tmp/.X11-unix/X${display#:}"
+
+    # Quick check: socket file tồn tại không
+    if [[ ! -S "$socket" ]]; then
+        watchdog_log "ERROR: X socket $socket not found — display $display not running"
+        return 1
+    fi
+
+    # Permission check: user có đọc được socket không
+    if ! sudo -u "$EFFECTIVE_USER" test -r "$socket" 2>/dev/null; then
+        watchdog_log "ERROR: User $EFFECTIVE_USER cannot access X socket $socket (Permission denied)"
+        return 1
+    fi
+
+    return 0
+}
+
 send_notify_max_retries() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
@@ -1936,6 +2015,20 @@ state_set() {
     ) 200>"$lock" || watchdog_log "WARNING: state_set '$key' failed (flock timeout or write error)"
 }
 
+aro_set_give_up() {
+    state_set "aro_give_up" "1"
+    watchdog_log "Give-up flag SET — watchdog will not restart ARO until cleared"
+}
+
+aro_clear_give_up() {
+    state_set "aro_give_up" "0"
+    watchdog_log "Give-up flag CLEARED — watchdog will resume ARO monitoring"
+}
+
+aro_is_give_up() {
+    [[ "$(state_get 'aro_give_up' '0')" == "1" ]]
+}
+
 watchdog_loop() {
     watchdog_log "=== ARO Manager Watchdog Started ==="
     watchdog_log "Version: $SCRIPT_VERSION"
@@ -1948,6 +2041,7 @@ watchdog_loop() {
     
     # Initialize state
     state_set "retry_count" "0"
+    aro_clear_give_up
     state_set "last_restart" "0"
     state_set "last_report" "0"
     state_set "stable_since" "$(date +%s)"
@@ -1962,6 +2056,13 @@ watchdog_loop() {
         if is_maintenance_mode; then
             local maint_age; maint_age=$(maintenance_age_mins)
             watchdog_log "Maintenance mode active (${maint_age}m) — skipping ARO checks"
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
+        # ── Give-up check ────────────────────────────────────────────
+        if aro_is_give_up; then
+            watchdog_log "Give-up flag active — skipping ARO checks (run 'start' to reset)"
             sleep "$CHECK_INTERVAL"
             continue
         fi
@@ -2088,6 +2189,16 @@ watchdog_loop() {
                         # Kill and restart
                         kill_aro
                         sleep 3
+
+                        # Check display trước khi launch
+                        if ! check_display_accessible; then
+                            local disp_err="Display ${DISPLAY_NUM} not accessible — check X server and XAUTHORITY"
+                            watchdog_log "ERROR: $disp_err"
+                            send_notify_aro_start_failed "$retry_count" "$disp_err"
+                            sleep "$CHECK_INTERVAL"
+                            continue
+                        fi
+
                         launch_aro
                         
                         state_set "last_restart" "$(date +%s)"
@@ -2102,11 +2213,15 @@ watchdog_loop() {
                             send_notify_restart_success "$retry_count"
                         else
                             watchdog_log "ARO restart verification failed (retry $retry_count/$MAX_RETRIES)"
+                            local start_err; start_err=$(get_aro_start_error)
+                            watchdog_log "Start error: $start_err"
+                            send_notify_aro_start_failed "$retry_count" "$start_err"
                         fi
                     else
                         watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up"
                         send_notify_max_retries
                         state_set "retry_count" "0"
+                        aro_set_give_up
                     fi
                 fi
             fi
@@ -2122,6 +2237,15 @@ watchdog_loop() {
                 state_set "retry_count" "$retry_count"
                 watchdog_log "ARO not running, starting... (Retry $retry_count/$MAX_RETRIES)"
                 
+                # Check display trước khi launch
+                if ! check_display_accessible; then
+                    local disp_err="Display ${DISPLAY_NUM} not accessible — check X server and XAUTHORITY"
+                    watchdog_log "ERROR: $disp_err"
+                    send_notify_aro_start_failed "$retry_count" "$disp_err"
+                    sleep "$CHECK_INTERVAL"
+                    continue
+                fi
+
                 send_notify_pre_restart "ARO process not found (crashed or killed)" "not_running" "0" "$retry_count"
                 launch_aro
                 state_set "last_restart" "$(date +%s)"
@@ -2134,11 +2258,15 @@ watchdog_loop() {
                     send_notify_restart_success "$retry_count"
                 else
                     watchdog_log "ARO failed to start"
+                    local start_err; start_err=$(get_aro_start_error)
+                    watchdog_log "Start error: $start_err"
+                    send_notify_aro_start_failed "$retry_count" "$start_err"
                 fi
             else
                 watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up"
                 send_notify_max_retries
                 state_set "retry_count" "0"
+                aro_set_give_up
             fi
         fi
         
@@ -3547,6 +3675,8 @@ do_aro_start() {
     detect_desktop_user
 
     log_info "Starting ARO..."
+    aro_clear_give_up
+    state_set "retry_count" "0"
 
     # 1. Check proxy trước — chỉ khi USE_PROXY=1
     if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
