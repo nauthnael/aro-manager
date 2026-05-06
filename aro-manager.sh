@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.2
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.7
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.6"
+SCRIPT_VERSION="3.5.9"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -75,9 +75,10 @@ PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour khi proxy serve
 PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))
 
 # ── Stuck-connecting watchdog ───────────────────────────────────
-STUCK_THRESHOLD_MINUTES=5   # tray=NoInternet >5m = stuck thực sự (không phải fluctuation)
-CONNECTING_GRACE_SECS=180   # Sau launch, cho ARO 3 phút để connect trước khi coi là stuck
-CONNECTING_WAIT_SECS=300    # Chờ tối đa 5 phút cho ARO reconnect sau restart
+STUCK_THRESHOLD_MINUTES=10  # tray=NoInternet >10m = stuck thực sự (không phải fluctuation)
+TRAY_UNKNOWN_THRESHOLD_MINUTES=15  # tray=unknown >15m khi log fresh → restart ARO
+CONNECTING_GRACE_SECS=600   # Sau launch, cho ARO 10 phút để connect trước khi coi là stuck
+CONNECTING_WAIT_SECS=600    # Chờ tối đa 10 phút cho ARO reconnect sau restart
 CONNECTING_POLL_INTERVAL=30 # Poll tray state mỗi 30s
 PROXY_RESTART_TIMEOUT_SECS=60 # Chờ tối đa 60s cho redsocks restart functional
 REDSOCKS_QUEUE_THRESHOLD=500  # recv-Q >500 bytes = redsocks backpressure, coi là hung
@@ -95,6 +96,7 @@ _last_pre_restart_notify=0
 _last_known_exit_ip=""
 _grace_period_last_log=0
 _nointernet_last_log=0
+_tray_unknown_last_log=0
 PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
 
 # Guard flags
@@ -568,6 +570,7 @@ RESET_STABLE_HOURS=$RESET_STABLE_HOURS
 CONNECTING_GRACE_SECS=$CONNECTING_GRACE_SECS
 CONNECTING_WAIT_SECS=$CONNECTING_WAIT_SECS
 STUCK_THRESHOLD_MINUTES=$STUCK_THRESHOLD_MINUTES
+TRAY_UNKNOWN_THRESHOLD_MINUTES=$TRAY_UNKNOWN_THRESHOLD_MINUTES
 REDSOCKS_QUEUE_THRESHOLD=$REDSOCKS_QUEUE_THRESHOLD
 PROXY_RESTART_TIMEOUT_SECS=$PROXY_RESTART_TIMEOUT_SECS
 
@@ -2045,6 +2048,7 @@ watchdog_loop() {
     state_set "last_restart" "0"
     state_set "last_report" "0"
     state_set "stable_since" "$(date +%s)"
+    state_set "tray_unknown_since" "0"
 
     local last_daily_hour=-1
     local last_proxy_check_epoch=0   # tracks real proxy check timer
@@ -2097,6 +2101,7 @@ watchdog_loop() {
                 case "$tray_state" in
                     Online)
                         # ── ARO connected & healthy ──────────────────────
+                        state_set "tray_unknown_since" "0"
                         local retry_count
                         retry_count=$(state_get "retry_count" "0")
 
@@ -2116,6 +2121,7 @@ watchdog_loop() {
                     
                     Offline)
                         # Vừa khởi động hoặc đang check mạng — kiểm tra grace period
+                        state_set "tray_unknown_since" "0"
                         local last_restart; last_restart=$(state_get "last_restart" "0")
                         local since_launch=$(( now - last_restart ))
 
@@ -2135,6 +2141,7 @@ watchdog_loop() {
 
                     NoInternet)
                         # Stuck — tính thời gian
+                        state_set "tray_unknown_since" "0"
                         local stuck_mins
                         stuck_mins=$(get_disconnected_since_minutes)
 
@@ -2151,7 +2158,53 @@ watchdog_loop() {
 
                     *)
                         # State không xác định hoặc log chưa có entry tray
-                        watchdog_log "ARO tray state unknown ('${tray_state}') — monitoring"
+                        # Track thời gian bắt đầu unknown
+                        local unknown_since; unknown_since=$(state_get "tray_unknown_since" "0")
+                        if [[ "$unknown_since" -eq 0 ]]; then
+                            state_set "tray_unknown_since" "$now"
+                            unknown_since="$now"
+                        fi
+
+                        local unknown_mins=$(( (now - unknown_since) / 60 ))
+
+                        if [[ "$unknown_mins" -ge "$TRAY_UNKNOWN_THRESHOLD_MINUTES" ]]; then
+                            # Đã unknown đủ lâu → restart
+                            watchdog_log "ARO tray state unknown for ${unknown_mins}m (threshold: ${TRAY_UNKNOWN_THRESHOLD_MINUTES}m) — restarting"
+                            state_set "tray_unknown_since" "0"
+
+                            local retry_count; retry_count=$(state_get "retry_count" "0")
+                            if [[ $retry_count -lt $MAX_RETRIES ]]; then
+                                retry_count=$(( retry_count + 1 ))
+                                state_set "retry_count" "$retry_count"
+                                send_notify_pre_restart "ARO tray state unknown for ${unknown_mins}m" "unknown" "$unknown_mins" "$retry_count"
+                                kill_aro
+                                sleep 3
+                                launch_aro
+                                state_set "last_restart" "$(date +%s)"
+                                state_set "stable_since" "$(date +%s)"
+                                sleep "$STARTUP_TIMEOUT"
+                                if is_aro_running; then
+                                    watchdog_log "ARO restarted after unknown tray state (retry $retry_count/$MAX_RETRIES)"
+                                    send_notify_restart_success "$retry_count"
+                                else
+                                    watchdog_log "ARO failed to start after unknown tray restart"
+                                    local start_err; start_err=$(get_aro_start_error)
+                                    send_notify_aro_start_failed "$retry_count" "$start_err"
+                                fi
+                            else
+                                watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up (tray unknown)"
+                                send_notify_max_retries
+                                state_set "retry_count" "0"
+                                aro_set_give_up
+                            fi
+                        else
+                            # Chưa đủ threshold — log định kỳ mỗi 2 phút
+                            local now_ts; now_ts=$(date +%s)
+                            if [[ $(( now_ts - _tray_unknown_last_log )) -ge 120 ]]; then
+                                watchdog_log "ARO tray state unknown ('${tray_state}') for ${unknown_mins}m (threshold: ${TRAY_UNKNOWN_THRESHOLD_MINUTES}m) — monitoring"
+                                _tray_unknown_last_log=$now_ts
+                            fi
+                        fi
                         ;;
                 esac
             else
@@ -4193,7 +4246,9 @@ do_update() {
         create_wrapper_script
     fi
 
-    log_info "Step 4/5: Rebuilding watchdog service..."
+    log_info "Step 4/5: Rebuilding configs + watchdog service..."
+    save_proxy_config
+    save_watchdog_config
     create_watchdog_service
     systemctl daemon-reload
 
@@ -4240,6 +4295,7 @@ do_update() {
     fi
 
     echo "  ✓ Version: $SCRIPT_VERSION @ $current_script"
+    echo "  ✓ Config:  Synced ($WATCHDOG_CONF_FILE)"
     echo ""
 
     if [[ "$rs_status" == "active" ]] && [[ "$wd_status" == "active" ]]; then
