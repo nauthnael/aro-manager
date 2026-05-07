@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.12"
+SCRIPT_VERSION="3.5.13"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -97,6 +97,7 @@ _last_known_exit_ip=""
 _grace_period_last_log=0
 _nointernet_last_log=0
 _tray_unknown_last_log=0
+_unbound_last_log=0
 PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
 
 # Guard flags
@@ -1245,7 +1246,15 @@ get_aro_tray_state() {
             echo "Online"
             return 0
         elif echo "$connect_line" | grep -qF '"connect":"disconnected"'; then
-            echo "Offline"
+            # Phân biệt: chưa bind vs đã bind nhưng mất kết nối
+            # bind=null hoặc bind=false → node chưa bind tài khoản → không restart
+            # bind=true → node đã bind nhưng disconnected → xử lý như Offline
+            if echo "$connect_line" | grep -qF '"bind":true'; then
+                echo "Offline"
+            else
+                # bind=null hoặc bind=false
+                echo "Unbound"
+            fi
             return 0
         fi
     fi
@@ -2105,6 +2114,7 @@ watchdog_loop() {
     state_set "last_report" "0"
     state_set "stable_since" "$(date +%s)"
     state_set "tray_unknown_since" "0"
+    _unbound_last_log=0
 
     local last_daily_hour=-1
     local last_proxy_check_epoch=0   # tracks real proxy check timer
@@ -2209,6 +2219,18 @@ watchdog_loop() {
                                 watchdog_log "ARO tray=NoInternet for ${stuck_mins}m (threshold: ${STUCK_THRESHOLD_MINUTES}m)"
                                 _nointernet_last_log=$now_ts
                             fi
+                        fi
+                        ;;
+
+                    Unbound)
+                        # Node chưa bind tài khoản — ARO chạy bình thường, chỉ chờ bind
+                        # Không restart, không đếm unknown timer
+                        # Khi bind xong ARO tự chuyển sang connected — không cần can thiệp
+                        state_set "tray_unknown_since" "0"
+                        local now_ts; now_ts=$(date +%s)
+                        if [[ $(( now_ts - _unbound_last_log )) -ge 300 ]]; then
+                            watchdog_log "ARO running, waiting for account bind — monitoring"
+                            _unbound_last_log=$now_ts
                         fi
                         ;;
 
