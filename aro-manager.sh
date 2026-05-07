@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.11"
+SCRIPT_VERSION="3.5.12"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -4251,10 +4251,83 @@ do_uninstall() {
     echo ""
 }
 
+do_update_watchdog_only() {
+    # Gọi sau load_configs + detect_desktop_user đã được gọi từ do_update()
+    log_info "=== Watchdog-only update (ARO will keep running) ==="
+    echo ""
+
+    local current_script="$SCRIPT_DIR/$SCRIPT_NAME"
+
+    # ── Path check (giống do_update full) ──
+    local service_exec=""
+    if [[ -f "$SYSTEMD_WATCHDOG_SERVICE" ]]; then
+        service_exec=$(grep '^ExecStart=' "$SYSTEMD_WATCHDOG_SERVICE" | cut -d'=' -f2- | awk '{print $1}' || true)
+    fi
+
+    if [[ -n "$service_exec" ]] && [[ "$service_exec" != "$current_script" ]]; then
+        log_warn "Service is running from a different path: $service_exec"
+        log_warn "Copying script to service path..."
+        cp "$current_script" "$service_exec"
+        chmod +x "$service_exec"
+        log_info "Script copied to $service_exec"
+    fi
+
+    # Step 1/3: Sync configs (không restart ARO, không rebuild wrapper)
+    log_info "Step 1/3: Syncing watchdog config..."
+    save_watchdog_config
+    save_proxy_config
+
+    # Step 2/3: Rebuild watchdog service file + reload
+    log_info "Step 2/3: Rebuilding watchdog service..."
+    create_watchdog_service
+    systemctl daemon-reload
+
+    # Step 3/3: Restart watchdog only — ARO process tiếp tục chạy
+    log_info "Step 3/3: Restarting watchdog service (ARO process untouched)..."
+    systemctl restart aro-watchdog
+    sleep 3
+
+    # ── Verify ──
+    echo ""
+    echo "Watchdog-only Update Verification:"
+
+    local wd_status; wd_status=$(systemctl is-active aro-watchdog || echo "failed")
+    if [[ "$wd_status" == "active" ]]; then
+        echo "  ✓ Watchdog: Running (restarted with new script)"
+    else
+        echo "  ✗ Watchdog: $wd_status"
+        log_error "Watchdog failed to restart"
+        echo "Debug: journalctl -u aro-watchdog -n 30"
+        exit 1
+    fi
+
+    local aro_pid; aro_pid=$(get_aro_pid || true)
+    if [[ -n "$aro_pid" ]]; then
+        echo "  ✓ ARO:      Still running (PID: $aro_pid) — uptime preserved ✅"
+    else
+        echo "  ⚠ ARO:      Not running (watchdog will start it shortly)"
+    fi
+
+    echo "  ✓ Version:  $SCRIPT_VERSION @ $current_script"
+    echo "  ✓ Config:   Synced ($WATCHDOG_CONF_FILE)"
+    echo ""
+
+    log_success "Watchdog-only update complete. ARO uptime preserved."
+    echo "Monitor: sudo $SCRIPT_NAME watchdog log"
+}
+
 do_update() {
     require_root
     show_banner
     echo ""
+
+    # ── Parse flags ──
+    local watchdog_only=0
+    for arg in "$@"; do
+        case "$arg" in
+            --watchdog-only) watchdog_only=1 ;;
+        esac
+    done
 
     if [[ ! -f "$PROXY_CONF_FILE" ]]; then
         log_error "ARO Manager not installed. Run: $SCRIPT_NAME full-install <proxy>"
@@ -4263,6 +4336,12 @@ do_update() {
 
     load_configs
     detect_desktop_user
+
+    # Nếu --watchdog-only: chỉ reload watchdog, không touch ARO
+    if [[ "$watchdog_only" -eq 1 ]]; then
+        do_update_watchdog_only
+        return 0
+    fi
 
     # ── Path check ──
     local service_exec=""
@@ -4398,7 +4477,9 @@ MAIN COMMANDS:
   stop                Stop ARO and pause watchdog auto-restart (maintenance mode ON)
   restart             Stop then start ARO
   fix-wrapper         Recreate the ARO launch wrapper script (use if ARO is blocked by wrapper error)
-  update              Cập nhật script: rebuild wrapper + restart services
+  update              Cập nhật script: rebuild wrapper + restart toàn bộ services
+  update --watchdog-only
+                      Chỉ reload watchdog (ARO giữ nguyên, không mất uptime)
   report              Send daily report to Telegram immediately
   test-telegram       Gửi tin nhắn Telegram thử để kiểm tra kết nối
   uninstall           Remove everything
@@ -4785,7 +4866,7 @@ main() {
             ;;
 
         update)
-            do_update
+            do_update "$@"
             SHOW_FOOTER_ON_EXIT=1
             ;;
 
