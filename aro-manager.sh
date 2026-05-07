@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.10"
+SCRIPT_VERSION="3.5.11"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1217,14 +1217,42 @@ get_aro_tray_state() {
         return 0
     fi
 
-    # Grep tìm dòng "linux tray icon synced to state=" cuối cùng
+    # Tầng 1: Parse "linux tray icon synced to state=X"
+    # ARO emit dòng này khi có state transition (Online↔Offline↔NoInternet)
     local state
     state=$(run_as_aro_user tail -n 500 "$LATEST_LOG_FILE" 2>/dev/null \
         | grep "linux tray icon synced to state=" \
         | tail -1 \
         | grep -oP "state=\K[A-Za-z]+" 2>/dev/null || true)
-    
-    echo "$state"
+
+    if [[ -n "$state" ]]; then
+        echo "$state"
+        return 0
+    fi
+
+    # Tầng 2 (fallback): Parse "connect" field từ get_node_stat polling
+    # ARO poll mỗi 20s — khi node stable không có state transition,
+    # dòng tray synced không xuất hiện nhưng "connect" vẫn có liên tục.
+    # Chỉ đọc 60 dòng cuối (~20 phút polling) để tránh data từ session cũ.
+    # An toàn: hàm này chỉ được gọi khi log đã fresh (< LOG_STALE_MINUTES=10m).
+    local connect_line
+    connect_line=$(run_as_aro_user tail -n 60 "$LATEST_LOG_FILE" 2>/dev/null \
+        | { grep -F '"connect"' 2>/dev/null || true; } \
+        | tail -1)
+
+    if [[ -n "$connect_line" ]]; then
+        if echo "$connect_line" | grep -qF '"connect":"connected"'; then
+            echo "Online"
+            return 0
+        elif echo "$connect_line" | grep -qF '"connect":"disconnected"'; then
+            echo "Offline"
+            return 0
+        fi
+    fi
+
+    # Tầng 3: Không tìm thấy gì → thực sự unknown (ARO chạy nhưng chưa poll)
+    echo ""
+    return 0
 }
 
 # Returns 0 (true) nếu ARO đang connected theo log mới nhất
