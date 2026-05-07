@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.9"
+SCRIPT_VERSION="3.5.10"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1299,9 +1299,37 @@ kill_aro() {
     sleep 2
     pkill -9 -u "$EFFECTIVE_USER" -x ARO 2>/dev/null || true
     sleep 1
+    cleanup_aro_tmp
+}
+
+cleanup_aro_tmp() {
+    # Xóa các file lock/socket của ARO trong /tmp/ có thể thuộc root sau unclean kill
+    # ARO (Tauri) để lại các file này, khi launch lại với user ubuntu sẽ gây Permission denied
+    local cleaned=0
+
+    for f in \
+        /tmp/com.aro.ARONetwork.lock \
+        /tmp/.com.aro.ARONetwork.lock \
+        /tmp/com.aro.ARONetwork-*.sock \
+        /tmp/.com.aro.ARONetwork-* \
+        /tmp/com.aro.* \
+        /tmp/.com.aro.*
+    do
+        # Glob expansion — bỏ qua nếu không có file nào match
+        [[ -e "$f" ]] || continue
+        rm -f "$f" 2>/dev/null && {
+            watchdog_log "Cleaned ARO tmp file: $f"
+            (( cleaned++ )) || true
+        } || watchdog_log "WARN: Could not remove ARO tmp file: $f (owner: $(stat -c '%U' "$f" 2>/dev/null || echo unknown))"
+    done
+
+    if [[ $cleaned -gt 0 ]]; then
+        watchdog_log "cleanup_aro_tmp: removed $cleaned file(s)"
+    fi
 }
 
 launch_aro() {
+    cleanup_aro_tmp
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
     watchdog_log "  Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
@@ -3776,6 +3804,7 @@ do_aro_start() {
     # 5. Watchdog đang chạy → launch ARO trực tiếp luôn (không đợi next cycle)
     log_info "Launching ARO directly..."
     LATEST_LOG_FILE=$(get_latest_aro_log)
+    cleanup_aro_tmp
     launch_aro
     state_set "last_restart" "$(date +%s)"
     state_set "stable_since" "$(date +%s)"
