@@ -1769,7 +1769,7 @@ ${LAST_ONLINE_LABEL}: ${LAST_ONLINE_AGO}
 check_proxy_health() {
     if ! systemctl is-active --quiet redsocks-aro; then
         watchdog_log "WARNING: Proxy service (redsocks-aro) is down!"
-        send_notify_proxy_down "redsocks service not running"
+        send_notify_proxy_down "redsocks service not running" || true
 
         # Attempt auto-recovery
         watchdog_log "Attempting to restart proxy service..."
@@ -1778,7 +1778,7 @@ check_proxy_health() {
 
         if systemctl is-active --quiet redsocks-aro; then
             watchdog_log "SUCCESS: Proxy service recovered"
-            send_notify_proxy_recovered
+            send_notify_proxy_recovered || true
             return 0
         else
             watchdog_log "ERROR: Proxy service restart failed!"
@@ -1805,7 +1805,7 @@ check_proxy_health() {
         
         if systemctl is-active --quiet redsocks-aro; then
             watchdog_log "SUCCESS: Redsocks restarted (queue cleared)"
-            send_notify_redsocks_restarted
+            send_notify_redsocks_restarted || true
             return 0
         else
             watchdog_log "ERROR: Redsocks restart failed!"
@@ -1837,7 +1837,7 @@ check_real_proxy() {
 
     if [[ -z "$exit_ip" ]]; then
         watchdog_log "ERROR: Real proxy check FAILED — cannot reach ${PROXY_HOST}:${PROXY_PORT}"
-        send_notify_proxy_down "proxy server unreachable or credentials rejected"
+        send_notify_proxy_down "proxy server unreachable or credentials rejected" || true
         return 1
     fi
 
@@ -1906,7 +1906,7 @@ handle_stuck_connecting() {
     if ! check_redsocks_functional; then
         # Redsocks transparent proxy bị broken (hung hoặc lỗi iptables)
         watchdog_log "Transparent proxy BROKEN — redsocks issue"
-        send_notify_pre_restart "Transparent proxy broken (redsocks hung/iptables error)" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
+        send_notify_pre_restart "Transparent proxy broken (redsocks hung/iptables error)" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
         kill_aro
         
         # Restart redsocks và poll đến khi functional hoặc timeout
@@ -1928,13 +1928,13 @@ handle_stuck_connecting() {
         
         if $redsocks_ok; then
             watchdog_log "Redsocks recovered — launching ARO"
-            send_notify_proxy_recovered "stuck_connecting"
+            send_notify_proxy_recovered "stuck_connecting" || true
             launch_aro
             state_set "last_restart" "$(date +%s)"
             _wait_for_aro_online "redsocks_recovered"
         else
             watchdog_log "Redsocks recovery FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
-            send_notify_proxy_dead
+            send_notify_proxy_dead || true
             # ARO tắt, chờ can thiệp thủ công
         fi
         return 0
@@ -1947,16 +1947,16 @@ handle_stuck_connecting() {
     if ! check_real_proxy 2>/dev/null; then
         # Proxy server thực sự offline
         watchdog_log "Upstream proxy server DOWN — killing ARO to protect IP"
-        send_notify_pre_restart "Upstream SOCKS5 proxy server unreachable" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
+        send_notify_pre_restart "Upstream SOCKS5 proxy server unreachable" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
         kill_aro
-        send_notify_proxy_down "proxy server unreachable"
+        send_notify_proxy_down "proxy server unreachable" || true
         return 0
     fi
 
     # ── Bước 3: Mạng OK hết nhưng ARO vẫn stuck ────────────────
     # Có thể app gặp vấn đề nội bộ
     watchdog_log "Network path OK but ARO still stuck — restarting ARO app"
-    send_notify_pre_restart "Network OK but ARO app stuck internally" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)"
+    send_notify_pre_restart "Network OK but ARO app stuck internally" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
     kill_aro
     sleep 3
     launch_aro
@@ -1996,7 +1996,7 @@ _wait_for_aro_online() {
 
         if [[ "$tray_state" == "Online" ]]; then
             watchdog_log "ARO online successfully after ${elapsed}s (context: $context)"
-            send_notify_aro_reconnected "$context" "$elapsed"
+            send_notify_aro_reconnected "$context" "$elapsed" || true
             state_set "retry_count" "0"
             state_set "stable_since" "$(date +%s)"
             _WAIT_FOR_ARO_ONLINE_RUNNING=false
@@ -2009,10 +2009,10 @@ _wait_for_aro_online() {
         retry_count=$(( retry_count + 1 ))
         state_set "retry_count" "$retry_count"
         watchdog_log "ARO still not online after ${CONNECTING_WAIT_SECS}s (retry $retry_count/$MAX_RETRIES)"
-        send_notify_aro_stuck_manual "$retry_count" "$context"
+        send_notify_aro_stuck_manual "$retry_count" "$context" || true
     else
         watchdog_log "MAX RETRIES reached ($MAX_RETRIES) — giving up"
-        send_notify_max_retries
+        send_notify_max_retries || true
         state_set "retry_count" "0"
     fi
     
@@ -2293,7 +2293,7 @@ watchdog_loop() {
                             if [[ $retry_count -lt $MAX_RETRIES ]]; then
                                 retry_count=$(( retry_count + 1 ))
                                 state_set "retry_count" "$retry_count"
-                                send_notify_pre_restart "ARO tray state unknown for ${unknown_mins}m" "unknown" "$unknown_mins" "$retry_count"
+                                send_notify_pre_restart "ARO tray state unknown for ${unknown_mins}m" "unknown" "$unknown_mins" "$retry_count" || true
                                 kill_aro
                                 sleep 3
                                 launch_aro
@@ -2317,15 +2317,15 @@ watchdog_loop() {
 
                                 if is_aro_running && [[ $log_appeared -eq 1 ]]; then
                                     watchdog_log "ARO restarted after unknown tray state (retry $retry_count/$MAX_RETRIES)"
-                                    send_notify_restart_success "$retry_count"
+                                    send_notify_restart_success "$retry_count" || true
                                 else
                                     watchdog_log "ARO failed to start after unknown tray restart (log appeared: $log_appeared)"
                                     local start_err; start_err=$(get_aro_start_error)
-                                    send_notify_aro_start_failed "$retry_count" "$start_err"
+                                    send_notify_aro_start_failed "$retry_count" "$start_err" || true
                                 fi
                             else
                                 watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up (tray unknown)"
-                                send_notify_max_retries
+                                send_notify_max_retries || true
                                 state_set "retry_count" "0"
                                 aro_set_give_up
                             fi
@@ -2381,7 +2381,7 @@ watchdog_loop() {
                         
                         # Notify BEFORE kill
                         local disc_mins; disc_mins=$(get_disconnect_duration)
-                        send_notify_pre_restart "Log stale >$LOG_STALE_MINUTES min, disconnected ${disc_mins}min" "$(get_aro_tray_state)" "$disc_mins" "$retry_count"
+                        send_notify_pre_restart "Log stale >$LOG_STALE_MINUTES min, disconnected ${disc_mins}min" "$(get_aro_tray_state)" "$disc_mins" "$retry_count" || true
 
                         # Kill and restart
                         kill_aro
@@ -2391,7 +2391,7 @@ watchdog_loop() {
                         if ! check_display_accessible; then
                             local disp_err="Display ${DISPLAY_NUM} not accessible — check X server and XAUTHORITY"
                             watchdog_log "ERROR: $disp_err"
-                            send_notify_aro_start_failed "$retry_count" "$disp_err"
+                            send_notify_aro_start_failed "$retry_count" "$disp_err" || true
                             sleep "$CHECK_INTERVAL"
                             continue
                         fi
@@ -2420,16 +2420,16 @@ watchdog_loop() {
                         
                         if is_aro_running && is_log_fresh; then
                             watchdog_log "ARO restarted successfully (retry $retry_count/$MAX_RETRIES)"
-                            send_notify_restart_success "$retry_count"
+                            send_notify_restart_success "$retry_count" || true
                         else
                             watchdog_log "ARO restart verification failed (retry $retry_count/$MAX_RETRIES, log appeared: $log_appeared)"
                             local start_err; start_err=$(get_aro_start_error)
                             watchdog_log "Start error: $start_err"
-                            send_notify_aro_start_failed "$retry_count" "$start_err"
+                            send_notify_aro_start_failed "$retry_count" "$start_err" || true
                         fi
                     else
                         watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up"
-                        send_notify_max_retries
+                        send_notify_max_retries || true
                         state_set "retry_count" "0"
                         aro_set_give_up
                     fi
@@ -2443,7 +2443,7 @@ watchdog_loop() {
                         retry_count=$((retry_count + 1))
                         state_set "retry_count" "$retry_count"
 
-                        send_notify_pre_restart "ARO frozen ${stale_mins}m (log stale, tray=Online)" "$(get_aro_tray_state)" "0" "$retry_count"
+                        send_notify_pre_restart "ARO frozen ${stale_mins}m (log stale, tray=Online)" "$(get_aro_tray_state)" "0" "$retry_count" || true
                         kill_aro
                         sleep 3
                         if ! check_display_accessible; then
@@ -2499,12 +2499,12 @@ watchdog_loop() {
                 if ! check_display_accessible; then
                     local disp_err="Display ${DISPLAY_NUM} not accessible — check X server and XAUTHORITY"
                     watchdog_log "ERROR: $disp_err"
-                    send_notify_aro_start_failed "$retry_count" "$disp_err"
+                    send_notify_aro_start_failed "$retry_count" "$disp_err" || true
                     sleep "$CHECK_INTERVAL"
                     continue
                 fi
 
-                send_notify_pre_restart "ARO process not found (crashed or killed)" "not_running" "0" "$retry_count"
+                send_notify_pre_restart "ARO process not found (crashed or killed)" "not_running" "0" "$retry_count" || true
                 launch_aro
                 state_set "last_restart" "$(date +%s)"
                 state_set "stable_since" "$(date +%s)"
@@ -2527,16 +2527,16 @@ watchdog_loop() {
                 
                 if is_aro_running; then
                     watchdog_log "ARO started successfully"
-                    send_notify_restart_success "$retry_count"
+                    send_notify_restart_success "$retry_count" || true
                 else
                     watchdog_log "ARO failed to start (log appeared: $log_appeared)"
                     local start_err; start_err=$(get_aro_start_error)
                     watchdog_log "Start error: $start_err"
-                    send_notify_aro_start_failed "$retry_count" "$start_err"
+                    send_notify_aro_start_failed "$retry_count" "$start_err" || true
                 fi
             else
                 watchdog_log "MAX RETRIES REACHED ($MAX_RETRIES) - giving up"
-                send_notify_max_retries
+                send_notify_max_retries || true
                 state_set "retry_count" "0"
                 aro_set_give_up
             fi
@@ -3443,7 +3443,7 @@ do_full_install() {
     # Send setup notification
     if [[ -n "$TG_BOT_TOKEN" ]] && [[ -n "$TG_CHAT_ID" ]]; then
         log_info "Sending setup notification to Telegram..."
-        send_notify_setup_success "systemd"
+        send_notify_setup_success "systemd" || true
     fi
 }
 
@@ -4125,7 +4125,11 @@ do_status() {
     else
         echo "  Status: ✗ Not running"
     fi
-    echo "  Telegram:  $([ \"${TG_ENABLED:-1}\" == \"1\" ] && echo \"✓ Enabled\" || echo \"✗ Disabled (run tele-on to enable)\")"
+    if [[ "${TG_ENABLED:-1}" == "1" ]]; then
+        echo "  Telegram:  ✓ Enabled"
+    else
+        echo "  Telegram:  ✗ Disabled (run tele-on to enable)"
+    fi
 
     # Maintenance mode indicator
     if is_maintenance_mode; then
@@ -4826,7 +4830,8 @@ main() {
             TG_ENABLED=0
             save_watchdog_config
             echo "✅ Telegram notifications DISABLED"
-            echo "   Run '$SCRIPT_NAME tele-on' to re-enable"
+            echo "   Watchdog will pick up the change on next check cycle."
+            echo "   Run './aro-manager.sh tele-on' to re-enable."
             ;;
 
         tele-on)
@@ -4834,6 +4839,7 @@ main() {
             TG_ENABLED=1
             save_watchdog_config
             echo "✅ Telegram notifications ENABLED"
+            echo "   Run './aro-manager.sh tele-off' to disable."
             ;;
 
         debug)
