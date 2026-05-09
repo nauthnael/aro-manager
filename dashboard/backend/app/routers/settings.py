@@ -50,5 +50,5 @@ def test_telegram(body: schemas.TestTelegramRequest, db: Session = Depends(get_d
     if not chat_config:
         return {"ok": False, "error": f"Topic '{body.topic}' chưa được cấu hình"}
 
-    ok = send_telegram_message(chat_config, f"✅ Test từ ARO Dashboard — topic: <b>{body.topic}</b>")
-    return {"ok": ok, "error": None if ok else "Gửi thất bại, kiểm tra bot token và chat_id"}
+    ok, err = send_telegram_message(chat_config, f"✅ Test từ ARO Dashboard — topic: <b>{body.topic}</b>")
+    return {"ok": ok, "error": None if ok else err}

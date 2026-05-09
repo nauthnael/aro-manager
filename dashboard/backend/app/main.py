@@ -77,7 +77,7 @@ def check_offline_alerts():
                         f"Host: <code>{ns.node_id}</code>\n"
                         f"Account: {account}\n"
                         f"Offline: {minutes} phút",
-                    )
+                    )  # returns (ok, err) — ignore result in background job
                     open_log.alerted = True
             else:
                 if open_log:
