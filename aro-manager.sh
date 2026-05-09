@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.18"
+SCRIPT_VERSION="3.5.19"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2197,6 +2197,10 @@ watchdog_loop() {
 
     local last_daily_hour=-1
     local last_proxy_check_epoch=0   # tracks real proxy check timer
+    # Update restart: skip immediate proxy check until PROXY_CHECK_INTERVAL elapses.
+    if [[ $_is_update_restart -eq 1 ]]; then
+        last_proxy_check_epoch=$(date +%s)
+    fi
 
     while true; do
         local now; now=$(date +%s)
@@ -2634,7 +2638,7 @@ create_watchdog_service() {
 [Unit]
 Description=ARO Manager Watchdog with Proxy Protection
 After=network.target redsocks-aro.service
-Requires=redsocks-aro.service
+Wants=redsocks-aro.service
 
 [Service]
 Type=simple
