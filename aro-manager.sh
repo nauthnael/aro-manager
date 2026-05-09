@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.17"
+SCRIPT_VERSION="3.5.18"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -45,6 +45,7 @@ IPTABLES_RULES_FILE="/etc/iptables/rules.v4"
 # Runtime files
 PID_FILE="/tmp/aro_watchdog_manager.pid"
 STATE_FILE="/tmp/aro_watchdog_state_manager"
+UPDATE_RESTART_FLAG="aro_update_restart"
 MAINTENANCE_FLAG="/tmp/aro_maintenance"
 MAINTENANCE_EXPIRE_MINS=60    # Tự hết hạn sau 60 phút
 
@@ -2162,16 +2163,36 @@ watchdog_loop() {
     watchdog_log "Proxy: $PROXY_HOST:$PROXY_PORT"
     watchdog_log "Check interval: ${CHECK_INTERVAL}s"
     
-    # Initialize state
-    state_set "retry_count" "0"
-    aro_clear_give_up
-    state_set "last_restart" "0"
-    state_set "last_report" "0"
-    state_set "stable_since" "$(date +%s)"
-    state_set "tray_unknown_since" "0"
-    state_set "give_up_since" "0"
-    state_set "log_stale_since" "0"
-    rm -f "$TG_RETRY_AFTER_FILE"   # Clear rate limit state on fresh start
+    # Initialize state - distinguish fresh start vs update restart
+    local _is_update_restart=0
+    if [[ "$(state_get "$UPDATE_RESTART_FLAG" "0")" == "1" ]]; then
+        _is_update_restart=1
+        watchdog_log "Update restart detected - preserving ARO state (uptime protected)"
+    fi
+
+    # Clear flag immediately after reading it.
+    state_set "$UPDATE_RESTART_FLAG" "0"
+
+    if [[ $_is_update_restart -eq 0 ]]; then
+        # Fresh start: reset state as before.
+        state_set "retry_count" "0"
+        aro_clear_give_up
+        state_set "last_restart" "0"
+        state_set "last_report" "0"
+        state_set "stable_since" "$(date +%s)"
+        state_set "tray_unknown_since" "0"
+        state_set "give_up_since" "0"
+        state_set "log_stale_since" "0"
+    else
+        # Update restart: preserve state; set last_restart only if missing so grace applies.
+        local preserved_last_restart
+        preserved_last_restart=$(state_get "last_restart" "0")
+        if ! [[ "$preserved_last_restart" =~ ^[0-9]+$ ]] || [[ "$preserved_last_restart" -eq 0 ]]; then
+            state_set "last_restart" "$(date +%s)"
+        fi
+        watchdog_log "State preserved: last_restart=$preserved_last_restart retry_count=$(state_get retry_count 0)"
+    fi
+    rm -f "$TG_RETRY_AFTER_FILE"   # Clear rate limit state on watchdog start
     _unbound_last_log=0
 
     local last_daily_hour=-1
@@ -4498,6 +4519,10 @@ do_update_watchdog_only() {
 
     # Step 3/3: Restart watchdog only — ARO process tiếp tục chạy
     log_info "Step 3/3: Restarting watchdog service (ARO process untouched)..."
+
+    # Mark this as an update restart so watchdog preserves ARO state and uptime.
+    state_set "$UPDATE_RESTART_FLAG" "1"
+
     systemctl restart aro-watchdog
     sleep 3
 
