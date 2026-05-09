@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.14"
+SCRIPT_VERSION="3.5.15"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -62,6 +62,7 @@ TG_API_FALLBACK_URL="https://tele-api.nauthnael.workers.dev"
 # ── Watchdog timing ──────────────────────────────────────────────
 CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không waste CPU
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
+STALE_RESTART_MINUTES=30      # Nếu log stale kéo dài >30m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
 STARTUP_TIMEOUT=120         # Chờ app init (VNC/X11) trước khi check log
 GIVE_UP_RETRY_MINS=30       # Sau give-up, tự retry sau N phút
@@ -566,6 +567,7 @@ TG_API_FALLBACK_URL="$TG_API_FALLBACK_URL"
 # === Timing ===
 CHECK_INTERVAL=$CHECK_INTERVAL
 LOG_STALE_MINUTES=$LOG_STALE_MINUTES
+STALE_RESTART_MINUTES=$STALE_RESTART_MINUTES
 DISCONNECT_ALERT_MINUTES=$DISCONNECT_ALERT_MINUTES
 STARTUP_TIMEOUT=$STARTUP_TIMEOUT
 RESET_STABLE_HOURS=$RESET_STABLE_HOURS
@@ -2116,6 +2118,7 @@ watchdog_loop() {
     state_set "stable_since" "$(date +%s)"
     state_set "tray_unknown_since" "0"
     state_set "give_up_since" "0"
+    state_set "log_stale_since" "0"
     _unbound_last_log=0
 
     local last_daily_hour=-1
@@ -2181,6 +2184,13 @@ watchdog_loop() {
             LATEST_LOG_FILE=$(get_latest_aro_log)
             
             if is_log_fresh; then
+                # Khi log fresh trở lại, reset stale tracker
+                local log_stale_since; log_stale_since=$(state_get "log_stale_since" "0")
+                if [[ "$log_stale_since" -ne 0 ]]; then
+                    watchdog_log "ARO log recovered (was stale) — resetting stale tracker"
+                    state_set "log_stale_since" "0"
+                fi
+
                 # Log đang được ghi đều — check tray state thực sự
                 local tray_state
                 tray_state=$(get_aro_tray_state)
@@ -2324,10 +2334,22 @@ watchdog_loop() {
                 esac
             else
                 # ── Log stale (>LOG_STALE_MINUTES) ──
-                watchdog_log "ARO process running but log is stale (>${LOG_STALE_MINUTES}m)"
+                local now_ts; now_ts=$(date +%s)
+                local log_stale_since; log_stale_since=$(state_get "log_stale_since" "0")
+
+                # Ghi timestamp lần đầu phát hiện stale
+                if [[ "$log_stale_since" -eq 0 ]]; then
+                    state_set "log_stale_since" "$now_ts"
+                    log_stale_since=$now_ts
+                fi
+
+                local stale_mins=$(( (now_ts - log_stale_since) / 60 ))
+                watchdog_log "ARO process running but log is stale (>${LOG_STALE_MINUTES}m, stale for ${stale_mins}m)"
 
                 if check_disconnect_alert; then
+                    # Case 1: Stale + disconnected ≥ 15m → restart (logic cũ giữ nguyên)
                     watchdog_log "Recent disconnect detected, attempting restart"
+                    state_set "log_stale_since" "0"
                     
                     local retry_count; retry_count=$(state_get "retry_count" "0")
                     if [[ $retry_count -lt $MAX_RETRIES ]]; then
@@ -2403,6 +2425,54 @@ watchdog_loop() {
                         send_notify_max_retries
                         state_set "retry_count" "0"
                         aro_set_give_up
+                    fi
+                elif [[ $stale_mins -ge $STALE_RESTART_MINUTES ]]; then
+                    # Case 2: Stale kéo dài ≥ 30m dù tray=Online → ARO frozen, force restart
+                    watchdog_log "ARO log stale for ${stale_mins}m (threshold: ${STALE_RESTART_MINUTES}m) — force restart (frozen while Online)"
+                    state_set "log_stale_since" "0"
+
+                    local retry_count; retry_count=$(state_get "retry_count" "0")
+                    if [[ $retry_count -lt $MAX_RETRIES ]]; then
+                        retry_count=$((retry_count + 1))
+                        state_set "retry_count" "$retry_count"
+
+                        send_notify_pre_restart "ARO frozen ${stale_mins}m (log stale, tray=Online)" "$(get_aro_tray_state)" "0" "$retry_count"
+                        kill_aro
+                        sleep 3
+                        if ! check_display_accessible; then
+                            watchdog_log "ERROR: Display ${DISPLAY_NUM} not accessible"
+                            sleep "$CHECK_INTERVAL"
+                            continue
+                        fi
+                        launch_aro
+                        state_set "last_restart" "$(date +%s)"
+                        state_set "stable_since" "$(date +%s)"
+                        
+                        watchdog_log "Waiting for ARO to start (timeout: ${STARTUP_TIMEOUT}s)..."
+                        local waited=0
+                        local poll_interval=10
+                        local log_appeared=0
+
+                        while [[ $waited -lt $STARTUP_TIMEOUT ]]; do
+                            sleep "$poll_interval"
+                            waited=$(( waited + poll_interval ))
+                            LATEST_LOG_FILE=$(get_latest_aro_log)
+                            if [[ -n "$LATEST_LOG_FILE" ]] && run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+                                log_appeared=1
+                                watchdog_log "ARO log appeared after ${waited}s"
+                                break
+                            fi
+                        done
+                    else
+                        watchdog_log "MAX RETRIES REACHED — giving up (frozen ARO)"
+                        state_set "aro_give_up" "1"
+                    fi
+                else
+                    # Case 3: Stale nhưng chưa đủ threshold → log định kỳ mỗi 2 phút
+                    local _stale_last_log; _stale_last_log=$(state_get "_stale_last_log" "0")
+                    if [[ $(( now_ts - _stale_last_log )) -ge 120 ]]; then
+                        watchdog_log "ARO log stale for ${stale_mins}m — waiting (threshold: ${STALE_RESTART_MINUTES}m)"
+                        state_set "_stale_last_log" "$now_ts"
                     fi
                 fi
             fi
