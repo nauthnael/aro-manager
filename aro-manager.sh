@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.19"
+SCRIPT_VERSION="3.5.20"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2646,6 +2646,7 @@ ExecStart=$SCRIPT_DIR/$SCRIPT_NAME watchdog-loop
 Restart=on-failure
 RestartSec=10s
 User=root
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
@@ -2662,6 +2663,7 @@ ExecStart=$SCRIPT_DIR/$SCRIPT_NAME watchdog-loop
 Restart=on-failure
 RestartSec=10s
 User=root
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
