@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.16"
+SCRIPT_VERSION="3.5.17"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -60,7 +60,7 @@ USE_PROXY=1    # 1 = dùng proxy (default), 0 = no-proxy mode
 TG_API_FALLBACK_URL="https://tele-api.nauthnael.workers.dev"
 
 # ── Watchdog timing ──────────────────────────────────────────────
-CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không waste CPU
+CHECK_INTERVAL=60           # Chu kỳ watchdog: 60s - giảm 50% IO, vẫn đủ responsive
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
 STALE_RESTART_MINUTES=30      # Nếu log stale kéo dài >30m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
@@ -72,7 +72,7 @@ BACKOFF_TIMES="0 0 30 60 120"  # retry 1&2: ngay lập tức; 3: 30s; 4: 60s; 5:
 DAILY_REPORT_HOUR=7         # Giờ gửi daily report (0–23, không dùng leading zero)
 
 # Proxy connectivity check
-PROXY_CHECK_INTERVAL=300          # real proxy test every 5 minutes
+PROXY_CHECK_INTERVAL=600          # real proxy test every 10 minutes - giảm 50% outbound curl
 PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour khi proxy server lỗi
 PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))
 
@@ -92,6 +92,7 @@ TRAY_STATUS_TS=0                   # Epoch khi TRAY_STATUS được set
 TG_ENABLED=1                       # 1 = bật Telegram notify, 0 = tắt hoàn toàn
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
+TG_RETRY_AFTER_FILE="/tmp/aro_tg_retry_after"  # Lưu timestamp hết hạn rate limit
 
 # Throttle states
 _last_proxy_down_notify=0
@@ -396,42 +397,86 @@ send_telegram() {
 
     # Check kill switch
     if [[ "${TG_ENABLED:-1}" == "0" ]]; then
-        return 0   # silent skip — không log để tránh spam watchdog log
+        return 0
     fi
 
     if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
         return 0
     fi
 
+    # Check global rate limit backoff
+    if [[ -f "$TG_RETRY_AFTER_FILE" ]]; then
+        local retry_until
+        retry_until=$(cat "$TG_RETRY_AFTER_FILE" 2>/dev/null || echo 0)
+        local now_ts; now_ts=$(date +%s)
+        if ! [[ "$retry_until" =~ ^[0-9]+$ ]]; then
+            rm -f "$TG_RETRY_AFTER_FILE"
+        elif [[ $now_ts -lt $retry_until ]]; then
+            local remaining=$(( retry_until - now_ts ))
+            watchdog_log "Telegram rate-limited - skipping (retry_after: ${remaining}s remaining)"
+            return 0
+        else
+            rm -f "$TG_RETRY_AFTER_FILE"
+        fi
+    fi
+
     local escaped_msg
     escaped_msg=$(echo "$message" | sed 's/"/\\"/g')
-
     local payload="{\"chat_id\":\"${TG_CHAT_ID}\",\"text\":\"${escaped_msg}\",\"parse_mode\":\"HTML\"}"
 
-    # Hướng 1: Direct — api.telegram.org
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    # Hướng 1: Direct - api.telegram.org (đọc response body để lấy retry_after)
+    local response http_code
+    response=$(curl -s -w "\n%{http_code}" -X POST \
         "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        --max-time 10 2>/dev/null || echo "000")
+        --max-time 10 2>/dev/null || echo -e "\n000")
+
+    http_code=$(echo "$response" | tail -1)
+    local body
+    body=$(echo "$response" | head -n -1)
 
     if [[ "$http_code" == "200" ]]; then
         return 0
     fi
 
-    watchdog_log "WARNING: Telegram direct failed (HTTP $http_code) — trying fallback..."
+    # Xử lý 429: đọc retry_after và lưu vào file
+    if [[ "$http_code" == "429" ]]; then
+        local retry_after
+        retry_after=$(echo "$body" | grep -o '"retry_after":[0-9]*' | grep -o '[0-9]*' || echo 60)
+        [[ -z "$retry_after" || "$retry_after" -lt 1 ]] && retry_after=60
+        local retry_until=$(( $(date +%s) + retry_after ))
+        echo "$retry_until" > "$TG_RETRY_AFTER_FILE"
+        watchdog_log "Telegram rate limited (429) - backing off for ${retry_after}s (until $(date -d @$retry_until '+%H:%M:%S' 2>/dev/null || date -r $retry_until '+%H:%M:%S' 2>/dev/null || echo $retry_until))"
+        return 0  # KHÔNG gọi fallback khi bị rate limit
+    fi
 
-    # Hướng 2: Fallback — Cloudflare Worker proxy
+    watchdog_log "WARNING: Telegram direct failed (HTTP $http_code) - trying fallback..."
+
+    # Hướng 2: Fallback - chỉ khi lỗi thật (không phải 429)
     local fallback_url="${TG_API_FALLBACK_URL:-https://tele-api.nauthnael.workers.dev}"
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+    response=$(curl -s -w "\n%{http_code}" -X POST \
         "${fallback_url}/bot${TG_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        --max-time 10 2>/dev/null || echo "000")
+        --max-time 10 2>/dev/null || echo -e "\n000")
+
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | head -n -1)
 
     if [[ "$http_code" == "200" ]]; then
-        watchdog_log "Telegram sent via fallback (HTTP $http_code)"
+        watchdog_log "Telegram sent via fallback"
+        return 0
+    fi
+
+    # Fallback cũng 429
+    if [[ "$http_code" == "429" ]]; then
+        local retry_after
+        retry_after=$(echo "$body" | grep -o '"retry_after":[0-9]*' | grep -o '[0-9]*' || echo 60)
+        [[ -z "$retry_after" || "$retry_after" -lt 1 ]] && retry_after=60
+        local retry_until=$(( $(date +%s) + retry_after ))
+        echo "$retry_until" > "$TG_RETRY_AFTER_FILE"
+        watchdog_log "Telegram fallback also rate limited (429) - backing off for ${retry_after}s"
         return 0
     fi
 
@@ -1819,7 +1864,7 @@ check_proxy_health() {
 # ── Real proxy connectivity check ───────────────────────────────
 # Tests actual SOCKS5 tunnel to proxy server, independent of
 # redsocks/iptables. Detects: proxy server offline, wrong creds,
-# upstream routing failure. Runs every PROXY_CHECK_INTERVAL (5m).
+# upstream routing failure. Runs every PROXY_CHECK_INTERVAL (10m).
 
 check_real_proxy() {
     watchdog_log "Real proxy connectivity check: ${PROXY_HOST}:${PROXY_PORT}"
@@ -2126,6 +2171,7 @@ watchdog_loop() {
     state_set "tray_unknown_since" "0"
     state_set "give_up_since" "0"
     state_set "log_stale_since" "0"
+    rm -f "$TG_RETRY_AFTER_FILE"   # Clear rate limit state on fresh start
     _unbound_last_log=0
 
     local last_daily_hour=-1
@@ -2169,7 +2215,7 @@ watchdog_loop() {
             fi
         fi
 
-        # ── Real proxy check every PROXY_CHECK_INTERVAL (5 min) ──
+        # ── Real proxy check every PROXY_CHECK_INTERVAL (10 min) ──
         if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
             if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
                 check_real_proxy || true   # failure already logged + notified inside
