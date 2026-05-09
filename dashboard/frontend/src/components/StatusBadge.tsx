@@ -18,7 +18,7 @@ export default function StatusBadge({ status, isStale }: Props) {
       </span>
     )
   }
-  const c = (status && STATUS_CONFIG[status]) ?? { label: status ?? 'Unknown', cls: 'bg-gray-100 text-gray-600' }
+  const c = (status ? STATUS_CONFIG[status] : undefined) ?? { label: status ?? 'Unknown', cls: 'bg-gray-100 text-gray-600' }
   return (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${c.cls}`}>
       {c.label}
