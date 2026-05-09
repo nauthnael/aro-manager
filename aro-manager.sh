@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.20"
+SCRIPT_VERSION="3.6.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -643,6 +643,11 @@ ARO_BINARY="$WRAPPER_SCRIPT"
 
 # === ARO Run User ===
 ARO_RUN_USER="$CRD_USER"
+
+# === Dashboard ===
+DASHBOARD_ENABLED=${DASHBOARD_ENABLED:-false}
+DASHBOARD_URL="${DASHBOARD_URL:-}"
+DASHBOARD_API_KEY="${DASHBOARD_API_KEY:-}"
 EOF
     
     chmod 600 "$WATCHDOG_CONF_FILE"
@@ -653,10 +658,15 @@ load_configs() {
     if [[ -f "$PROXY_CONF_FILE" ]]; then
         source "$PROXY_CONF_FILE"
     fi
-    
+
     if [[ -f "$WATCHDOG_CONF_FILE" ]]; then
         source "$WATCHDOG_CONF_FILE"
     fi
+
+    # Dashboard defaults (có thể bị override bởi watchdog.conf)
+    DASHBOARD_ENABLED="${DASHBOARD_ENABLED:-false}"
+    DASHBOARD_URL="${DASHBOARD_URL:-}"
+    DASHBOARD_API_KEY="${DASHBOARD_API_KEY:-}"
 }
 
 create_redsocks_config() {
@@ -1734,6 +1744,145 @@ send_notify_proxy_dead() {
     send_telegram "$msg"
 }
 
+_execute_dashboard_command() {
+    local cmd_id="$1"
+    local action="$2"
+    local node_id="$HOSTNAME"
+    local base_url="${DASHBOARD_URL%/}"
+    local api_key="$DASHBOARD_API_KEY"
+
+    # Ack ngay để dashboard biết node đã nhận lệnh
+    curl -sf --max-time 5 \
+        -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/ack" \
+        -H "Content-Type: application/json" \
+        -d '{}' > /dev/null 2>&1 || true
+
+    watchdog_log "Dashboard command received: action=${action} id=${cmd_id}"
+
+    local result="" success="true"
+
+    case "$action" in
+        restart_aro)
+            watchdog_log "Dashboard: killing ARO for restart"
+            kill_aro
+            result="ARO killed — watchdog sẽ restart trong chu kỳ tiếp theo"
+            ;;
+        restart_watchdog)
+            watchdog_log "Dashboard: restarting watchdog service"
+            result="Watchdog restarting..."
+            # Gửi complete trước khi restart (service sẽ kill process này)
+            curl -sf --max-time 5 \
+                -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                -H "Content-Type: application/json" \
+                -d "{\"result\":\"${result}\",\"success\":true}" > /dev/null 2>&1 || true
+            systemctl restart aro-watchdog.service
+            return  # không tiếp tục (process bị kill)
+            ;;
+        debug_aro)
+            watchdog_log "Dashboard: running debug"
+            result=$(do_debug 2>&1 | head -200 | tr '"' "'" | tr '\n' '|')
+            ;;
+        reboot_vps)
+            watchdog_log "Dashboard: scheduling VPS reboot in 1 minute"
+            result="VPS sẽ reboot trong 1 phút"
+            curl -sf --max-time 5 \
+                -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                -H "Content-Type: application/json" \
+                -d "{\"result\":\"${result}\",\"success\":true}" > /dev/null 2>&1 || true
+            shutdown -r +1 "Dashboard reboot command" &
+            return
+            ;;
+        *)
+            result="Unknown action: ${action}"
+            success="false"
+            ;;
+    esac
+
+    # Gửi kết quả về dashboard
+    local payload
+    payload=$(python3 -c "
+import json, sys
+print(json.dumps({'result': sys.argv[1], 'success': sys.argv[2] == 'true'}))
+" "$result" "$success" 2>/dev/null) || payload="{\"result\":\"done\",\"success\":true}"
+
+    curl -sf --max-time 10 \
+        -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+        -H "Content-Type: application/json" \
+        -d "$payload" > /dev/null 2>&1 || true
+}
+
+report_to_dashboard() {
+    [[ "${DASHBOARD_ENABLED:-false}" != "true" ]] && return 0
+    [[ -z "$DASHBOARD_URL" ]] || [[ -z "$DASHBOARD_API_KEY" ]] && return 0
+
+    LATEST_LOG_FILE=$(get_latest_aro_log)
+    parse_node_info
+
+    local tray_state; tray_state=$(get_aro_tray_state)
+    local proxy_status="false"
+    check_proxy_health > /dev/null 2>&1 && proxy_status="true"
+
+    local base_url="${DASHBOARD_URL%/}"
+    local node_id="$HOSTNAME"
+
+    local payload
+    payload=$(python3 -c "
+import json, sys
+d = {
+    'node_id':          sys.argv[1],
+    'api_key':          sys.argv[2],
+    'aro_status':       sys.argv[3],
+    'proxy_ok':         sys.argv[4] == 'true',
+    'reward_today':     float(sys.argv[5]) if sys.argv[5] else 0,
+    'reward_yesterday': float(sys.argv[6]) if sys.argv[6] else 0,
+    'uptime_ratio':     float(sys.argv[7]) if sys.argv[7] else 0,
+    'public_ip':        sys.argv[8],
+    'proxy_host':       sys.argv[9],
+    'proxy_port':       int(sys.argv[10]) if sys.argv[10].isdigit() else 0,
+    'serial':           sys.argv[11],
+    'account':          sys.argv[12],
+    'script_version':   sys.argv[13],
+}
+print(json.dumps(d))
+" "$node_id" "$DASHBOARD_API_KEY" \
+  "${tray_state:-unknown}" "$proxy_status" \
+  "${REWARD_TODAY:-0}" "${REWARD_YESTERDAY:-0}" "${UPTIME_RATIO:-0}" \
+  "${PUBLIC_IP:-}" "${PROXY_HOST:-}" "${PROXY_PORT:-0}" \
+  "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" 2>/dev/null) || {
+        watchdog_log "Dashboard: failed to build payload"
+        return 0
+    }
+
+    local response
+    response=$(curl -sf --max-time 8 \
+        -X POST "${base_url}/api/v1/nodes/report" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null) || {
+        watchdog_log "Dashboard: report failed (server unreachable)"
+        return 0
+    }
+
+    # Parse và execute commands trả về
+    local cmds_json
+    cmds_json=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    cmds = data.get('commands', [])
+    for c in cmds:
+        print(c['id'], c['action'])
+except:
+    pass
+" "$response" 2>/dev/null)
+
+    if [[ -n "$cmds_json" ]]; then
+        while IFS=' ' read -r cmd_id cmd_action; do
+            [[ -z "$cmd_id" ]] && continue
+            _execute_dashboard_command "$cmd_id" "$cmd_action"
+        done <<< "$cmds_json"
+    fi
+}
+
 send_daily_report() {
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
@@ -2625,6 +2774,9 @@ watchdog_loop() {
             last_daily_hour=-1
         fi
         
+        # Dashboard report (fire-and-forget, không block watchdog)
+        report_to_dashboard &
+
         # Sleep until next check
         sleep "$CHECK_INTERVAL"
     done
