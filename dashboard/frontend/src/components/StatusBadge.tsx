@@ -13,8 +13,8 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
 export default function StatusBadge({ status, isStale }: Props) {
   if (isStale) {
     return (
-      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-        Stale
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-600">
+        VPS Offline
       </span>
     )
   }

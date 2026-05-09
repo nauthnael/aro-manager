@@ -38,6 +38,18 @@ export interface NodeDetailResponse {
   history: HistoryPoint[]
 }
 
+export interface AccountStats {
+  account: string
+  total: number
+  online: number
+  offline: number
+  no_internet: number
+  unbound: number
+  vps_offline: number
+  total_points: number
+  avg_uptime: number | null
+}
+
 export interface Command {
   id: number
   node_id: string

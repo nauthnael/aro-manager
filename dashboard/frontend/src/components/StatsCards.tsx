@@ -45,7 +45,7 @@ export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
     { key: 'Offline',     label: 'Offline',     value: stats.offline,     border: 'border-red-500' },
     { key: 'NoInternet',  label: 'No Internet', value: stats.no_internet,  border: 'border-yellow-500' },
     { key: 'Unbound',     label: 'Unbound',     value: stats.unbound,     border: 'border-purple-500' },
-    { key: 'stale',       label: 'Stale',       value: stats.stale,       border: 'border-gray-300' },
+    { key: 'stale',       label: 'VPS Offline', value: stats.stale,       border: 'border-gray-400' },
   ]
 
   return (

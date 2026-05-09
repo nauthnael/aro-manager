@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LogOut, RefreshCw } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { NodeListResponse } from '../types'
 import api from '../api/client'
@@ -50,6 +50,14 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => navigate('/accounts')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Thống kê theo Account"
+            >
+              <BarChart2 size={15} />
+              <span className="hidden sm:inline">Thống kê Account</span>
+            </button>
             <button
               onClick={() => refetch()}
               disabled={isFetching}

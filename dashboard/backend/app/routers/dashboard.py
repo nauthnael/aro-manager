@@ -138,3 +138,57 @@ def update_notes(
     node.notes = body.notes
     db.commit()
     return {"ok": True}
+
+
+@router.get("/dashboard/accounts", response_model=List[schemas.AccountStatsOut])
+def account_stats(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    now = datetime.utcnow()
+    nodes = db.query(models.Node).all()
+    statuses = {s.node_id: s for s in db.query(models.NodeStatus).all()}
+
+    buckets: dict = {}
+    for node in nodes:
+        key = node.account or "(không rõ)"
+        if key not in buckets:
+            buckets[key] = dict(
+                account=key, total=0, online=0, offline=0,
+                no_internet=0, unbound=0, vps_offline=0,
+                total_points=0.0, uptime_sum=0.0, uptime_count=0,
+            )
+        b = buckets[key]
+        b["total"] += 1
+
+        status = statuses.get(node.node_id)
+        if status and status.last_seen and (now - status.last_seen).total_seconds() <= STALE_SECS:
+            aro = status.aro_status
+            if aro == "Online":        b["online"] += 1
+            elif aro == "Offline":     b["offline"] += 1
+            elif aro == "NoInternet":  b["no_internet"] += 1
+            elif aro == "Unbound":     b["unbound"] += 1
+            else:                      b["vps_offline"] += 1
+
+            if status.reward_yesterday:
+                b["total_points"] += status.reward_yesterday
+            if status.uptime_ratio is not None:
+                b["uptime_sum"] += status.uptime_ratio
+                b["uptime_count"] += 1
+        else:
+            b["vps_offline"] += 1
+
+    result = []
+    for b in buckets.values():
+        avg = b["uptime_sum"] / b["uptime_count"] if b["uptime_count"] > 0 else None
+        result.append(schemas.AccountStatsOut(
+            account=b["account"], total=b["total"],
+            online=b["online"], offline=b["offline"],
+            no_internet=b["no_internet"], unbound=b["unbound"],
+            vps_offline=b["vps_offline"],
+            total_points=round(b["total_points"], 2),
+            avg_uptime=round(avg, 1) if avg is not None else None,
+        ))
+
+    result.sort(key=lambda x: x.total_points, reverse=True)
+    return result

@@ -118,3 +118,15 @@ class CreateCommandRequest(BaseModel):
 
 class UpdateNotesRequest(BaseModel):
     notes: str
+
+
+class AccountStatsOut(BaseModel):
+    account: str
+    total: int
+    online: int
+    offline: int
+    no_internet: int
+    unbound: int
+    vps_offline: int
+    total_points: float
+    avg_uptime: Optional[float] = None
