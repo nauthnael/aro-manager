@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.13"
+SCRIPT_VERSION="3.5.14"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -64,6 +64,7 @@ CHECK_INTERVAL=30           # Chu kỳ watchdog: 30s đủ responsive mà không
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
 STARTUP_TIMEOUT=120         # Chờ app init (VNC/X11) trước khi check log
+GIVE_UP_RETRY_MINS=30       # Sau give-up, tự retry sau N phút
 RESET_STABLE_HOURS=2        # Sau 2h stable liên tục, reset retry counter về 0
 MAX_RETRIES=5               # 5 lần retry với backoff trước khi give up
 BACKOFF_TIMES="0 0 30 60 120"  # retry 1&2: ngay lập tức; 3: 30s; 4: 60s; 5: 120s
@@ -2114,6 +2115,7 @@ watchdog_loop() {
     state_set "last_report" "0"
     state_set "stable_since" "$(date +%s)"
     state_set "tray_unknown_since" "0"
+    state_set "give_up_since" "0"
     _unbound_last_log=0
 
     local last_daily_hour=-1
@@ -2132,9 +2134,29 @@ watchdog_loop() {
 
         # ── Give-up check ────────────────────────────────────────────
         if aro_is_give_up; then
-            watchdog_log "Give-up flag active — skipping ARO checks (run 'start' to reset)"
-            sleep "$CHECK_INTERVAL"
-            continue
+            local give_up_since
+            give_up_since=$(state_get "give_up_since" "0")
+            local now_ts; now_ts=$(date +%s)
+
+            if [[ "$give_up_since" -eq 0 ]]; then
+                # Lần đầu vào give-up: ghi timestamp
+                state_set "give_up_since" "$now_ts"
+                watchdog_log "Give-up flag active — will auto-retry in ${GIVE_UP_RETRY_MINS}m (run 'start' to reset)"
+            else
+                local elapsed_mins=$(( (now_ts - give_up_since) / 60 ))
+                if [[ $elapsed_mins -ge $GIVE_UP_RETRY_MINS ]]; then
+                    watchdog_log "Give-up auto-retry triggered after ${elapsed_mins}m — clearing flag"
+                    state_set "aro_give_up" "0"
+                    state_set "retry_count" "0"
+                    state_set "give_up_since" "0"
+                    # Tiếp tục vòng lặp bình thường (không sleep, không continue)
+                else
+                    local remaining=$(( GIVE_UP_RETRY_MINS - elapsed_mins ))
+                    watchdog_log "Give-up flag active — auto-retry in ${remaining}m (run 'start' to reset now)"
+                    sleep "$CHECK_INTERVAL"
+                    continue
+                fi
+            fi
         fi
 
         # ── Real proxy check every PROXY_CHECK_INTERVAL (5 min) ──
@@ -2260,12 +2282,27 @@ watchdog_loop() {
                                 launch_aro
                                 state_set "last_restart" "$(date +%s)"
                                 state_set "stable_since" "$(date +%s)"
-                                sleep "$STARTUP_TIMEOUT"
-                                if is_aro_running; then
+                                watchdog_log "Waiting for ARO to start (timeout: ${STARTUP_TIMEOUT}s)..."
+                                local waited=0
+                                local poll_interval=10
+                                local log_appeared=0
+
+                                while [[ $waited -lt $STARTUP_TIMEOUT ]]; do
+                                    sleep "$poll_interval"
+                                    waited=$(( waited + poll_interval ))
+                                    LATEST_LOG_FILE=$(get_latest_aro_log)
+                                    if [[ -n "$LATEST_LOG_FILE" ]] && run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+                                        log_appeared=1
+                                        watchdog_log "ARO log appeared after ${waited}s"
+                                        break
+                                    fi
+                                done
+
+                                if is_aro_running && [[ $log_appeared -eq 1 ]]; then
                                     watchdog_log "ARO restarted after unknown tray state (retry $retry_count/$MAX_RETRIES)"
                                     send_notify_restart_success "$retry_count"
                                 else
-                                    watchdog_log "ARO failed to start after unknown tray restart"
+                                    watchdog_log "ARO failed to start after unknown tray restart (log appeared: $log_appeared)"
                                     local start_err; start_err=$(get_aro_start_error)
                                     send_notify_aro_start_failed "$retry_count" "$start_err"
                                 fi
@@ -2336,14 +2373,27 @@ watchdog_loop() {
                         state_set "stable_since" "$(date +%s)"
                         
                         # Wait for startup
-                        watchdog_log "Waiting ${STARTUP_TIMEOUT}s for ARO to start..."
-                        sleep "$STARTUP_TIMEOUT"
+                        watchdog_log "Waiting for ARO to start (timeout: ${STARTUP_TIMEOUT}s)..."
+                        local waited=0
+                        local poll_interval=10
+                        local log_appeared=0
+
+                        while [[ $waited -lt $STARTUP_TIMEOUT ]]; do
+                            sleep "$poll_interval"
+                            waited=$(( waited + poll_interval ))
+                            LATEST_LOG_FILE=$(get_latest_aro_log)
+                            if [[ -n "$LATEST_LOG_FILE" ]] && run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+                                log_appeared=1
+                                watchdog_log "ARO log appeared after ${waited}s"
+                                break
+                            fi
+                        done
                         
                         if is_aro_running && is_log_fresh; then
                             watchdog_log "ARO restarted successfully (retry $retry_count/$MAX_RETRIES)"
                             send_notify_restart_success "$retry_count"
                         else
-                            watchdog_log "ARO restart verification failed (retry $retry_count/$MAX_RETRIES)"
+                            watchdog_log "ARO restart verification failed (retry $retry_count/$MAX_RETRIES, log appeared: $log_appeared)"
                             local start_err; start_err=$(get_aro_start_error)
                             watchdog_log "Start error: $start_err"
                             send_notify_aro_start_failed "$retry_count" "$start_err"
@@ -2382,13 +2432,27 @@ watchdog_loop() {
                 state_set "last_restart" "$(date +%s)"
                 state_set "stable_since" "$(date +%s)"
                 
-                sleep "$STARTUP_TIMEOUT"
+                watchdog_log "Waiting for ARO to start (timeout: ${STARTUP_TIMEOUT}s)..."
+                local waited=0
+                local poll_interval=10
+                local log_appeared=0
+
+                while [[ $waited -lt $STARTUP_TIMEOUT ]]; do
+                    sleep "$poll_interval"
+                    waited=$(( waited + poll_interval ))
+                    LATEST_LOG_FILE=$(get_latest_aro_log)
+                    if [[ -n "$LATEST_LOG_FILE" ]] && run_as_aro_user test -f "$LATEST_LOG_FILE" 2>/dev/null; then
+                        log_appeared=1
+                        watchdog_log "ARO log appeared after ${waited}s"
+                        break
+                    fi
+                done
                 
                 if is_aro_running; then
                     watchdog_log "ARO started successfully"
                     send_notify_restart_success "$retry_count"
                 else
-                    watchdog_log "ARO failed to start"
+                    watchdog_log "ARO failed to start (log appeared: $log_appeared)"
                     local start_err; start_err=$(get_aro_start_error)
                     watchdog_log "Start error: $start_err"
                     send_notify_aro_start_failed "$retry_count" "$start_err"
