@@ -5,6 +5,18 @@ from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Inte
 from app.database import Base
 
 
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    tg_critical = Column(String(100), default="")   # "chat_id:thread_id"
+    tg_warning = Column(String(100), default="")
+    tg_info = Column(String(100), default="")
+    tg_stats = Column(String(100), default="")
+    alert_offline_minutes = Column(Integer, default=10)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -54,6 +66,17 @@ class NodeHistory(Base):
     uptime_ratio = Column(Float)
 
     __table_args__ = (Index("ix_node_history_node_ts", "node_id", "timestamp"),)
+
+
+class NodeOfflineLog(Base):
+    __tablename__ = "node_offline_log"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
+    offline_at = Column(DateTime, nullable=False, index=True)
+    online_at = Column(DateTime)
+    duration_minutes = Column(Integer)
+    alerted = Column(Boolean, default=False)
 
 
 class Command(Base):

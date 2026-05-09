@@ -130,3 +130,26 @@ class AccountStatsOut(BaseModel):
     vps_offline: int
     total_points: float
     avg_uptime: Optional[float] = None
+
+
+class SettingsOut(BaseModel):
+    tg_critical: str
+    tg_warning: str
+    tg_info: str
+    tg_stats: str
+    alert_offline_minutes: int
+
+    class Config:
+        from_attributes = True
+
+
+class SettingsIn(BaseModel):
+    tg_critical: str = ""
+    tg_warning: str = ""
+    tg_info: str = ""
+    tg_stats: str = ""
+    alert_offline_minutes: int = 10
+
+
+class TestTelegramRequest(BaseModel):
+    topic: str  # critical | warning | info | stats

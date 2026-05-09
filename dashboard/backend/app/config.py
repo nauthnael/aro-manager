@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = 24 * 7
     history_retention_days: int = 30
     stale_threshold_secs: int = 180  # node chưa báo cáo trong 3 phút = stale
+    telegram_bot_token: str = ""
 
     class Config:
         env_file = ".env"

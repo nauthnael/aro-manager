@@ -72,8 +72,9 @@ export default function AccountStatsPage() {
       cell: info => {
         const v = info.getValue()
         if (v == null) return <span className="text-gray-300">—</span>
-        const cls = v >= 95 ? 'text-green-600' : v >= 80 ? 'text-yellow-600' : 'text-red-600'
-        return <span className={`text-sm font-mono ${cls}`}>{v.toFixed(1)}%</span>
+        const pct = v * 100
+        const cls = pct >= 95 ? 'text-green-600' : pct >= 80 ? 'text-yellow-600' : 'text-red-600'
+        return <span className={`text-sm font-mono ${cls}`}>{pct.toFixed(1)}%</span>
       },
     }),
   ], [])

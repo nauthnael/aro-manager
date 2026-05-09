@@ -90,7 +90,7 @@ export default function NodeDetail() {
             />
             <InfoRow
               label="Uptime"
-              value={node.uptime_ratio != null ? `${node.uptime_ratio.toFixed(1)}%` : null}
+              value={node.uptime_ratio != null ? `${(node.uptime_ratio * 100).toFixed(1)}%` : null}
             />
             <InfoRow label="Script Version" value={node.script_version} />
             <InfoRow
