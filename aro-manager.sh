@@ -4845,6 +4845,87 @@ do_update() {
 # HELP & USAGE
 # ───────────────────────────────────────────────────────────────
 
+do_dashboard_config() {
+    require_root
+
+    if [[ ! -f "$WATCHDOG_CONF_FILE" ]]; then
+        log_error "ARO Manager chưa được cài đặt. Chạy: $SCRIPT_NAME full-install <proxy>"
+        exit 1
+    fi
+
+    # Parse args: --enable=1|0  --url=http://...  --db-api=key
+    local opt_enable="" opt_url="" opt_api_key=""
+    for arg in "$@"; do
+        case "$arg" in
+            --enable=*)  opt_enable="${arg#--enable=}" ;;
+            --url=*)     opt_url="${arg#--url=}" ;;
+            --db-api=*)  opt_api_key="${arg#--db-api=}" ;;
+            status)      ;; # handled below
+            *)
+                log_error "Argument không hợp lệ: $arg"
+                echo "Usage: $SCRIPT_NAME dashboard [status] [--enable=1|0] [--url=URL] [--db-api=KEY]"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Helper: update hoặc append key=value vào conf file
+    _conf_set() {
+        local key="$1" val="$2"
+        if grep -q "^${key}=" "$WATCHDOG_CONF_FILE" 2>/dev/null; then
+            sed -i "s|^${key}=.*|${key}=${val}|" "$WATCHDOG_CONF_FILE"
+        else
+            echo "${key}=${val}" >> "$WATCHDOG_CONF_FILE"
+        fi
+    }
+
+    local changed=0
+
+    if [[ -n "$opt_enable" ]]; then
+        if [[ "$opt_enable" == "1" ]] || [[ "$opt_enable" == "true" ]]; then
+            _conf_set "DASHBOARD_ENABLED" "true"
+        else
+            _conf_set "DASHBOARD_ENABLED" "false"
+        fi
+        changed=1
+    fi
+
+    if [[ -n "$opt_url" ]]; then
+        _conf_set "DASHBOARD_URL" "\"${opt_url}\""
+        changed=1
+    fi
+
+    if [[ -n "$opt_api_key" ]]; then
+        _conf_set "DASHBOARD_API_KEY" "\"${opt_api_key}\""
+        changed=1
+    fi
+
+    # Load config để hiển thị trạng thái hiện tại
+    load_configs
+
+    echo ""
+    echo "══════════════════════════════════════"
+    echo "  Dashboard Configuration — $HOSTNAME"
+    echo "══════════════════════════════════════"
+    if [[ "${DASHBOARD_ENABLED:-false}" == "true" ]]; then
+        echo "  Status:  ✅ ENABLED"
+    else
+        echo "  Status:  ⭕ DISABLED"
+    fi
+    echo "  URL:     ${DASHBOARD_URL:-(chưa đặt)}"
+    echo "  API Key: ${DASHBOARD_API_KEY:+(đã đặt, ẩn)}${DASHBOARD_API_KEY:-  (chưa đặt)}"
+    echo "══════════════════════════════════════"
+    echo ""
+
+    if [[ $changed -eq 0 ]]; then
+        return 0
+    fi
+
+    # Reload watchdog để áp dụng config mới (ARO giữ nguyên)
+    log_info "Áp dụng config mới — reload watchdog (ARO không bị restart)..."
+    do_update_watchdog_only
+}
+
 show_usage() {
     show_banner
     cat << EOF
@@ -4879,6 +4960,9 @@ MAIN COMMANDS:
                       Chỉ reload watchdog (ARO giữ nguyên, không mất uptime)
   report              Send daily report to Telegram immediately
   test-telegram       Gửi tin nhắn Telegram thử để kiểm tra kết nối
+  dashboard [status]  Xem trạng thái cấu hình dashboard
+  dashboard --enable=1|0 --url=URL --db-api=KEY
+                      Kích hoạt/tắt dashboard reporting
   uninstall           Remove everything
 
 PROXY COMMANDS:
@@ -4935,6 +5019,15 @@ EXAMPLES:
 
   # Chỉ cài VNC (VPS đã có XFCE)
   sudo bash $SCRIPT_NAME setup vnc --vnc-pass "mypass123"
+
+  # Kích hoạt dashboard cho node (chạy trên từng VPS)
+  sudo bash $SCRIPT_NAME dashboard --enable=1 --url=http://1.2.3.4 --db-api=my_shared_key
+
+  # Tắt dashboard
+  sudo bash $SCRIPT_NAME dashboard --enable=0
+
+  # Xem cấu hình dashboard hiện tại
+  sudo bash $SCRIPT_NAME dashboard status
 
 LOGS:
   Main log: $MAIN_LOG
@@ -5286,6 +5379,11 @@ main() {
 
         uninstall)
             do_uninstall
+            SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        dashboard)
+            do_dashboard_config "$@"
             SHOW_FOOTER_ON_EXIT=1
             ;;
 
