@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.5.15"
+SCRIPT_VERSION="3.5.16"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -89,6 +89,7 @@ REDSOCKS_QUEUE_THRESHOLD=500  # recv-Q >500 bytes = redsocks backpressure, coi l
 # Telegram
 TRAY_STATUS="unknown"              # Trạng thái thực của ARO app (từ tray state log)
 TRAY_STATUS_TS=0                   # Epoch khi TRAY_STATUS được set
+TG_ENABLED=1                       # 1 = bật Telegram notify, 0 = tắt hoàn toàn
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 
@@ -393,6 +394,11 @@ parse_proxy_string() {
 send_telegram() {
     local message="$1"
 
+    # Check kill switch
+    if [[ "${TG_ENABLED:-1}" == "0" ]]; then
+        return 0   # silent skip — không log để tránh spam watchdog log
+    fi
+
     if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
         return 0
     fi
@@ -560,6 +566,7 @@ save_watchdog_config() {
 # Generated: $(date)
 
 # === Telegram ===
+TG_ENABLED=$TG_ENABLED
 TG_BOT_TOKEN="$TG_BOT_TOKEN"
 TG_CHAT_ID="$TG_CHAT_ID"
 TG_API_FALLBACK_URL="$TG_API_FALLBACK_URL"
@@ -4118,6 +4125,7 @@ do_status() {
     else
         echo "  Status: ✗ Not running"
     fi
+    echo "  Telegram:  $([ \"${TG_ENABLED:-1}\" == \"1\" ] && echo \"✓ Enabled\" || echo \"✗ Disabled (run tele-on to enable)\")"
 
     # Maintenance mode indicator
     if is_maintenance_mode; then
@@ -4811,6 +4819,21 @@ main() {
         status)
             do_status
             SHOW_FOOTER_ON_EXIT=1
+            ;;
+
+        tele-off)
+            load_configs
+            TG_ENABLED=0
+            save_watchdog_config
+            echo "✅ Telegram notifications DISABLED"
+            echo "   Run '$SCRIPT_NAME tele-on' to re-enable"
+            ;;
+
+        tele-on)
+            load_configs
+            TG_ENABLED=1
+            save_watchdog_config
+            echo "✅ Telegram notifications ENABLED"
             ;;
 
         debug)
