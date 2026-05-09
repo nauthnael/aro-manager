@@ -44,18 +44,11 @@ export default function NodeTable({ nodes }: { nodes: NodeStatus[] }) {
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
-      col.accessor('reward_today', {
-        header: 'Today (pts)',
+      col.accessor('reward_yesterday', {
+        header: 'Điểm (pts)',
         cell: info => {
           const v = info.getValue()
           return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>
-        },
-      }),
-      col.accessor('reward_yesterday', {
-        header: 'Yesterday',
-        cell: info => {
-          const v = info.getValue()
-          return <span className="text-sm font-mono text-gray-400">{v != null ? v.toLocaleString() : '—'}</span>
         },
       }),
       col.accessor('uptime_ratio', {

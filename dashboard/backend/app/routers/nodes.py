@@ -17,7 +17,7 @@ def _maybe_save_history(db: Session, status: models.NodeStatus, report: schemas.
             node_id=report.node_id,
             timestamp=now,
             aro_status=report.aro_status,
-            reward_today=report.reward_today,
+            reward_today=report.reward_yesterday,  # app không trả today, dùng yesterday
             uptime_ratio=report.uptime_ratio,
         ))
         status.last_snapshot_at = now

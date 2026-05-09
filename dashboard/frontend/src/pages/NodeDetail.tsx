@@ -94,11 +94,7 @@ export default function NodeDetail() {
             />
             <InfoRow label="Script Version" value={node.script_version} />
             <InfoRow
-              label="Reward Today"
-              value={node.reward_today != null ? node.reward_today.toLocaleString() + ' pts' : null}
-            />
-            <InfoRow
-              label="Reward Yesterday"
+              label="Điểm hôm qua"
               value={node.reward_yesterday != null ? node.reward_yesterday.toLocaleString() + ' pts' : null}
             />
             <InfoRow
