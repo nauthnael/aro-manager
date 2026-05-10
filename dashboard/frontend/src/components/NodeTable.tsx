@@ -101,6 +101,22 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
           </button>
         ),
       }),
+      col.accessor('serial', {
+        header: 'Serial',
+        cell: info => {
+          const v = info.getValue()
+          if (!v) return <span className="text-sm text-gray-400">—</span>
+          return (
+            <button
+              onClick={() => navigator.clipboard.writeText(v)}
+              title="Click to copy"
+              className="font-mono text-sm text-gray-700 hover:text-blue-600 hover:underline cursor-copy"
+            >
+              {v}
+            </button>
+          )
+        },
+      }),
       col.accessor(row => ({ s: row.aro_status, stale: row.is_stale }), {
         id: 'status',
         header: 'Status',
