@@ -60,12 +60,13 @@ export default function Dashboard() {
   }
 
   const handleCopySerials = () => {
-    const serials = (data?.nodes ?? [])
-      .filter(n => selectedIds.has(n.node_id) && n.serial)
-      .map(n => n.serial as string)
-    if (serials.length === 0) { alert('Không có node nào được chọn có serial.'); return }
+    const selected = (data?.nodes ?? [])
+      .filter(n => selectedIds.has(n.node_id))
+      .sort((a, b) => a.node_id.localeCompare(b.node_id))
+    if (selected.length === 0) { alert('Chưa chọn node nào.'); return }
+    const serials = selected.map(n => n.serial ?? 'N/A')
     copyToClipboard(serials.join('\n'))
-    alert(`Đã copy ${serials.length} serial vào clipboard.`)
+    alert(`Đã copy ${selected.length} serial vào clipboard.`)
   }
 
   const selectAll = () => {
