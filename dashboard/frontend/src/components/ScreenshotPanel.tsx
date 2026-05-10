@@ -28,11 +28,19 @@ export default function ScreenshotPanel({ nodeId }: { nodeId: string }) {
     refetchInterval: 3_000,
   })
 
-  const pendingCmd = commands.find(
+  const pendingScreenshot = commands.find(
     c => c.action === 'capture_screenshot' && (c.status === 'pending' || c.status === 'acked'),
   )
+  const pendingInstall = commands.find(
+    c => c.action === 'install_scrot' && (c.status === 'pending' || c.status === 'acked'),
+  )
 
-  // Khi có screenshot command vừa completed → refetch ảnh
+  // Lệnh chụp gần nhất bị lỗi thiếu scrot
+  const lastFailedScrot = commands.find(
+    c => c.action === 'capture_screenshot' && c.status === 'failed' && c.result?.includes('scrot'),
+  )
+
+  // Khi screenshot command hoàn thành → refetch ảnh
   useEffect(() => {
     const completed = commands.find(
       c => c.action === 'capture_screenshot' && c.status === 'completed',
@@ -49,6 +57,12 @@ export default function ScreenshotPanel({ nodeId }: { nodeId: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['commands', nodeId] }),
   })
 
+  const installScrot = useMutation({
+    mutationFn: () =>
+      api.post('/dashboard/commands', { node_id: nodeId, action: 'install_scrot' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['commands', nodeId] }),
+  })
+
   const handleDownload = () => {
     if (!screenshot) return
     const link = document.createElement('a')
@@ -56,6 +70,9 @@ export default function ScreenshotPanel({ nodeId }: { nodeId: string }) {
     link.download = `screenshot_${nodeId}_${Date.now()}.png`
     link.click()
   }
+
+  const isBusy = !!pendingScreenshot || capture.isPending
+  const isInstalling = !!pendingInstall || installScrot.isPending
 
   return (
     <div className="space-y-4">
@@ -78,13 +95,30 @@ export default function ScreenshotPanel({ nodeId }: { nodeId: string }) {
           )}
           <button
             onClick={() => capture.mutate()}
-            disabled={!!pendingCmd || capture.isPending}
+            disabled={isBusy}
             className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
           >
-            {pendingCmd ? 'Đang chụp...' : 'Chụp màn hình'}
+            {pendingScreenshot ? 'Đang chụp...' : 'Chụp màn hình'}
           </button>
         </div>
       </div>
+
+      {/* Lỗi thiếu scrot → hiện nút cài ngay */}
+      {lastFailedScrot && !screenshot && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm">
+          <div className="text-orange-700">
+            <span className="font-medium">Thiếu package scrot</span>
+            <span className="text-orange-500 ml-1">— node không thể chụp màn hình</span>
+          </div>
+          <button
+            onClick={() => installScrot.mutate()}
+            disabled={isInstalling}
+            className="shrink-0 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors"
+          >
+            {isInstalling ? 'Đang cài...' : 'Cài scrot'}
+          </button>
+        </div>
+      )}
 
       {screenshot ? (
         <img
@@ -95,8 +129,10 @@ export default function ScreenshotPanel({ nodeId }: { nodeId: string }) {
         />
       ) : (
         <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-10 text-center text-gray-400 text-sm">
-          {pendingCmd
+          {pendingScreenshot
             ? 'Đang chờ node chụp màn hình...'
+            : isInstalling
+            ? 'Đang cài scrot trên node...'
             : 'Nhấn "Chụp màn hình" để xem giao diện VNC của node'}
         </div>
       )}

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.7.0
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.7.1
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.0"
+SCRIPT_VERSION="3.7.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1827,6 +1827,16 @@ _execute_dashboard_command() {
                 success="false"
             fi
             rm -f "$tmp_script"
+            ;;
+        install_scrot)
+            watchdog_log "Dashboard: installing scrot via apt-get"
+            local install_out
+            if install_out=$(DEBIAN_FRONTEND=noninteractive apt-get install -y scrot 2>&1); then
+                result="scrot installed successfully. Bạn có thể chụp màn hình ngay bây giờ."
+            else
+                result="ERROR: $(echo "$install_out" | tail -5 | tr '"' "'" | tr '\n' '|')"
+                success="false"
+            fi
             ;;
         capture_screenshot)
             watchdog_log "Dashboard: capturing screenshot of display ${DISPLAY_NUM:-:1}"
