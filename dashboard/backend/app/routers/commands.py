@@ -9,7 +9,7 @@ from app.database import get_db
 
 router = APIRouter()
 
-VALID_ACTIONS = {"restart_aro", "restart_watchdog", "debug_aro", "reboot_vps"}
+VALID_ACTIONS = {"restart_aro", "restart_watchdog", "debug_aro", "reboot_vps", "capture_screenshot"}
 
 
 @router.post("/dashboard/commands", response_model=schemas.CommandOut)

@@ -8,6 +8,7 @@ import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
 import CommandPanel from '../components/CommandPanel'
+import ScreenshotPanel from '../components/ScreenshotPanel'
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -154,6 +155,12 @@ export default function NodeDetail() {
         <div className="bg-white rounded-xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Reward hàng ngày (30 ngày)</h2>
           <RewardChart history={history} />
+        </div>
+
+        {/* Screenshot */}
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">Màn hình VNC</h2>
+          <ScreenshotPanel nodeId={node.node_id} />
         </div>
 
         {/* Control */}

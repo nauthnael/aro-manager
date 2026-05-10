@@ -125,6 +125,27 @@ def get_node(
     )
 
 
+@router.get("/dashboard/nodes/{node_id}/screenshot")
+def get_node_screenshot(
+    node_id: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    cmd = (
+        db.query(models.Command)
+        .filter(
+            models.Command.node_id == node_id,
+            models.Command.action == "capture_screenshot",
+            models.Command.status == "completed",
+        )
+        .order_by(models.Command.completed_at.desc())
+        .first()
+    )
+    if not cmd or not cmd.result:
+        raise HTTPException(status_code=404, detail="Chưa có screenshot")
+    return {"data": cmd.result, "captured_at": cmd.completed_at}
+
+
 @router.put("/dashboard/nodes/{node_id}/notes")
 def update_notes(
     node_id: str,

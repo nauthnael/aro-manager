@@ -1792,6 +1792,38 @@ _execute_dashboard_command() {
             shutdown -r +1 "Dashboard reboot command" &
             return
             ;;
+        capture_screenshot)
+            watchdog_log "Dashboard: capturing screenshot of display ${DISPLAY_NUM:-:1}"
+            local ss_file="/tmp/aro_ss_${cmd_id}.png"
+            rm -f "$ss_file"
+            local captured=false
+            if command -v scrot >/dev/null 2>&1; then
+                DISPLAY="${DISPLAY_NUM:-:1}" XAUTHORITY="${XAUTHORITY_PATH}" scrot -z "$ss_file" 2>/dev/null && captured=true
+            fi
+            if [[ "$captured" != "true" ]] && command -v import >/dev/null 2>&1; then
+                DISPLAY="${DISPLAY_NUM:-:1}" XAUTHORITY="${XAUTHORITY_PATH}" import -window root "$ss_file" 2>/dev/null && captured=true
+            fi
+            if [[ "$captured" == "true" ]] && [[ -f "$ss_file" ]]; then
+                local b64
+                b64=$(base64 -w0 "$ss_file")
+                rm -f "$ss_file"
+                local json_file="/tmp/aro_ss_payload_${cmd_id}.json"
+                echo "$b64" | python3 -c "
+import json, sys
+d = sys.stdin.read().strip()
+print(json.dumps({'result': d, 'success': True}))
+" > "$json_file" 2>/dev/null
+                curl -sf --max-time 30 \
+                    -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                    -H "Content-Type: application/json" \
+                    -d "@$json_file" > /dev/null 2>&1 || true
+                rm -f "$json_file"
+                return
+            else
+                result="ERROR: Không thể chụp màn hình. Cần cài scrot hoặc imagemagick (display: ${DISPLAY_NUM:-:1})"
+                success="false"
+            fi
+            ;;
         *)
             result="Unknown action: ${action}"
             success="false"
