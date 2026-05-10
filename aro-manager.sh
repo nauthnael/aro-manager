@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# ARO Manager - Unified Proxy + Watchdog Management Script v3.5.7
+# ARO Manager - Unified Proxy + Watchdog Management Script v3.7.0
 # ═══════════════════════════════════════════════════════════════
 # Purpose: Complete management solution for ARO nodes with transparent
 #          SOCKS5 proxy, kill-switch protection, and automated watchdog
@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.6.0"
+SCRIPT_VERSION="3.7.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1794,7 +1794,7 @@ _execute_dashboard_command() {
             ;;
         update_script)
             watchdog_log "Dashboard: downloading latest script from GitHub"
-            local script_url="https://raw.githubusercontent.com/nauthnael/aro-node-manager/main/aro-manager.sh"
+            local script_url="https://raw.githubusercontent.com/nauthnael/aro-manager/main/aro-manager.sh"
             local tmp_script="/tmp/aro-manager-new-${cmd_id}.sh"
             # Xác định path thực của script đang chạy trong service
             local target_script

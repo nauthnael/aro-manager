@@ -90,16 +90,35 @@ export default function CommandPanel({ nodeId }: { nodeId: string }) {
 
               {cmd.result && (
                 <div className="mt-2">
-                  <button
-                    onClick={() => setExpandedId(expandedId === cmd.id ? null : cmd.id)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    {expandedId === cmd.id ? 'Hide output' : 'Show output'}
-                  </button>
-                  {expandedId === cmd.id && (
-                    <pre className="mt-2 text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-72 whitespace-pre-wrap">
-                      {cmd.result}
-                    </pre>
+                  {cmd.action === 'update_script' && cmd.status === 'failed' && cmd.result.includes('Unknown action') ? (
+                    <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      <p className="font-medium mb-1.5">Node đang chạy script cũ chưa hỗ trợ lệnh này. Chạy lệnh sau qua SSH:</p>
+                      <div className="flex items-start gap-2">
+                        <code className="flex-1 break-all font-mono bg-amber-100 rounded p-2 leading-relaxed select-all">
+                          wget -4 --no-cache -O aro-manager.sh https://raw.githubusercontent.com/nauthnael/aro-manager/main/aro-manager.sh && chmod +x aro-manager.sh && sudo bash aro-manager.sh update --watchdog-only
+                        </code>
+                        <button
+                          onClick={() => navigator.clipboard.writeText('wget -4 --no-cache -O aro-manager.sh https://raw.githubusercontent.com/nauthnael/aro-manager/main/aro-manager.sh && chmod +x aro-manager.sh && sudo bash aro-manager.sh update --watchdog-only')}
+                          className="shrink-0 px-2 py-1 bg-amber-200 hover:bg-amber-300 rounded text-amber-900 font-medium"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setExpandedId(expandedId === cmd.id ? null : cmd.id)}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        {expandedId === cmd.id ? 'Hide output' : 'Show output'}
+                      </button>
+                      {expandedId === cmd.id && (
+                        <pre className="mt-2 text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-72 whitespace-pre-wrap">
+                          {cmd.result}
+                        </pre>
+                      )}
+                    </>
                   )}
                 </div>
               )}
