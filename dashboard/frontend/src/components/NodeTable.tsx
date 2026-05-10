@@ -13,6 +13,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { NodeStatus } from '../types'
 import StatusBadge from './StatusBadge'
 import api from '../api/client'
+import { copyToClipboard } from '../utils/clipboard'
 
 interface UpdateTarget {
   node_id: string
@@ -108,7 +109,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
           if (!v) return <span className="text-sm text-gray-400">—</span>
           return (
             <button
-              onClick={() => navigator.clipboard.writeText(v)}
+              onClick={() => copyToClipboard(v)}
               title="Click to copy"
               className="font-mono text-sm text-gray-700 hover:text-blue-600 hover:underline cursor-copy"
             >

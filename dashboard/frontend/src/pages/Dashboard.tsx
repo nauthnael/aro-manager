@@ -6,6 +6,7 @@ import { NodeListResponse } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
+import { copyToClipboard } from '../utils/clipboard'
 
 type BulkAction = 'update_script' | 'install_scrot'
 
@@ -63,7 +64,7 @@ export default function Dashboard() {
       .filter(n => selectedIds.has(n.node_id) && n.serial)
       .map(n => n.serial as string)
     if (serials.length === 0) { alert('Không có node nào được chọn có serial.'); return }
-    navigator.clipboard.writeText(serials.join('\n'))
+    copyToClipboard(serials.join('\n'))
     alert(`Đã copy ${serials.length} serial vào clipboard.`)
   }
 
