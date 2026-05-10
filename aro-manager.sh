@@ -1792,6 +1792,42 @@ _execute_dashboard_command() {
             shutdown -r +1 "Dashboard reboot command" &
             return
             ;;
+        update_script)
+            watchdog_log "Dashboard: downloading latest script from GitHub"
+            local script_url="https://raw.githubusercontent.com/nauthnael/aro-node-manager/main/aro-manager.sh"
+            local tmp_script="/tmp/aro-manager-new-${cmd_id}.sh"
+            # Xác định path thực của script đang chạy trong service
+            local target_script
+            target_script=$(grep '^ExecStart=' /etc/systemd/system/aro-watchdog.service 2>/dev/null \
+                | cut -d'=' -f2- | awk '{print $1}')
+            [[ -z "$target_script" ]] && target_script="$SCRIPT_DIR/$SCRIPT_NAME"
+
+            if curl -sf --max-time 60 -o "$tmp_script" "$script_url"; then
+                if bash -n "$tmp_script" 2>/dev/null; then
+                    local new_ver
+                    new_ver=$(grep '^SCRIPT_VERSION=' "$tmp_script" | cut -d'"' -f2)
+                    cp "$tmp_script" "$target_script"
+                    chmod +x "$target_script"
+                    rm -f "$tmp_script"
+                    result="Script updated to v${new_ver}. Restarting watchdog (ARO tiếp tục chạy)..."
+                    # Gửi complete trước khi restart watchdog (sẽ kill process này)
+                    curl -sf --max-time 5 \
+                        -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                        -H "Content-Type: application/json" \
+                        -d "{\"result\":\"${result}\",\"success\":true}" > /dev/null 2>&1 || true
+                    nohup bash "$target_script" update --watchdog-only > /tmp/aro_update.log 2>&1 &
+                    disown
+                    return
+                else
+                    result="ERROR: Script download thành công nhưng failed syntax check"
+                    success="false"
+                fi
+            else
+                result="ERROR: Không thể tải script từ GitHub (${script_url})"
+                success="false"
+            fi
+            rm -f "$tmp_script"
+            ;;
         capture_screenshot)
             watchdog_log "Dashboard: capturing screenshot of display ${DISPLAY_NUM:-:1}"
             local ss_file="/tmp/aro_ss_${cmd_id}.png"

@@ -8,17 +8,35 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import { NodeStatus } from '../types'
 import StatusBadge from './StatusBadge'
+import api from '../api/client'
 
 const col = createColumnHelper<NodeStatus>()
 
 const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 
+interface UpdateTarget {
+  node_id: string
+  version: string | null
+}
+
 export default function NodeTable({ nodes }: { nodes: NodeStatus[] }) {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [sorting, setSorting] = useState<SortingState>([])
+  const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
+
+  const sendUpdate = useMutation({
+    mutationFn: (node_id: string) =>
+      api.post('/dashboard/commands', { node_id, action: 'update_script' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['commands'] })
+      setUpdateTarget(null)
+    },
+  })
 
   const columns = useMemo(
     () => [
@@ -87,9 +105,22 @@ export default function NodeTable({ nodes }: { nodes: NodeStatus[] }) {
           )
         },
       }),
-      col.accessor('script_version', {
+      col.accessor(row => ({ version: row.script_version, node_id: row.node_id }), {
+        id: 'script_version',
         header: 'Ver',
-        cell: info => <span className="text-xs text-gray-400 font-mono">{info.getValue() ?? '—'}</span>,
+        cell: info => {
+          const { version, node_id } = info.getValue()
+          if (!version) return <span className="text-gray-300 text-xs">—</span>
+          return (
+            <button
+              onClick={e => { e.stopPropagation(); setUpdateTarget({ node_id, version }) }}
+              title="Click để cập nhật script"
+              className="text-xs font-mono text-indigo-500 hover:text-indigo-700 hover:underline cursor-pointer"
+            >
+              {version}
+            </button>
+          )
+        },
       }),
     ],
     [navigate],
@@ -105,6 +136,37 @@ export default function NodeTable({ nodes }: { nodes: NodeStatus[] }) {
   })
 
   return (
+    <>
+    {updateTarget && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+          <h3 className="text-base font-semibold text-gray-800 mb-1">Cập nhật Script</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Node: <span className="font-mono font-medium text-gray-800">{updateTarget.node_id}</span>
+            <br />
+            Version hiện tại: <span className="font-mono text-indigo-600">{updateTarget.version}</span>
+          </p>
+          <p className="text-sm text-gray-600 mb-5">
+            Script mới nhất sẽ được tải từ GitHub và watchdog sẽ tự restart. ARO không bị gián đoạn.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button
+              onClick={() => setUpdateTarget(null)}
+              className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+            >
+              Huỷ
+            </button>
+            <button
+              onClick={() => sendUpdate.mutate(updateTarget.node_id)}
+              disabled={sendUpdate.isPending}
+              className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {sendUpdate.isPending ? 'Đang gửi...' : 'Xác nhận cập nhật'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="overflow-x-auto rounded-lg shadow">
       <table className="min-w-full bg-white divide-y divide-gray-200">
         <thead className="bg-gray-50">
@@ -139,5 +201,6 @@ export default function NodeTable({ nodes }: { nodes: NodeStatus[] }) {
         <div className="text-center py-12 text-gray-400 bg-white">No nodes found</div>
       )}
     </div>
+    </>
   )
 }

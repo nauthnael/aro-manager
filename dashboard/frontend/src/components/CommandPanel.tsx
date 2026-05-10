@@ -5,10 +5,11 @@ import { Command } from '../types'
 import api from '../api/client'
 
 const ACTIONS = [
-  { id: 'restart_aro',      label: 'Restart ARO',      cls: 'bg-blue-600 hover:bg-blue-700',   confirm: true  },
+  { id: 'restart_aro',      label: 'Restart ARO',      cls: 'bg-blue-600 hover:bg-blue-700',     confirm: true  },
   { id: 'restart_watchdog', label: 'Restart Watchdog', cls: 'bg-orange-600 hover:bg-orange-700', confirm: true  },
-  { id: 'debug_aro',        label: 'Debug ARO',        cls: 'bg-gray-600 hover:bg-gray-700',   confirm: false },
-  { id: 'reboot_vps',       label: 'Reboot VPS',       cls: 'bg-red-600 hover:bg-red-700',     confirm: true  },
+  { id: 'debug_aro',        label: 'Debug ARO',        cls: 'bg-gray-600 hover:bg-gray-700',     confirm: false },
+  { id: 'reboot_vps',       label: 'Reboot VPS',       cls: 'bg-red-600 hover:bg-red-700',       confirm: true  },
+  { id: 'update_script',    label: 'Cập nhật Script',  cls: 'bg-indigo-600 hover:bg-indigo-700', confirm: true  },
 ]
 
 const STATUS_CLS: Record<string, string> = {
