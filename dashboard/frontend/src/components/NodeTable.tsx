@@ -32,7 +32,7 @@ const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
 
   const sendUpdate = useMutation({

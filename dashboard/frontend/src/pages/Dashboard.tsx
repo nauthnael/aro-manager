@@ -58,6 +58,15 @@ export default function Dashboard() {
     bulkSend.mutate({ action, node_ids: ids })
   }
 
+  const handleCopySerials = () => {
+    const serials = (data?.nodes ?? [])
+      .filter(n => selectedIds.has(n.node_id) && n.serial)
+      .map(n => n.serial as string)
+    if (serials.length === 0) { alert('Không có node nào được chọn có serial.'); return }
+    navigator.clipboard.writeText(serials.join('\n'))
+    alert(`Đã copy ${serials.length} serial vào clipboard.`)
+  }
+
   const selectAll = () => {
     const allIds = data?.nodes.map(n => n.node_id) ?? []
     setSelectedIds(new Set(allIds))
@@ -178,6 +187,12 @@ export default function Dashboard() {
               </button>
             )}
             <div className="flex-1" />
+            <button
+              onClick={handleCopySerials}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Copy Serials ({selectedCount})
+            </button>
             {BULK_ACTIONS.map(action => (
               <button
                 key={action.id}
