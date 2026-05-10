@@ -153,3 +153,13 @@ class SettingsIn(BaseModel):
 
 class TestTelegramRequest(BaseModel):
     topic: str  # critical | warning | info | stats
+
+
+class BulkCommandRequest(BaseModel):
+    action: str
+    node_ids: List[str]
+
+
+class BulkCommandResponse(BaseModel):
+    created: int
+    skipped: int

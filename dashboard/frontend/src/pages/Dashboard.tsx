@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, LogOut, RefreshCw, Settings } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { NodeListResponse } from '../types'
@@ -7,10 +7,29 @@ import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
 
+type BulkAction = 'update_script' | 'install_scrot'
+
+const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n: number) => string }[] = [
+  {
+    id: 'update_script',
+    label: 'Cập nhật Script',
+    cls: 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300',
+    confirmMsg: n => `Gửi lệnh cập nhật script đến ${n} node?`,
+  },
+  {
+    id: 'install_scrot',
+    label: 'Cài scrot',
+    cls: 'bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300',
+    confirmMsg: n => `Gửi lệnh cài scrot đến ${n} node?`,
+  },
+]
+
 export default function Dashboard() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
@@ -22,6 +41,28 @@ export default function Dashboard() {
     refetchInterval: 30_000,
   })
 
+  const bulkSend = useMutation({
+    mutationFn: ({ action, node_ids }: { action: string; node_ids: string[] }) =>
+      api.post('/dashboard/commands/bulk', { action, node_ids }).then(r => r.data),
+    onSuccess: (result, vars) => {
+      qc.invalidateQueries({ queryKey: ['commands'] })
+      alert(`Đã gửi lệnh "${vars.action}" đến ${result.created} node${result.skipped ? ` (bỏ qua ${result.skipped})` : ''}.`)
+      setSelectedIds(new Set())
+    },
+  })
+
+  const handleBulkAction = (action: BulkAction) => {
+    const ids = [...selectedIds]
+    const def = BULK_ACTIONS.find(a => a.id === action)!
+    if (!confirm(def.confirmMsg(ids.length))) return
+    bulkSend.mutate({ action, node_ids: ids })
+  }
+
+  const selectAll = () => {
+    const allIds = data?.nodes.map(n => n.node_id) ?? []
+    setSelectedIds(new Set(allIds))
+  }
+
   const logout = () => {
     localStorage.removeItem('token')
     navigate('/login')
@@ -30,12 +71,17 @@ export default function Dashboard() {
   const handleFilter = (f: string | null) => {
     setStatusFilter(f)
     setSearch('')
+    setSelectedIds(new Set())
   }
 
   const handleSearch = (v: string) => {
     setSearch(v)
     setStatusFilter(null)
+    setSelectedIds(new Set())
   }
+
+  const selectedCount = selectedIds.size
+  const visibleNodes = data?.nodes ?? []
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -107,14 +153,54 @@ export default function Dashboard() {
             </button>
           )}
           <span className="text-sm text-gray-400 whitespace-nowrap">
-            {data?.nodes.length ?? 0} / {data?.total ?? 0} nodes
+            {visibleNodes.length} / {data?.total ?? 0} nodes
           </span>
         </div>
+
+        {/* Bulk action bar */}
+        {selectedCount > 0 && (
+          <div className="flex items-center gap-3 flex-wrap bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-sm">
+            <span className="text-sm font-medium text-blue-700">
+              {selectedCount} node đã chọn
+            </span>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              Bỏ chọn
+            </button>
+            {selectedCount < visibleNodes.length && (
+              <button
+                onClick={selectAll}
+                className="text-xs text-blue-500 hover:text-blue-700 underline"
+              >
+                Chọn tất cả {visibleNodes.length} node
+              </button>
+            )}
+            <div className="flex-1" />
+            {BULK_ACTIONS.map(action => (
+              <button
+                key={action.id}
+                onClick={() => handleBulkAction(action.id)}
+                disabled={bulkSend.isPending}
+                className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${action.cls}`}
+              >
+                {bulkSend.isPending && bulkSend.variables?.action === action.id
+                  ? 'Đang gửi...'
+                  : `${action.label} (${selectedCount})`}
+              </button>
+            ))}
+          </div>
+        )}
 
         {isLoading ? (
           <div className="text-center py-20 text-gray-400">Đang tải danh sách node...</div>
         ) : (
-          <NodeTable nodes={data?.nodes ?? []} />
+          <NodeTable
+            nodes={visibleNodes}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+          />
         )}
       </main>
     </div>
