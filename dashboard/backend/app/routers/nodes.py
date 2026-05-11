@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -71,6 +71,27 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         ok=True,
         commands=[schemas.PendingCommand(id=c.id, action=c.action) for c in pending],
     )
+
+
+@router.post("/nodes/restart-event")
+def node_restart_event(body: schemas.NodeRestartEventRequest, db: Session = Depends(get_db)):
+    if body.api_key != settings.dashboard_api_key:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    node_id = body.node_id.strip()
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    event = models.NodeRestartLog(
+        node_id=node_id,
+        timestamp=datetime.utcnow(),
+        success=body.success,
+        duration_secs=body.duration_secs,
+    )
+    db.add(event)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/nodes/{node_id}/commands/{cmd_id}/ack")

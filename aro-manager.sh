@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.1"
+SCRIPT_VERSION="3.7.2"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -62,6 +62,10 @@ TG_API_FALLBACK_URL="https://tele-api.nauthnael.workers.dev"
 
 # ── Watchdog timing ──────────────────────────────────────────────
 CHECK_INTERVAL=60           # Chu kỳ watchdog: 60s - giảm 50% IO, vẫn đủ responsive
+
+# ── Periodic restart ─────────────────────────────────────────────
+PERIODIC_RESTART_MIN_MINS=54   # Minimum minutes between periodic restarts
+PERIODIC_RESTART_MAX_MINS=120  # Maximum minutes between periodic restarts
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
 STALE_RESTART_MINUTES=30      # Nếu log stale kéo dài >30m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
@@ -104,6 +108,7 @@ _nointernet_last_log=0
 _tray_unknown_last_log=0
 _unbound_last_log=0
 PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
+_next_periodic_restart=0          # Epoch time for next scheduled periodic ARO restart
 
 # Guard flags
 _WAIT_FOR_ARO_ONLINE_RUNNING=false
@@ -2380,6 +2385,45 @@ aro_is_give_up() {
     [[ "$(state_get 'aro_give_up' '0')" == "1" ]]
 }
 
+schedule_next_periodic_restart() {
+    local range=$(( PERIODIC_RESTART_MAX_MINS - PERIODIC_RESTART_MIN_MINS ))
+    local rand_mins=$(( RANDOM % (range + 1) + PERIODIC_RESTART_MIN_MINS ))
+    _next_periodic_restart=$(( $(date +%s) + rand_mins * 60 ))
+    local next_time
+    next_time=$(date -d "@$_next_periodic_restart" '+%H:%M:%S' 2>/dev/null \
+        || date -r "$_next_periodic_restart" '+%H:%M:%S' 2>/dev/null \
+        || echo "$_next_periodic_restart")
+    watchdog_log "Next periodic ARO restart scheduled in ${rand_mins}m (at ${next_time})"
+}
+
+report_periodic_restart_to_dashboard() {
+    local success="${1:-true}"
+    local duration_secs="${2:-0}"
+
+    [[ "${DASHBOARD_ENABLED:-false}" != "true" ]] && return 0
+    [[ -z "$DASHBOARD_URL" ]] || [[ -z "$DASHBOARD_API_KEY" ]] && return 0
+
+    local base_url="${DASHBOARD_URL%/}"
+    local node_id="$HOSTNAME"
+
+    local payload
+    payload=$(python3 -c "
+import json, sys
+d = {
+    'node_id':       sys.argv[1],
+    'api_key':       sys.argv[2],
+    'success':       sys.argv[3] == 'true',
+    'duration_secs': int(sys.argv[4]) if sys.argv[4].isdigit() else 0,
+}
+print(json.dumps(d))
+" "$node_id" "$DASHBOARD_API_KEY" "$success" "$duration_secs" 2>/dev/null) || return 0
+
+    curl -sf --max-time 8 \
+        -X POST "${base_url}/api/v1/nodes/restart-event" \
+        -H "Content-Type: application/json" \
+        -d "$payload" > /dev/null 2>&1 || true
+}
+
 watchdog_loop() {
     watchdog_log "=== ARO Manager Watchdog Started ==="
     watchdog_log "Version: $SCRIPT_VERSION"
@@ -2428,6 +2472,9 @@ watchdog_loop() {
     if [[ $_is_update_restart -eq 1 ]]; then
         last_proxy_check_epoch=$(date +%s)
     fi
+
+    # Schedule first periodic restart (54–120 minutes from now)
+    schedule_next_periodic_restart
 
     while true; do
         local now; now=$(date +%s)
@@ -2519,6 +2566,40 @@ watchdog_loop() {
                         if [[ $stable_duration -gt $reset_threshold ]] && [[ $retry_count -gt 0 ]]; then
                             watchdog_log "ARO stable for ${RESET_STABLE_HOURS}h, resetting retry counter"
                             state_set "retry_count" "0"
+                        fi
+
+                        # ── Periodic restart (mỗi 54–120 phút ngẫu nhiên) ──
+                        if [[ $_next_periodic_restart -gt 0 ]] && [[ $now -ge $_next_periodic_restart ]]; then
+                            watchdog_log "Periodic ARO restart triggered — restarting app để duy trì kết nối"
+                            local _pr_start; _pr_start=$(date +%s)
+                            kill_aro
+                            sleep 3
+                            launch_aro
+                            state_set "last_restart" "$(date +%s)"
+                            state_set "stable_since" "$(date +%s)"
+
+                            local _pr_waited=0
+                            local _pr_online=0
+                            while [[ $_pr_waited -lt $CONNECTING_WAIT_SECS ]]; do
+                                sleep "$CONNECTING_POLL_INTERVAL"
+                                _pr_waited=$(( _pr_waited + CONNECTING_POLL_INTERVAL ))
+                                local _pr_tray; _pr_tray=$(get_aro_tray_state)
+                                watchdog_log "Periodic restart: chờ ARO online (${_pr_waited}s, tray=${_pr_tray:-unknown})"
+                                if [[ "$_pr_tray" == "Online" ]]; then
+                                    _pr_online=1
+                                    break
+                                fi
+                            done
+
+                            local _pr_duration=$(( $(date +%s) - _pr_start ))
+                            if [[ $_pr_online -eq 1 ]]; then
+                                watchdog_log "Periodic restart THÀNH CÔNG — ARO online trở lại sau ${_pr_duration}s"
+                                report_periodic_restart_to_dashboard "true" "$_pr_duration" &
+                            else
+                                watchdog_log "Periodic restart: ARO chưa online sau ${CONNECTING_WAIT_SECS}s"
+                                report_periodic_restart_to_dashboard "false" "$_pr_duration" &
+                            fi
+                            schedule_next_periodic_restart
                         fi
                         ;;
                     

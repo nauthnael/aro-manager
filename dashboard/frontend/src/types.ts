@@ -34,9 +34,18 @@ export interface HistoryPoint {
   uptime_ratio: number | null
 }
 
+export interface RestartEvent {
+  id: number
+  node_id: string
+  timestamp: string
+  success: boolean
+  duration_secs: number | null
+}
+
 export interface NodeDetailResponse {
   node: NodeStatus
   history: HistoryPoint[]
+  restart_events: RestartEvent[]
 }
 
 export interface AccountStats {

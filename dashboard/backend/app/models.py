@@ -79,6 +79,18 @@ class NodeOfflineLog(Base):
     alerted = Column(Boolean, default=False)
 
 
+class NodeRestartLog(Base):
+    __tablename__ = "node_restart_log"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    success = Column(Boolean, default=True)
+    duration_secs = Column(Integer)
+
+    __table_args__ = (Index("ix_node_restart_log_node_ts", "node_id", "timestamp"),)
+
+
 class Command(Base):
     __tablename__ = "commands"
 

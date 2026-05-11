@@ -92,9 +92,21 @@ class HistoryPoint(BaseModel):
     uptime_ratio: Optional[float] = None
 
 
+class RestartEventOut(BaseModel):
+    id: int
+    node_id: str
+    timestamp: datetime
+    success: bool
+    duration_secs: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
 class NodeDetailResponse(BaseModel):
     node: NodeStatusOut
     history: List[HistoryPoint]
+    restart_events: List[RestartEventOut] = []
 
 
 class CommandOut(BaseModel):
@@ -154,6 +166,13 @@ class SettingsIn(BaseModel):
 
 class TestTelegramRequest(BaseModel):
     topic: str  # critical | warning | info | stats
+
+
+class NodeRestartEventRequest(BaseModel):
+    node_id: str
+    api_key: str
+    success: bool = True
+    duration_secs: int = 0
 
 
 class BulkCommandRequest(BaseModel):

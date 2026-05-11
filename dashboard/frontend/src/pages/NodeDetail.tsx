@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { NodeDetailResponse } from '../types'
+import { ArrowLeft, Pencil, Check, X, RefreshCw } from 'lucide-react'
+import { formatDistanceToNow, format } from 'date-fns'
+import { NodeDetailResponse, RestartEvent } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -56,7 +56,7 @@ export default function NodeDetail() {
   }
   if (!data) return null
 
-  const { node, history } = data
+  const { node, history, restart_events } = data
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -159,6 +159,48 @@ export default function NodeDetail() {
         <div className="bg-white rounded-xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Reward hàng ngày (30 ngày)</h2>
           <RewardChart history={history} />
+        </div>
+
+        {/* Periodic restart history */}
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <RefreshCw size={15} className="text-gray-500" />
+            <h2 className="text-sm font-semibold text-gray-700">Lịch sử tự khởi động lại (30 ngày)</h2>
+            <span className="ml-auto text-xs text-gray-400">{restart_events?.length ?? 0} lần</span>
+          </div>
+          {!restart_events || restart_events.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">Chưa có lần tự khởi động nào.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">Thời gian</th>
+                    <th className="pb-2 pr-4 font-medium">Kết quả</th>
+                    <th className="pb-2 font-medium">Thời gian phục hồi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {restart_events.map((ev: RestartEvent) => (
+                    <tr key={ev.id} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5 pr-4 text-gray-600 font-mono whitespace-nowrap">
+                        {format(new Date(ev.timestamp + 'Z'), 'dd/MM HH:mm:ss')}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {ev.success
+                          ? <span className="text-green-600 font-medium">✓ Thành công</span>
+                          : <span className="text-red-500 font-medium">✗ Thất bại</span>
+                        }
+                      </td>
+                      <td className="py-1.5 text-gray-500">
+                        {ev.duration_secs != null ? `${ev.duration_secs}s` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Screenshot */}

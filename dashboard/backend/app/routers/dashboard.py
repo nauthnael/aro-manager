@@ -135,6 +135,14 @@ def get_node(
             daily_maxes[day] = max(daily_maxes.get(day, 0.0), h.reward_today)
     total_score = round(sum(daily_maxes.values()), 2) if daily_maxes else None
 
+    restart_events = (
+        db.query(models.NodeRestartLog)
+        .filter(models.NodeRestartLog.node_id == node_id, models.NodeRestartLog.timestamp >= cutoff)
+        .order_by(models.NodeRestartLog.timestamp.desc())
+        .limit(100)
+        .all()
+    )
+
     return schemas.NodeDetailResponse(
         node=_node_out(node, status, now, total_score),
         history=[
@@ -145,6 +153,16 @@ def get_node(
                 uptime_ratio=h.uptime_ratio,
             )
             for h in history
+        ],
+        restart_events=[
+            schemas.RestartEventOut(
+                id=r.id,
+                node_id=r.node_id,
+                timestamp=r.timestamp,
+                success=r.success,
+                duration_secs=r.duration_secs,
+            )
+            for r in restart_events
         ],
     )
 
