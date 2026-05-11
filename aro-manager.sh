@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.2"
+SCRIPT_VERSION="3.7.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1964,6 +1964,29 @@ except:
             _execute_dashboard_command "$cmd_id" "$cmd_action"
         done <<< "$cmds_json"
     fi
+
+    # Đọc cấu hình periodic restart từ dashboard và lưu vào state
+    local cfg_out
+    cfg_out=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    pmin = data.get('periodic_restart_min')
+    pmax = data.get('periodic_restart_max')
+    if isinstance(pmin, int) and isinstance(pmax, int):
+        print(pmin, pmax)
+except:
+    pass
+" "$response" 2>/dev/null)
+
+    if [[ -n "$cfg_out" ]]; then
+        local _pmin _pmax
+        read -r _pmin _pmax <<< "$cfg_out"
+        if [[ "$_pmin" =~ ^[0-9]+$ ]] && [[ "$_pmax" =~ ^[0-9]+$ ]] && [[ $_pmin -lt $_pmax ]]; then
+            state_set "dashboard_periodic_min" "$_pmin"
+            state_set "dashboard_periodic_max" "$_pmax"
+        fi
+    fi
 }
 
 send_daily_report() {
@@ -2385,6 +2408,21 @@ aro_is_give_up() {
     [[ "$(state_get 'aro_give_up' '0')" == "1" ]]
 }
 
+apply_dashboard_periodic_config() {
+    local new_min; new_min=$(state_get "dashboard_periodic_min" "")
+    local new_max; new_max=$(state_get "dashboard_periodic_max" "")
+    [[ -z "$new_min" ]] || [[ -z "$new_max" ]] && return 0
+    [[ "$new_min" =~ ^[0-9]+$ ]] && [[ "$new_max" =~ ^[0-9]+$ ]] || return 0
+    [[ $new_min -lt $new_max ]] || return 0
+
+    if [[ "$new_min" != "$PERIODIC_RESTART_MIN_MINS" ]] || [[ "$new_max" != "$PERIODIC_RESTART_MAX_MINS" ]]; then
+        watchdog_log "Dashboard config: cập nhật periodic restart ${PERIODIC_RESTART_MIN_MINS}–${PERIODIC_RESTART_MAX_MINS}m → ${new_min}–${new_max}m"
+        PERIODIC_RESTART_MIN_MINS=$new_min
+        PERIODIC_RESTART_MAX_MINS=$new_max
+        schedule_next_periodic_restart
+    fi
+}
+
 schedule_next_periodic_restart() {
     local range=$(( PERIODIC_RESTART_MAX_MINS - PERIODIC_RESTART_MIN_MINS ))
     local rand_mins=$(( RANDOM % (range + 1) + PERIODIC_RESTART_MIN_MINS ))
@@ -2478,6 +2516,9 @@ watchdog_loop() {
 
     while true; do
         local now; now=$(date +%s)
+
+        # ── Áp dụng cấu hình periodic restart từ dashboard (nếu có cập nhật) ──
+        apply_dashboard_periodic_config
 
         # ── Maintenance mode check ──────────────────────────────────
         if is_maintenance_mode; then

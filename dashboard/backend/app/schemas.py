@@ -42,6 +42,8 @@ class PendingCommand(BaseModel):
 class NodeReportResponse(BaseModel):
     ok: bool
     commands: List[PendingCommand] = []
+    periodic_restart_min: int = 54
+    periodic_restart_max: int = 120
 
 
 # --- Command complete (node → backend) ---
@@ -151,6 +153,8 @@ class SettingsOut(BaseModel):
     tg_info: str
     tg_stats: str
     alert_offline_minutes: int
+    periodic_restart_min: int
+    periodic_restart_max: int
 
     class Config:
         from_attributes = True
@@ -162,6 +166,8 @@ class SettingsIn(BaseModel):
     tg_info: str = ""
     tg_stats: str = ""
     alert_offline_minutes: int = 10
+    periodic_restart_min: int = 54
+    periodic_restart_max: int = 120
 
 
 class TestTelegramRequest(BaseModel):

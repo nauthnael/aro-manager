@@ -14,6 +14,8 @@ class AppSettings(Base):
     tg_info = Column(String(100), default="")
     tg_stats = Column(String(100), default="")
     alert_offline_minutes = Column(Integer, default=10)
+    periodic_restart_min = Column(Integer, default=54)
+    periodic_restart_max = Column(Integer, default=120)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

@@ -10,6 +10,8 @@ interface SettingsData {
   tg_info: string
   tg_stats: string
   alert_offline_minutes: number
+  periodic_restart_min: number
+  periodic_restart_max: number
 }
 
 const TOPIC_LABELS: { key: keyof SettingsData; label: string; color: string }[] = [
@@ -71,6 +73,8 @@ export default function SettingsPage() {
   const [form, setForm] = useState<SettingsData>({
     tg_critical: '', tg_warning: '', tg_info: '', tg_stats: '',
     alert_offline_minutes: 10,
+    periodic_restart_min: 54,
+    periodic_restart_max: 120,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -179,11 +183,45 @@ export default function SettingsPage() {
           </p>
         </div>
 
+        {/* Periodic restart */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Tự khởi động lại ARO định kỳ</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Watchdog sẽ restart ARO app ngẫu nhiên trong khoảng thời gian này. Áp dụng cho toàn bộ node sau chu kỳ báo cáo tiếp theo (~60s).
+            </p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Mỗi</label>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={form.periodic_restart_min}
+              onChange={e => setForm(f => ({ ...f, periodic_restart_min: parseInt(e.target.value) || 54 }))}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <label className="text-sm text-gray-600 whitespace-nowrap">đến</label>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={form.periodic_restart_max}
+              onChange={e => setForm(f => ({ ...f, periodic_restart_max: parseInt(e.target.value) || 120 }))}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <label className="text-sm text-gray-600 whitespace-nowrap">phút (ngẫu nhiên)</label>
+          </div>
+          {form.periodic_restart_min >= form.periodic_restart_max && (
+            <p className="text-xs text-red-500">Min phải nhỏ hơn Max.</p>
+          )}
+        </div>
+
         {/* Save */}
         <div className="flex justify-end">
           <button
             onClick={() => save.mutate()}
-            disabled={save.isPending}
+            disabled={save.isPending || form.periodic_restart_min >= form.periodic_restart_max}
             className="px-6 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             {saved ? '✓ Đã lưu' : save.isPending ? 'Đang lưu...' : 'Lưu cài đặt'}

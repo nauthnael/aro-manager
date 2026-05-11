@@ -32,6 +32,10 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     row.tg_info = body.tg_info
     row.tg_stats = body.tg_stats
     row.alert_offline_minutes = body.alert_offline_minutes
+    pmin = max(1, min(body.periodic_restart_min, 1440))
+    pmax = max(1, min(body.periodic_restart_max, 1440))
+    row.periodic_restart_min = min(pmin, pmax)
+    row.periodic_restart_max = max(pmin, pmax)
     db.commit()
     db.refresh(row)
     return row
