@@ -69,6 +69,41 @@ export default function Dashboard() {
     alert(`Đã copy ${selected.length} serial vào clipboard.`)
   }
 
+  const handleExportCsv = () => {
+    const selected = (data?.nodes ?? [])
+      .filter(n => selectedIds.has(n.node_id))
+      .sort((a, b) => a.node_id.localeCompare(b.node_id))
+    if (selected.length === 0) { alert('Chưa chọn node nào.'); return }
+
+    const headers = ['Hostname', 'Account', 'Serial', 'Status', 'Proxy OK', 'Public IP', 'Proxy', 'Uptime %', 'Điểm hôm qua', 'Tổng điểm', 'Script Version', 'Last Seen']
+    const rows = selected.map(n => [
+      n.node_id,
+      n.account ?? '',
+      n.serial ?? '',
+      n.aro_status ?? '',
+      n.proxy_ok == null ? '' : n.proxy_ok ? 'OK' : 'Down',
+      n.public_ip ?? '',
+      n.proxy_host ? `${n.proxy_host}:${n.proxy_port}` : '',
+      n.uptime_ratio != null ? (n.uptime_ratio * 100).toFixed(1) : '',
+      n.reward_yesterday ?? '',
+      n.total_score ?? '',
+      n.script_version ?? '',
+      n.last_seen ? new Date(n.last_seen + 'Z').toLocaleString('vi-VN') : '',
+    ])
+
+    const csv = [headers, ...rows]
+      .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n')
+
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `aro-nodes-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const selectAll = () => {
     const allIds = data?.nodes.map(n => n.node_id) ?? []
     setSelectedIds(new Set(allIds))
@@ -194,6 +229,12 @@ export default function Dashboard() {
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
             >
               Copy Serials ({selectedCount})
+            </button>
+            <button
+              onClick={handleExportCsv}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Xuất CSV ({selectedCount})
             </button>
             {BULK_ACTIONS.map(action => (
               <button
