@@ -5,6 +5,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
+
 from app import models
 from app.auth import hash_password
 from app.config import settings
@@ -14,8 +16,24 @@ from app.routers import settings as settings_router
 from app.telegram import send_telegram_message
 
 
+def migrate_db():
+    """Thêm cột mới vào bảng đã tồn tại (thay cho Alembic migration)."""
+    migrations = [
+        "ALTER TABLE app_settings ADD COLUMN periodic_restart_min INTEGER DEFAULT 54",
+        "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # cột đã tồn tại → bỏ qua
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    migrate_db()
     db = SessionLocal()
     try:
         admin = db.query(models.User).filter(models.User.username == settings.admin_username).first()
