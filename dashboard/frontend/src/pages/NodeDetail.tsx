@@ -95,6 +95,10 @@ export default function NodeDetail() {
             />
             <InfoRow label="Script Version" value={node.script_version} />
             <InfoRow
+              label="Tổng điểm"
+              value={node.total_score != null ? node.total_score.toLocaleString() + ' pts' : null}
+            />
+            <InfoRow
               label="Điểm hôm qua"
               value={node.reward_yesterday != null ? node.reward_yesterday.toLocaleString() + ' pts' : null}
             />

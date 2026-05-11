@@ -59,6 +59,7 @@ class NodeStatusOut(BaseModel):
     proxy_ok: Optional[bool] = None
     reward_today: Optional[float] = None
     reward_yesterday: Optional[float] = None
+    total_score: Optional[float] = None
     uptime_ratio: Optional[float] = None
     public_ip: Optional[str] = None
     script_version: Optional[str] = None

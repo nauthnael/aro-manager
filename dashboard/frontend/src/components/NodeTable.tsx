@@ -129,8 +129,15 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
+      col.accessor('total_score', {
+        header: 'Tổng điểm',
+        cell: info => {
+          const v = info.getValue()
+          return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>
+        },
+      }),
       col.accessor('reward_yesterday', {
-        header: 'Điểm (pts)',
+        header: 'Điểm hôm qua',
         cell: info => {
           const v = info.getValue()
           return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>

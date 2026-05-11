@@ -4,6 +4,7 @@ export interface NodeStatus {
   proxy_ok: boolean | null
   reward_today: number | null
   reward_yesterday: number | null
+  total_score: number | null
   uptime_ratio: number | null
   public_ip: string | null
   script_version: string | null
