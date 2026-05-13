@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text
 
 from app.database import Base
 
@@ -91,6 +91,37 @@ class NodeRestartLog(Base):
     duration_secs = Column(Integer)
 
     __table_args__ = (Index("ix_node_restart_log_node_ts", "node_id", "timestamp"),)
+
+
+class NodeErrorLog(Base):
+    __tablename__ = "node_error_log"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
+    # vps_offline | aro_offline | no_internet | unbound | proxy_fail
+    error_type = Column(String(30), nullable=False)
+    started_at = Column(DateTime, nullable=False, index=True)
+    ended_at = Column(DateTime, nullable=True)
+    duration_minutes = Column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_node_error_log_node_start", "node_id", "started_at"),)
+
+
+class NodeDailyScore(Base):
+    __tablename__ = "node_daily_score"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
+    date = Column(Date, nullable=False, index=True)
+    score = Column(Float, nullable=False)
+    error_count = Column(Integer, default=0)
+    vps_offline_minutes = Column(Integer, default=0)
+    aro_offline_minutes = Column(Integer, default=0)
+    no_internet_minutes = Column(Integer, default=0)
+    unbound_minutes = Column(Integer, default=0)
+    proxy_fail_minutes = Column(Integer, default=0)
+
+    __table_args__ = (Index("ix_node_daily_score_node_date", "node_id", "date", unique=True),)
 
 
 class Command(Base):

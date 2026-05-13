@@ -1,14 +1,24 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
-import { NodeDetailResponse, RestartEvent } from '../types'
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
+} from 'recharts'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
 import CommandPanel from '../components/CommandPanel'
 import ScreenshotPanel from '../components/ScreenshotPanel'
+
+function scoreColor(s: number) {
+  if (s >= 950) return '#16a34a'
+  if (s >= 800) return '#f59e0b'
+  if (s >= 600) return '#f97316'
+  return '#dc2626'
+}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -31,6 +41,20 @@ export default function NodeDetail() {
     queryKey: ['node', nodeId],
     queryFn: () => api.get(`/dashboard/nodes/${encodeURIComponent(nodeId!)}`).then(r => r.data),
     refetchInterval: 15_000,
+    enabled: !!nodeId,
+  })
+
+  const { data: scoresData } = useQuery<{ scores: DailyScore[]; score_base: number }>({
+    queryKey: ['node-scores', nodeId],
+    queryFn: () => api.get(`/errors/${encodeURIComponent(nodeId!)}/scores?days=30`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
+  const { data: eventsData } = useQuery<{ events: ErrorEvent[] }>({
+    queryKey: ['node-errors', nodeId],
+    queryFn: () => api.get(`/errors/${encodeURIComponent(nodeId!)}/events?days=30`).then(r => r.data),
+    refetchInterval: 60_000,
     enabled: !!nodeId,
   })
 
@@ -194,6 +218,114 @@ export default function NodeDetail() {
                       </td>
                       <td className="py-1.5 text-gray-500">
                         {ev.duration_secs != null ? `${ev.duration_secs}s` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Daily quality score chart */}
+        {scoresData && scoresData.scores.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ShieldAlert size={15} className="text-blue-500" />
+              <h2 className="text-sm font-semibold text-gray-700">Điểm chất lượng hàng ngày (30 ngày)</h2>
+              {(() => {
+                const last = scoresData.scores[scoresData.scores.length - 1]
+                return last ? (
+                  <span
+                    className="ml-auto text-sm font-bold"
+                    style={{ color: scoreColor(last.score) }}
+                  >
+                    {last.score.toFixed(1)} / 1000
+                  </span>
+                ) : null
+              })()}
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={scoresData.scores} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: '#9ca3af' }}
+                  tickFormatter={d => format(new Date(d + 'T00:00:00'), 'dd/MM')}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  domain={[0, 1000]}
+                  tick={{ fontSize: 10, fill: '#9ca3af' }}
+                  ticks={[0, 500, 800, 950, 1000]}
+                />
+                <Tooltip
+                  formatter={(v: number) => [v.toFixed(1), 'Điểm']}
+                  labelFormatter={l => format(new Date(l + 'T00:00:00'), 'dd/MM/yyyy')}
+                />
+                <ReferenceLine y={950} stroke="#16a34a" strokeDasharray="4 4" strokeWidth={1} />
+                <ReferenceLine y={800} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1} />
+                <Line
+                  type="monotone"
+                  dataKey="score"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  dot={{ r: 2, fill: '#3b82f6' }}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Error event log */}
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <ShieldAlert size={15} className="text-red-500" />
+            <h2 className="text-sm font-semibold text-gray-700">Lịch sử lỗi (30 ngày)</h2>
+            <span className="ml-auto text-xs text-gray-400">
+              {eventsData?.events.length ?? 0} sự kiện
+            </span>
+          </div>
+          {!eventsData || eventsData.events.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">Không có lỗi nào trong 30 ngày qua.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">Loại lỗi</th>
+                    <th className="pb-2 pr-4 font-medium">Bắt đầu</th>
+                    <th className="pb-2 pr-4 font-medium">Kết thúc</th>
+                    <th className="pb-2 font-medium">Thời gian</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {eventsData.events.map((ev: ErrorEvent) => (
+                    <tr key={ev.id} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5 pr-4">
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+                          style={{ backgroundColor: ERROR_COLORS[ev.error_type as ErrorType] }}
+                        >
+                          {ERROR_LABELS[ev.error_type as ErrorType] ?? ev.error_type}
+                        </span>
+                        {ev.ongoing && (
+                          <span className="ml-1 text-red-500 font-medium animate-pulse">● đang lỗi</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-4 text-gray-600 font-mono whitespace-nowrap">
+                        {format(new Date(ev.started_at + 'Z'), 'dd/MM HH:mm')}
+                      </td>
+                      <td className="py-1.5 pr-4 text-gray-400 font-mono whitespace-nowrap">
+                        {ev.ended_at
+                          ? format(new Date(ev.ended_at + 'Z'), 'dd/MM HH:mm')
+                          : <span className="text-red-400 italic">đang diễn ra</span>}
+                      </td>
+                      <td className="py-1.5 text-gray-500">
+                        {ev.duration_minutes < 60
+                          ? `${ev.duration_minutes} phút`
+                          : `${Math.floor(ev.duration_minutes / 60)}h${ev.duration_minutes % 60 > 0 ? ` ${ev.duration_minutes % 60}m` : ''}`}
                       </td>
                     </tr>
                   ))}

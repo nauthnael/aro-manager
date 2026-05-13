@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,6 +10,13 @@ from app.database import get_db
 
 router = APIRouter()
 
+# Maps aro_status values that represent an error condition → error_type name
+_ARO_ERROR_MAP = {
+    "Offline":     "aro_offline",
+    "NoInternet":  "no_internet",
+    "Unbound":     "unbound",
+}
+
 
 def _maybe_save_history(db: Session, status: models.NodeStatus, report: schemas.NodeReportRequest):
     now = datetime.utcnow()
@@ -17,10 +25,65 @@ def _maybe_save_history(db: Session, status: models.NodeStatus, report: schemas.
             node_id=report.node_id,
             timestamp=now,
             aro_status=report.aro_status,
-            reward_today=report.reward_yesterday,  # app không trả today, dùng yesterday
+            reward_today=report.reward_yesterday,
             uptime_ratio=report.uptime_ratio,
         ))
         status.last_snapshot_at = now
+
+
+def _open_error(db: Session, node_id: str, error_type: str, now: datetime):
+    existing = db.query(models.NodeErrorLog).filter(
+        models.NodeErrorLog.node_id == node_id,
+        models.NodeErrorLog.error_type == error_type,
+        models.NodeErrorLog.ended_at.is_(None),
+    ).first()
+    if not existing:
+        db.add(models.NodeErrorLog(
+            node_id=node_id,
+            error_type=error_type,
+            started_at=now,
+        ))
+
+
+def _close_error(db: Session, node_id: str, error_type: str, now: datetime):
+    log = db.query(models.NodeErrorLog).filter(
+        models.NodeErrorLog.node_id == node_id,
+        models.NodeErrorLog.error_type == error_type,
+        models.NodeErrorLog.ended_at.is_(None),
+    ).first()
+    if log:
+        log.ended_at = now
+        log.duration_minutes = max(0, int((now - log.started_at).total_seconds() / 60))
+
+
+def _track_status_errors(
+    db: Session,
+    node_id: str,
+    old_aro: Optional[str],
+    old_proxy_ok: Optional[bool],
+    new_aro: str,
+    new_proxy_ok: bool,
+    now: datetime,
+):
+    """Detect aro_status / proxy_ok changes and open or close error log entries."""
+    old_err = _ARO_ERROR_MAP.get(old_aro or "")
+    new_err = _ARO_ERROR_MAP.get(new_aro or "")
+
+    if old_err != new_err:
+        if old_err:
+            _close_error(db, node_id, old_err, now)
+        if new_err:
+            _open_error(db, node_id, new_err, now)
+
+    # proxy_fail tracking
+    if old_proxy_ok is None:
+        if new_proxy_ok is False:
+            _open_error(db, node_id, "proxy_fail", now)
+    else:
+        if old_proxy_ok and not new_proxy_ok:
+            _open_error(db, node_id, "proxy_fail", now)
+        elif not old_proxy_ok and new_proxy_ok:
+            _close_error(db, node_id, "proxy_fail", now)
 
 
 @router.post("/nodes/report", response_model=schemas.NodeReportResponse)
@@ -49,6 +112,10 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         status = models.NodeStatus(node_id=node_id)
         db.add(status)
 
+    # Capture old state before overwriting
+    old_aro = status.aro_status
+    old_proxy_ok = status.proxy_ok
+
     status.aro_status = body.aro_status
     status.proxy_ok = body.proxy_ok
     status.reward_today = body.reward_today
@@ -59,6 +126,8 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     status.last_seen = now
 
     _maybe_save_history(db, status, body)
+    _track_status_errors(db, node_id, old_aro, old_proxy_ok, body.aro_status, body.proxy_ok, now)
+
     db.commit()
 
     pending = (
