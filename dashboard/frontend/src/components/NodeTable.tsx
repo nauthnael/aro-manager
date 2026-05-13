@@ -136,6 +136,13 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
           return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>
         },
       }),
+      col.accessor('avg_score', {
+        header: 'TB/ngày',
+        cell: info => {
+          const v = info.getValue()
+          return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>
+        },
+      }),
       col.accessor('reward_yesterday', {
         header: 'Điểm hôm qua',
         cell: info => {

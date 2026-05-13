@@ -123,6 +123,10 @@ export default function NodeDetail() {
               value={node.total_score != null ? node.total_score.toLocaleString() + ' pts' : null}
             />
             <InfoRow
+              label="TB/ngày"
+              value={node.avg_score != null ? node.avg_score.toLocaleString() + ' pts' : null}
+            />
+            <InfoRow
               label="Điểm hôm qua"
               value={node.reward_yesterday != null ? node.reward_yesterday.toLocaleString() + ' pts' : null}
             />

@@ -15,7 +15,7 @@ router = APIRouter()
 STALE_SECS = settings.stale_threshold_secs
 
 
-def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None) -> schemas.NodeStatusOut:
+def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None) -> schemas.NodeStatusOut:
     if status and status.last_seen:
         is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
     else:
@@ -28,6 +28,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         reward_today=status.reward_today if status else None,
         reward_yesterday=status.reward_yesterday if status else None,
         total_score=total_score,
+        avg_score=avg_score,
         uptime_ratio=status.uptime_ratio if status else None,
         public_ip=status.public_ip if status else None,
         script_version=status.script_version if status else None,
@@ -74,13 +75,22 @@ def list_nodes(
         .group_by(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp))
         .subquery()
     )
-    total_scores = dict(
-        db.query(daily_max_sq.c.node_id, func.sum(daily_max_sq.c.daily_max))
+    score_rows = (
+        db.query(
+            daily_max_sq.c.node_id,
+            func.sum(daily_max_sq.c.daily_max).label('total'),
+            func.count(daily_max_sq.c.day).label('days'),
+        )
         .group_by(daily_max_sq.c.node_id)
         .all()
     )
+    total_scores = {}
+    avg_scores = {}
+    for row in score_rows:
+        total_scores[row.node_id] = round(row.total, 2) if row.total is not None else None
+        avg_scores[row.node_id] = round(row.total / row.days, 2) if row.total is not None and row.days else None
 
-    all_out = [_node_out(n, statuses.get(n.node_id), now, total_scores.get(n.node_id)) for n in nodes]
+    all_out = [_node_out(n, statuses.get(n.node_id), now, total_scores.get(n.node_id), avg_scores.get(n.node_id)) for n in nodes]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
@@ -134,6 +144,7 @@ def get_node(
             day = h.timestamp.date()
             daily_maxes[day] = max(daily_maxes.get(day, 0.0), h.reward_today)
     total_score = round(sum(daily_maxes.values()), 2) if daily_maxes else None
+    avg_score = round(sum(daily_maxes.values()) / len(daily_maxes), 2) if daily_maxes else None
 
     restart_events = (
         db.query(models.NodeRestartLog)
@@ -144,7 +155,7 @@ def get_node(
     )
 
     return schemas.NodeDetailResponse(
-        node=_node_out(node, status, now, total_score),
+        node=_node_out(node, status, now, total_score, avg_score),
         history=[
             schemas.HistoryPoint(
                 timestamp=h.timestamp,
