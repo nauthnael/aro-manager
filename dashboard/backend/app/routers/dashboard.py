@@ -39,6 +39,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         proxy_host=node.proxy_host,
         proxy_port=node.proxy_port,
         notes=node.notes,
+        first_seen=node.created_at,
     )
 
 
@@ -59,6 +60,9 @@ def me(current_user: models.User = Depends(get_current_user)):
 def list_nodes(
     status_filter: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    no_points_yesterday: bool = Query(False),
+    no_points_avg: bool = Query(False),
+    exclude_new_nodes: bool = Query(False),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -106,6 +110,23 @@ def list_nodes(
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter:
         filtered = [n for n in filtered if not n.is_stale and n.aro_status == status_filter]
+
+    now_local = datetime.utcnow()
+    if exclude_new_nodes:
+        filtered = [
+            n for n in filtered
+            if n.first_seen is None or (now_local - n.first_seen).total_seconds() >= 86400
+        ]
+    if no_points_yesterday:
+        filtered = [
+            n for n in filtered
+            if n.reward_yesterday is not None and n.reward_yesterday == 0
+        ]
+    if no_points_avg:
+        filtered = [
+            n for n in filtered
+            if n.avg_score is not None and n.avg_score == 0
+        ]
 
     return schemas.NodeListResponse(
         nodes=filtered,

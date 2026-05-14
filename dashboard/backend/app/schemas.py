@@ -73,6 +73,7 @@ class NodeStatusOut(BaseModel):
     proxy_host: Optional[str] = None
     proxy_port: Optional[int] = None
     notes: Optional[str] = None
+    first_seen: Optional[datetime] = None
 
     class Config:
         from_attributes = True

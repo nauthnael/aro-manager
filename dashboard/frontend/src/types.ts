@@ -16,6 +16,7 @@ export interface NodeStatus {
   proxy_host: string | null
   proxy_port: number | null
   notes: string | null
+  first_seen: string | null
 }
 
 export interface NodeListResponse {

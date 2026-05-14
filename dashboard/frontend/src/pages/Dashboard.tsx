@@ -31,13 +31,19 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [noPointsYesterday, setNoPointsYesterday] = useState(false)
+  const [noPointsAvg, setNoPointsAvg] = useState(false)
+  const [excludeNewNodes, setExcludeNewNodes] = useState(false)
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
   if (search) params.set('search', search)
+  if (noPointsYesterday) params.set('no_points_yesterday', 'true')
+  if (noPointsAvg)       params.set('no_points_avg', 'true')
+  if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search],
+    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
@@ -117,12 +123,17 @@ export default function Dashboard() {
   const handleFilter = (f: string | null) => {
     setStatusFilter(f)
     setSearch('')
+    setNoPointsYesterday(false)
+    setNoPointsAvg(false)
+    setExcludeNewNodes(false)
     setSelectedIds(new Set())
   }
 
   const handleSearch = (v: string) => {
     setSearch(v)
     setStatusFilter(null)
+    setNoPointsYesterday(false)
+    setNoPointsAvg(false)
     setSelectedIds(new Set())
   }
 
@@ -209,6 +220,51 @@ export default function Dashboard() {
           <span className="text-sm text-gray-400 whitespace-nowrap">
             {visibleNodes.length} / {data?.total ?? 0} nodes
           </span>
+        </div>
+
+        {/* Point filters */}
+        <div className="flex items-center gap-4 flex-wrap text-sm text-gray-600">
+          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
+            ${noPointsYesterday ? 'bg-orange-50 border-orange-300 text-orange-700' : 'border-gray-200 hover:border-gray-300'}`}>
+            <input
+              type="checkbox"
+              checked={noPointsYesterday}
+              onChange={e => {
+                setNoPointsYesterday(e.target.checked)
+                setStatusFilter(null)
+                setSearch('')
+                setSelectedIds(new Set())
+              }}
+              className="accent-orange-500"
+            />
+            Không điểm hôm qua
+          </label>
+          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
+            ${noPointsAvg ? 'bg-red-50 border-red-300 text-red-700' : 'border-gray-200 hover:border-gray-300'}`}>
+            <input
+              type="checkbox"
+              checked={noPointsAvg}
+              onChange={e => {
+                setNoPointsAvg(e.target.checked)
+                setStatusFilter(null)
+                setSearch('')
+                setSelectedIds(new Set())
+              }}
+              className="accent-red-500"
+            />
+            Trung bình 0 điểm
+          </label>
+          {(noPointsYesterday || noPointsAvg) && (
+            <label className="flex items-center gap-2 cursor-pointer select-none text-gray-500 border-l pl-4 ml-1">
+              <input
+                type="checkbox"
+                checked={excludeNewNodes}
+                onChange={e => setExcludeNewNodes(e.target.checked)}
+                className="accent-gray-500"
+              />
+              Chỉ node hoạt động trên 1 ngày
+            </label>
+          )}
         </div>
 
         {/* Bulk action bar */}
