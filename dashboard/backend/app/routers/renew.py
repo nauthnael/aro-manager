@@ -91,7 +91,7 @@ def get_renew_candidates(
             or (now - status.last_seen).total_seconds() > threshold_secs
         )
 
-        if exclude_new_nodes and history_days.get(node.node_id, 0) <= 2:
+        if exclude_new_nodes and history_days.get(node.node_id, 0) <= 1:
             continue
 
         renew_count = _get_renew_count(db, node.node_id)
