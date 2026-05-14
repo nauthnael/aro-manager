@@ -56,12 +56,16 @@ export default function RenewNodes() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('candidates')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [excludeNew, setExcludeNew] = useState(false)
   const [historyPage, setHistoryPage] = useState(1)
   const [historyNodeFilter, setHistoryNodeFilter] = useState('')
 
+  const candidateParams = new URLSearchParams()
+  if (excludeNew) candidateParams.set('exclude_new_nodes', 'true')
+
   const { data: candidates, isLoading, refetch, isFetching } = useQuery<RenewCandidatesResponse>({
-    queryKey: ['renew-candidates'],
-    queryFn: () => api.get('/renew/candidates').then(r => r.data),
+    queryKey: ['renew-candidates', excludeNew],
+    queryFn: () => api.get(`/renew/candidates?${candidateParams}`).then(r => r.data),
     refetchInterval: 60_000,
   })
 
@@ -211,34 +215,44 @@ export default function RenewNodes() {
         {tab === 'candidates' && (
           <div className="space-y-3">
             {/* Toolbar */}
-            {nodes.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={selectAll}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  Chọn tất cả ({nodes.filter(n => !n.cooldown_until).length})
-                </button>
-                {selectedCount > 0 && (
-                  <>
-                    <button
-                      onClick={() => setSelectedIds(new Set())}
-                      className="text-xs text-gray-500 hover:underline"
-                    >
-                      Bỏ chọn
-                    </button>
-                    <button
-                      onClick={handleBulkRenew}
-                      disabled={renewBulk.isPending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors"
-                    >
-                      <RotateCcw size={13} />
-                      Bulk Renew ({selectedCount} node)
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Filter option */}
+              <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                excludeNew ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={excludeNew}
+                  onChange={e => { setExcludeNew(e.target.checked); setSelectedIds(new Set()) }}
+                  className="accent-blue-500"
+                />
+                Bỏ qua node dưới 1 ngày tuổi
+              </label>
+
+              {nodes.length > 0 && (
+                <>
+                  <div className="h-4 w-px bg-gray-200" />
+                  <button onClick={selectAll} className="text-xs text-blue-600 hover:underline">
+                    Chọn tất cả ({nodes.filter(n => !n.cooldown_until).length})
+                  </button>
+                  {selectedCount > 0 && (
+                    <>
+                      <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:underline">
+                        Bỏ chọn
+                      </button>
+                      <button
+                        onClick={handleBulkRenew}
+                        disabled={renewBulk.isPending}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors"
+                      >
+                        <RotateCcw size={13} />
+                        Bulk Renew ({selectedCount} node)
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
 
             {/* Table */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -350,10 +364,11 @@ export default function RenewNodes() {
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Lưu ý:</p>
               <ul className="list-disc list-inside space-y-0.5">
+                <li>Danh sách <strong>loại trừ node Unbound</strong> (Unbound thường do lỗi cấu hình, không phải do ARO).</li>
                 <li>Serial của mỗi node được lưu lại trước khi renew để tra cứu sau.</li>
                 <li>Cooldown <strong>4 giờ</strong> giữa các lần renew trên cùng 1 node.</li>
+                <li>Tối đa <strong>5 node</strong> renew cùng lúc trên toàn hệ thống.</li>
                 <li>Lệnh renew sẽ được node thực thi khi nó gọi API báo cáo lần tiếp theo.</li>
-                <li>Node sẽ chạy: <code className="bg-amber-100 px-1 rounded">apt purge aro-desktop</code> rồi tải và cài lại ARO.</li>
               </ul>
             </div>
           </div>
