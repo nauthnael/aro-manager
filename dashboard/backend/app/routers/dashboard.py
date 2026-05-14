@@ -97,6 +97,32 @@ def me(current_user: models.User = Depends(get_current_user)):
     return {"username": current_user.username}
 
 
+_STATUS_SORT = {'Online': 0, 'NoInternet': 1, 'Unbound': 2, 'Offline': 3}
+
+
+def _sort_key(sort_by: str):
+    """Return a key function for sorting NodeStatusOut objects."""
+    if sort_by == 'node_id':
+        return lambda n: (n.node_id or '').lower()
+    if sort_by == 'account':
+        return lambda n: (n.account or '').lower()
+    if sort_by == 'status':
+        return lambda n: _STATUS_SORT.get(n.aro_status, 4)
+    if sort_by == 'last_seen':
+        return lambda n: n.last_seen.isoformat() if n.last_seen else ''
+    if sort_by == 'reward_yesterday':
+        return lambda n: n.reward_yesterday or 0
+    if sort_by == 'uptime_ratio':
+        return lambda n: n.uptime_ratio or 0
+    if sort_by == 'proxy_ok':
+        return lambda n: 0 if n.proxy_ok is True else (1 if n.proxy_ok is False else 2)
+    if sort_by == 'total_score':
+        return lambda n: n.total_score or 0
+    if sort_by == 'avg_score':
+        return lambda n: n.avg_score or 0
+    return None
+
+
 @router.get("/dashboard/nodes", response_model=schemas.NodeListResponse)
 def list_nodes(
     status_filter: Optional[str] = Query(None),
@@ -105,7 +131,9 @@ def list_nodes(
     no_points_avg: bool = Query(False),
     exclude_new_nodes: bool = Query(False),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=500),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: str = Query("asc"),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -118,7 +146,6 @@ def list_nodes(
     for row in db.query(models.NodeRenewLog.node_id, func.count(models.NodeRenewLog.id)).group_by(models.NodeRenewLog.node_id).all():
         renew_counts[row[0]] = row[1]
 
-    # Build all_out WITHOUT scores (deferred to page level)
     all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0)) for n in nodes]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
@@ -128,6 +155,7 @@ def list_nodes(
     stale = sum(1 for n in all_out if n.is_stale)
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
 
+    # --- Filtering (applied to ALL nodes) ---
     filtered = all_out
     if search:
         q = search.lower()
@@ -136,12 +164,10 @@ def list_nodes(
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter:
         filtered = [n for n in filtered if not n.is_stale and n.aro_status == status_filter]
-
-    now_local = datetime.utcnow()
     if exclude_new_nodes:
         filtered = [
             n for n in filtered
-            if n.first_seen is None or (now_local - n.first_seen).total_seconds() >= 86400
+            if n.first_seen is None or (now - n.first_seen).total_seconds() >= 86400
         ]
     if no_points_yesterday:
         filtered = [
@@ -149,23 +175,33 @@ def list_nodes(
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
 
-    # no_points_avg requires scores for all filtered nodes to apply the filter
-    if no_points_avg:
+    # --- Score computation (when needed for filtering or sorting) ---
+    scores_computed = False
+    needs_scores = no_points_avg or sort_by in ('total_score', 'avg_score')
+    if needs_scores:
         scores = _compute_scores(db, [n.node_id for n in filtered])
         for n in filtered:
             pair = scores.get(n.node_id, (None, None))
             n.total_score = pair[0]
             n.avg_score = pair[1]
-        filtered = [n for n in filtered if n.avg_score is not None and n.avg_score == 0]
+        scores_computed = True
+        if no_points_avg:
+            filtered = [n for n in filtered if n.avg_score is not None and n.avg_score == 0]
 
+    # --- Sorting (applied to ALL filtered nodes before pagination) ---
+    if sort_by:
+        key_fn = _sort_key(sort_by)
+        if key_fn:
+            filtered.sort(key=key_fn, reverse=(sort_dir == 'desc'))
+
+    # --- Pagination ---
     total_filtered = len(filtered)
     total_pages = math.ceil(total_filtered / page_size) if total_filtered > 0 else 1
-
     start = (page - 1) * page_size
     paged = filtered[start:start + page_size]
 
-    # For normal (non-avg-filter) requests, compute scores only for the current page
-    if not no_points_avg:
+    # Compute scores for current page if not already done
+    if not scores_computed:
         scores = _compute_scores(db, [n.node_id for n in paged])
         for n in paged:
             pair = scores.get(n.node_id, (None, None))

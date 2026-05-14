@@ -2,11 +2,14 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
 import { copyToClipboard } from '../utils/clipboard'
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
 
 type BulkAction = 'update_script' | 'install_scrot'
 
@@ -36,6 +39,11 @@ export default function Dashboard() {
   const [excludeNewNodes, setExcludeNewNodes] = useState(false)
   const [needsRenewFilter, setNeedsRenewFilter] = useState(false)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
+
+  const sortBy = sorting[0]?.id ?? 'node_id'
+  const sortDir = sorting[0]?.desc ? 'desc' : 'asc'
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
@@ -44,13 +52,26 @@ export default function Dashboard() {
   if (noPointsAvg)       params.set('no_points_avg', 'true')
   if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
   params.set('page', String(page))
-  params.set('page_size', '50')
+  params.set('page_size', String(pageSize))
+  params.set('sort_by', sortBy)
+  params.set('sort_dir', sortDir)
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page],
+    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
+
+  const handleSortingChange = (s: SortingState) => {
+    setSorting(s)
+    setPage(1)
+  }
+
+  const handlePageSize = (size: number) => {
+    setPageSize(size)
+    setPage(1)
+    setSelectedIds(new Set())
+  }
 
   const bulkSend = useMutation({
     mutationFn: ({ action, node_ids }: { action: string; node_ids: string[] }) =>
@@ -314,33 +335,60 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Pagination */}
-        {data && data.total_pages > 1 && (
-          <div className="flex items-center gap-3 justify-between flex-wrap">
-            <span className="text-sm text-gray-500">
-              Trang {data.page} / {data.total_pages} · {data.total_filtered} nodes
-            </span>
+        {/* Pagination + Page size */}
+        {data && (
+          <div className="flex items-center gap-3 justify-between flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-2.5 shadow-sm">
+            {/* Page size selector */}
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span>Hiển thị</span>
+              <div className="flex gap-1">
+                {PAGE_SIZE_OPTIONS.map(size => (
+                  <button
+                    key={size}
+                    onClick={() => handlePageSize(size)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      pageSize === size
+                        ? 'bg-blue-600 text-white'
+                        : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+              <span className="text-gray-400">/ trang</span>
+            </div>
+
+            {/* Page info + navigation */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage(1)}
-                disabled={page <= 1}
-                className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              >«</button>
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              >← Trước</button>
-              <button
-                onClick={() => setPage(p => Math.min(data.total_pages, p + 1))}
-                disabled={page >= data.total_pages}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              >Tiếp →</button>
-              <button
-                onClick={() => setPage(data.total_pages)}
-                disabled={page >= data.total_pages}
-                className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              >»</button>
+              <span className="text-sm text-gray-500 whitespace-nowrap">
+                Trang <span className="font-medium text-gray-700">{data.page}</span> / {data.total_pages}
+                <span className="text-gray-400 ml-2">({data.total_filtered.toLocaleString()} nodes)</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page <= 1}
+                  className="px-2 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                  title="Trang đầu"
+                >«</button>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >← Trước</button>
+                <button
+                  onClick={() => setPage(p => Math.min(data.total_pages, p + 1))}
+                  disabled={page >= data.total_pages}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >Tiếp →</button>
+                <button
+                  onClick={() => setPage(data.total_pages)}
+                  disabled={page >= data.total_pages}
+                  className="px-2 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                  title="Trang cuối"
+                >»</button>
+              </div>
             </div>
           </div>
         )}
@@ -400,6 +448,8 @@ export default function Dashboard() {
             nodes={visibleNodes}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
           />
         )}
       </main>

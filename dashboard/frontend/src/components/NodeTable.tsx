@@ -3,7 +3,6 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
   type SortingState,
 } from '@tanstack/react-table'
@@ -30,16 +29,17 @@ interface Props {
   nodes: NodeStatus[]
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void
+  sorting: SortingState
+  onSortingChange: (s: SortingState) => void
 }
 
 const col = createColumnHelper<NodeStatus>()
 
 const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
   const [editingNote, setEditingNote] = useState<EditingNote | null>(null)
 
@@ -290,9 +290,9 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
     data: nodes,
     columns,
     state: { sorting },
-    onSortingChange: setSorting,
+    onSortingChange: onSortingChange as (updater: unknown) => void,
+    manualSorting: true,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   })
 
   return (
