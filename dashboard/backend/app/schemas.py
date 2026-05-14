@@ -158,7 +158,7 @@ class SettingsOut(BaseModel):
     alert_offline_minutes: int
     periodic_restart_min: int
     periodic_restart_max: int
-    daily_report_enabled: bool
+    daily_report_enabled: bool = True
 
     class Config:
         from_attributes = True

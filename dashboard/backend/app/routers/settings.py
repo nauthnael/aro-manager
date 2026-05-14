@@ -36,6 +36,7 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     pmax = max(1, min(body.periodic_restart_max, 1440))
     row.periodic_restart_min = min(pmin, pmax)
     row.periodic_restart_max = max(pmin, pmax)
+    row.daily_report_enabled = body.daily_report_enabled
     db.commit()
     db.refresh(row)
     return row

@@ -28,13 +28,12 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
         "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT 1",
     ]
-    with engine.connect() as conn:
-        for sql in ddl_migrations:
-            try:
+    for sql in ddl_migrations:
+        try:
+            with engine.begin() as conn:
                 conn.execute(text(sql))
-                conn.commit()
-            except Exception:
-                pass  # column already exists → ignore
+        except Exception:
+            pass  # column already exists → ignore
 
     # Migrate existing NodeOfflineLog rows into NodeErrorLog
     migrate_sql = """
