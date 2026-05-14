@@ -44,6 +44,8 @@ def migrate_db():
         "ALTER TABLE node_renew_log ADD COLUMN serial_after VARCHAR(255)",
         "ALTER TABLE node_renew_log ADD COLUMN monitored_at TIMESTAMP",
         "ALTER TABLE nodes ADD COLUMN proxy_user VARCHAR(255)",
+        "ALTER TABLE app_settings ADD COLUMN log_stale_restart_minutes INTEGER DEFAULT 5",
+        "ALTER TABLE nodes ADD COLUMN log_stale_restart_minutes INTEGER",
     ]
     for sql in ddl_migrations:
         try:

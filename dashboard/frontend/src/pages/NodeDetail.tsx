@@ -37,6 +37,7 @@ export default function NodeDetail() {
 
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
+  const [staleOverride, setStaleOverride] = useState<string>('')
 
   const { data, isLoading } = useQuery<NodeDetailResponse>({
     queryKey: ['node', nodeId],
@@ -72,6 +73,12 @@ export default function NodeDetail() {
       qc.invalidateQueries({ queryKey: ['node', nodeId] })
       setEditingNotes(false)
     },
+  })
+
+  const saveNodeSettings = useMutation({
+    mutationFn: (val: number | null) =>
+      api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/settings`, { log_stale_restart_minutes: val }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['node', nodeId] }),
   })
 
   const renewNode = useMutation({
@@ -219,6 +226,69 @@ export default function NodeDetail() {
             )}
           </div>
         </div>
+
+        {/* Node Overrides */}
+        {(() => {
+          const nodeStale = data?.node_log_stale_restart_minutes ?? null
+          const globalStale = data?.global_log_stale_restart_minutes ?? 5
+          const isOverrideActive = nodeStale !== null
+          return (
+            <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-700 flex-1">Node Overrides</h2>
+                <span className="text-xs text-gray-400">Ghi đè cài đặt global cho node này</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="text-sm text-gray-600 whitespace-nowrap w-40">Log stale restart</label>
+                  <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">
+                    Global: {globalStale} phút
+                  </span>
+                  {isOverrideActive && (
+                    <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2 py-1 rounded font-medium">
+                      Override: {nodeStale} phút
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    placeholder={`${globalStale} (global)`}
+                    value={staleOverride}
+                    onChange={e => setStaleOverride(e.target.value)}
+                    className="w-32 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-500">phút</span>
+                  <button
+                    onClick={() => {
+                      const v = parseInt(staleOverride)
+                      if (!isNaN(v) && v >= 1 && v <= 60) {
+                        saveNodeSettings.mutate(v)
+                        setStaleOverride('')
+                      }
+                    }}
+                    disabled={saveNodeSettings.isPending || !staleOverride}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    Lưu
+                  </button>
+                  {isOverrideActive && (
+                    <button
+                      onClick={() => saveNodeSettings.mutate(null)}
+                      disabled={saveNodeSettings.isPending}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-gray-200 disabled:opacity-40"
+                    >
+                      Xóa override
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">Để trống = dùng global setting. Giá trị 1–60 phút.</p>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* Reward chart */}
         <div className="bg-white rounded-xl shadow-sm p-5">

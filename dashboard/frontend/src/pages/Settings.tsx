@@ -13,6 +13,7 @@ interface SettingsData {
   periodic_restart_min: number
   periodic_restart_max: number
   daily_report_enabled: boolean
+  log_stale_restart_minutes: number
 }
 
 const TOPIC_LABELS: { key: keyof SettingsData; label: string; color: string }[] = [
@@ -77,6 +78,7 @@ export default function SettingsPage() {
     periodic_restart_min: 54,
     periodic_restart_max: 120,
     daily_report_enabled: true,
+    log_stale_restart_minutes: 5,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -217,6 +219,28 @@ export default function SettingsPage() {
           {form.periodic_restart_min >= form.periodic_restart_max && (
             <p className="text-xs text-red-500">Min phải nhỏ hơn Max.</p>
           )}
+        </div>
+
+        {/* Log stale restart */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Log Stale Restart</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Khởi động lại ARO nếu log không cập nhật sau N phút (ARO bị đóng băng). Có thể override per-node trên trang chi tiết node.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Restart sau</label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={form.log_stale_restart_minutes}
+              onChange={e => setForm(f => ({ ...f, log_stale_restart_minutes: Math.max(1, Math.min(60, parseInt(e.target.value) || 5)) }))}
+              className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <label className="text-sm text-gray-600 whitespace-nowrap">phút stale (1–60)</label>
+          </div>
         </div>
 
         {/* Daily report */}

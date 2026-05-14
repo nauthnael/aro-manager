@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.6"
+SCRIPT_VERSION="3.7.7"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -67,7 +67,7 @@ CHECK_INTERVAL=60           # Chu kỳ watchdog: 60s - giảm 50% IO, vẫn đ�
 PERIODIC_RESTART_MIN_MINS=54   # Minimum minutes between periodic restarts
 PERIODIC_RESTART_MAX_MINS=120  # Maximum minutes between periodic restarts
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
-STALE_RESTART_MINUTES=30      # Nếu log stale kéo dài >30m → force restart dù không có disconnect
+STALE_RESTART_MINUTES=5       # Nếu log stale kéo dài >5m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
 STARTUP_TIMEOUT=120         # Chờ app init (VNC/X11) trước khi check log
 GIVE_UP_RETRY_MINS=30       # Sau give-up, tự retry sau N phút
@@ -2017,8 +2017,10 @@ except:
         local _pmin _pmax
         read -r _pmin _pmax <<< "$cfg_out"
         if [[ "$_pmin" =~ ^[0-9]+$ ]] && [[ "$_pmax" =~ ^[0-9]+$ ]] && [[ $_pmin -lt $_pmax ]]; then
-            state_set "dashboard_periodic_min" "$_pmin"
-            state_set "dashboard_periodic_max" "$_pmax"
+            local _cur_pmin; _cur_pmin=$(state_get "dashboard_periodic_min" "")
+            [[ "$_cur_pmin" != "$_pmin" ]] && state_set "dashboard_periodic_min" "$_pmin"
+            local _cur_pmax; _cur_pmax=$(state_get "dashboard_periodic_max" "")
+            [[ "$_cur_pmax" != "$_pmax" ]] && state_set "dashboard_periodic_max" "$_pmax"
         fi
     fi
 
@@ -2035,7 +2037,25 @@ except:
     pass
 " "$response" 2>/dev/null)
     if [[ -n "$dr_enabled" ]]; then
-        state_set "dashboard_daily_report_enabled" "$dr_enabled"
+        local _cur_dr; _cur_dr=$(state_get "dashboard_daily_report_enabled" "")
+        [[ "$_cur_dr" != "$dr_enabled" ]] && state_set "dashboard_daily_report_enabled" "$dr_enabled"
+    fi
+
+    # Đọc log stale restart threshold từ dashboard
+    local _stale_mins
+    _stale_mins=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get('log_stale_restart_minutes')
+    if isinstance(v, int) and 1 <= v <= 60:
+        print(v)
+except:
+    pass
+" "$response" 2>/dev/null)
+    if [[ -n "$_stale_mins" ]]; then
+        local _cur_stale; _cur_stale=$(state_get "dashboard_log_stale_restart_minutes" "")
+        [[ "$_cur_stale" != "$_stale_mins" ]] && state_set "dashboard_log_stale_restart_minutes" "$_stale_mins"
     fi
 }
 
@@ -2482,6 +2502,17 @@ apply_dashboard_daily_report_config() {
     fi
 }
 
+apply_dashboard_log_stale_config() {
+    local new_val; new_val=$(state_get "dashboard_log_stale_restart_minutes" "")
+    [[ -z "$new_val" ]] && return 0
+    [[ "$new_val" =~ ^[0-9]+$ ]] || return 0
+    [[ $new_val -ge 1 ]] || return 0
+    if [[ "$new_val" != "$STALE_RESTART_MINUTES" ]]; then
+        watchdog_log "Dashboard config: log stale restart ${STALE_RESTART_MINUTES}m → ${new_val}m"
+        STALE_RESTART_MINUTES=$new_val
+    fi
+}
+
 schedule_next_periodic_restart() {
     local range=$(( PERIODIC_RESTART_MAX_MINS - PERIODIC_RESTART_MIN_MINS ))
     local rand_mins=$(( RANDOM % (range + 1) + PERIODIC_RESTART_MIN_MINS ))
@@ -2579,6 +2610,7 @@ watchdog_loop() {
         # ── Áp dụng cấu hình periodic restart từ dashboard (nếu có cập nhật) ──
         apply_dashboard_periodic_config
         apply_dashboard_daily_report_config
+        apply_dashboard_log_stale_config
 
         # ── Maintenance mode check ──────────────────────────────────
         if is_maintenance_mode; then
@@ -2615,10 +2647,48 @@ watchdog_loop() {
             fi
         fi
 
-        # ── Real proxy check every PROXY_CHECK_INTERVAL (10 min) ──
+        # ── Real proxy check + proxy-dead state machine ─────────────
         if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
-            if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
-                check_real_proxy || true   # failure already logged + notified inside
+            local proxy_dead; proxy_dead=$(state_get "proxy_dead" "0")
+
+            if [[ "$proxy_dead" == "1" ]]; then
+                # Proxy đang chết — không restart ARO, chờ proxy hồi phục
+                if [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
+                    watchdog_log "Proxy dead — re-checking connectivity..."
+                    if check_real_proxy 2>/dev/null; then
+                        watchdog_log "Proxy RECOVERED — resuming normal operation"
+                        state_set "proxy_dead" "0"
+                        state_set "retry_count" "0"
+                        local rec_msg="✅ <b>[PROXY RECOVERED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+🔌 Proxy: ${PROXY_HOST}:${PROXY_PORT}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+                        send_telegram "$rec_msg" || true
+                        last_proxy_check_epoch=$(date +%s)
+                        # Tiếp tục vòng lặp bình thường (ARO sẽ được start lại ở dưới)
+                    else
+                        last_proxy_check_epoch=$(date +%s)
+                        sleep "$CHECK_INTERVAL"
+                        continue
+                    fi
+                else
+                    local dead_since; dead_since=$(state_get "proxy_dead_since" "0")
+                    local dead_mins=$(( (now - dead_since) / 60 ))
+                    watchdog_log "Proxy dead for ${dead_mins}m — waiting for recovery (next check in $(( PROXY_CHECK_INTERVAL - (now - last_proxy_check_epoch) ))s)"
+                    sleep "$CHECK_INTERVAL"
+                    continue
+                fi
+            elif [[ $(( now - last_proxy_check_epoch )) -ge $PROXY_CHECK_INTERVAL ]]; then
+                if ! check_real_proxy 2>/dev/null; then
+                    watchdog_log "Proxy DEAD — entering proxy_dead state, killing ARO"
+                    state_set "proxy_dead" "1"
+                    state_set "proxy_dead_since" "$now"
+                    kill_aro
+                    send_notify_proxy_down "Upstream SOCKS5 server unreachable — ARO killed, waiting for proxy recovery" || true
+                    last_proxy_check_epoch=$(date +%s)
+                    sleep "$CHECK_INTERVAL"
+                    continue
+                fi
                 last_proxy_check_epoch=$(date +%s)
             fi
         fi

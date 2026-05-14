@@ -260,6 +260,9 @@ def get_node(
         .all()
     )
 
+    app_settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
+
     return schemas.NodeDetailResponse(
         node=_node_out(node, status, now, total_score, avg_score),
         history=[
@@ -281,6 +284,8 @@ def get_node(
             )
             for r in restart_events
         ],
+        node_log_stale_restart_minutes=node.log_stale_restart_minutes,
+        global_log_stale_restart_minutes=global_stale,
     )
 
 
@@ -316,6 +321,24 @@ def update_notes(
     if not node:
         raise HTTPException(status_code=404)
     node.notes = body.notes
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/dashboard/nodes/{node_id}/settings")
+def update_node_settings(
+    node_id: str,
+    body: schemas.NodeSettingsIn,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404)
+    if body.log_stale_restart_minutes is None:
+        node.log_stale_restart_minutes = None
+    else:
+        node.log_stale_restart_minutes = max(1, min(body.log_stale_restart_minutes, 60))
     db.commit()
     return {"ok": True}
 

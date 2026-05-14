@@ -17,6 +17,7 @@ class AppSettings(Base):
     periodic_restart_min = Column(Integer, default=54)
     periodic_restart_max = Column(Integer, default=120)
     daily_report_enabled = Column(Boolean, default=True)
+    log_stale_restart_minutes = Column(Integer, default=5)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -40,6 +41,7 @@ class Node(Base):
     proxy_port = Column(Integer)
     proxy_user = Column(String(255))
     notes = Column(Text)
+    log_stale_restart_minutes = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

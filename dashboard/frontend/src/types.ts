@@ -56,6 +56,8 @@ export interface NodeDetailResponse {
   node: NodeStatus
   history: HistoryPoint[]
   restart_events: RestartEvent[]
+  node_log_stale_restart_minutes: number | null
+  global_log_stale_restart_minutes: number
 }
 
 export interface AccountStats {
