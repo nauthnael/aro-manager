@@ -17,6 +17,8 @@ export interface NodeStatus {
   proxy_port: number | null
   notes: string | null
   first_seen: string | null
+  renew_count: number
+  needs_renew: boolean
 }
 
 export interface NodeListResponse {
@@ -31,6 +33,7 @@ export interface NodeListResponse {
   no_internet: number
   unbound: number
   stale: number
+  needs_renew_count: number
 }
 
 export interface HistoryPoint {
@@ -159,9 +162,11 @@ export interface RenewLog {
   account: string | null
   renewed_at: string
   serial_before: string | null
+  serial_after: string | null
   command_id: number | null
   status: string
   renew_count: number
+  monitored_at: string | null
 }
 
 export interface RenewHistoryResponse {

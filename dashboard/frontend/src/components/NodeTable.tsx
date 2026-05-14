@@ -10,6 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
+import { RotateCcw } from 'lucide-react'
 import { NodeStatus } from '../types'
 import StatusBadge from './StatusBadge'
 import api from '../api/client'
@@ -106,17 +107,29 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
           />
         ),
       }),
-      col.accessor('node_id', {
+      col.accessor(row => ({ id: row.node_id, needs_renew: row.needs_renew }), {
+        id: 'node_id',
         header: 'Hostname',
-        cell: info => (
-          <a
-            href={`/nodes/${encodeURIComponent(info.getValue())}`}
-            onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(info.getValue())}`) }}
-            className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
-          >
-            {info.getValue()}
-          </a>
-        ),
+        sortingFn: (a, b) => a.original.node_id.localeCompare(b.original.node_id),
+        cell: info => {
+          const { id, needs_renew } = info.getValue()
+          return (
+            <span className="flex items-center gap-1.5">
+              <a
+                href={`/nodes/${encodeURIComponent(id)}`}
+                onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(id)}`) }}
+                className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
+              >
+                {id}
+              </a>
+              {needs_renew && (
+                <span title="Cần renew: reward=0 và uptime=0" className="text-orange-500 shrink-0">
+                  <RotateCcw size={11} />
+                </span>
+              )}
+            </span>
+          )
+        },
       }),
       col.accessor('serial', {
         header: 'Serial',
@@ -248,6 +261,23 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
             >
               {version}
             </button>
+          )
+        },
+      }),
+      col.accessor('renew_count', {
+        header: 'Renew',
+        cell: info => {
+          const v = info.getValue() ?? 0
+          if (v === 0) return <span className="text-gray-200 text-xs">—</span>
+          return (
+            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${
+              v >= 5 ? 'bg-red-100 text-red-700' :
+              v >= 3 ? 'bg-orange-100 text-orange-700' :
+              'bg-blue-100 text-blue-700'
+            }`}>
+              <RotateCcw size={9} />
+              {v}
+            </span>
           )
         },
       }),

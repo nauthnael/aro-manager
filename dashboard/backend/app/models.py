@@ -132,9 +132,11 @@ class NodeRenewLog(Base):
     node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
     renewed_at = Column(DateTime, default=datetime.utcnow, index=True)
     serial_before = Column(String(255), nullable=True)
+    serial_after = Column(String(255), nullable=True)
     command_id = Column(Integer, nullable=True)
     status = Column(String(20), default="pending")  # pending | completed | failed
     renew_count = Column(Integer, default=1)
+    monitored_at = Column(DateTime, nullable=True)
 
     __table_args__ = (Index("ix_node_renew_log_node_ts", "node_id", "renewed_at"),)
 

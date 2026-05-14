@@ -34,6 +34,7 @@ export default function Dashboard() {
   const [noPointsYesterday, setNoPointsYesterday] = useState(false)
   const [noPointsAvg, setNoPointsAvg] = useState(false)
   const [excludeNewNodes, setExcludeNewNodes] = useState(false)
+  const [needsRenewFilter, setNeedsRenewFilter] = useState(false)
   const [page, setPage] = useState(1)
 
   const params = new URLSearchParams()
@@ -129,6 +130,7 @@ export default function Dashboard() {
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
     setExcludeNewNodes(false)
+    setNeedsRenewFilter(false)
     setSelectedIds(new Set())
     setPage(1)
   }
@@ -138,12 +140,14 @@ export default function Dashboard() {
     setStatusFilter(null)
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
+    setNeedsRenewFilter(false)
     setSelectedIds(new Set())
     setPage(1)
   }
 
   const selectedCount = selectedIds.size
-  const visibleNodes = data?.nodes ?? []
+  const allNodes = data?.nodes ?? []
+  const visibleNodes = needsRenewFilter ? allNodes.filter(n => n.needs_renew) : allNodes
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -237,6 +241,32 @@ export default function Dashboard() {
 
         {/* Point filters */}
         <div className="flex items-center gap-4 flex-wrap text-sm text-gray-600">
+          {(data?.needs_renew_count ?? 0) > 0 && (
+            <button
+              onClick={() => {
+                setNeedsRenewFilter(v => !v)
+                setStatusFilter(null)
+                setSearch('')
+                setNoPointsYesterday(false)
+                setNoPointsAvg(false)
+                setSelectedIds(new Set())
+                setPage(1)
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                needsRenewFilter
+                  ? 'bg-orange-500 border-orange-500 text-white'
+                  : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'
+              }`}
+            >
+              <RotateCcw size={13} />
+              Cần renew
+              <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                needsRenewFilter ? 'bg-orange-400 text-white' : 'bg-orange-200 text-orange-800'
+              }`}>
+                {data?.needs_renew_count}
+              </span>
+            </button>
+          )}
           <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
             ${noPointsYesterday ? 'bg-orange-50 border-orange-300 text-orange-700' : 'border-gray-200 hover:border-gray-300'}`}>
             <input
@@ -246,6 +276,7 @@ export default function Dashboard() {
                 setNoPointsYesterday(e.target.checked)
                 setStatusFilter(null)
                 setSearch('')
+                setNeedsRenewFilter(false)
                 setSelectedIds(new Set())
                 setPage(1)
               }}
@@ -262,6 +293,7 @@ export default function Dashboard() {
                 setNoPointsAvg(e.target.checked)
                 setStatusFilter(null)
                 setSearch('')
+                setNeedsRenewFilter(false)
                 setSelectedIds(new Set())
                 setPage(1)
               }}

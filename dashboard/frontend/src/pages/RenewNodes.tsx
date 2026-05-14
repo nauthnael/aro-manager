@@ -396,10 +396,10 @@ export default function RenewNodes() {
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Thời gian</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
-                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial trước renew</th>
-                        <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Lần renew #</th>
+                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial trước → sau</th>
+                        <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Lần #</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
-                        <th className="text-right px-3 py-2.5 font-semibold text-gray-600">Command ID</th>
+                        <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Theo dõi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
@@ -417,8 +417,18 @@ export default function RenewNodes() {
                             </button>
                           </td>
                           <td className="px-3 py-2.5 text-xs text-gray-500">{log.account ?? '—'}</td>
-                          <td className="px-3 py-2.5 font-mono text-xs text-gray-600">
-                            {log.serial_before ?? <span className="text-gray-300">—</span>}
+                          <td className="px-3 py-2.5 font-mono text-xs">
+                            {log.serial_before ? (
+                              <span className="text-gray-600">{log.serial_before}</span>
+                            ) : (
+                              <span className="text-gray-300">—</span>
+                            )}
+                            {log.serial_after && log.serial_after !== log.serial_before && (
+                              <span className="text-green-600"> → {log.serial_after}</span>
+                            )}
+                            {log.serial_after && log.serial_after === log.serial_before && (
+                              <span className="text-gray-400 text-xs"> (không đổi)</span>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             <span className="text-xs font-bold text-gray-600">#{log.renew_count}</span>
@@ -426,8 +436,12 @@ export default function RenewNodes() {
                           <td className="px-3 py-2.5 text-center">
                             <RenewStatusBadge status={log.status} />
                           </td>
-                          <td className="px-3 py-2.5 text-right text-xs text-gray-400">
-                            {log.command_id ?? '—'}
+                          <td className="px-3 py-2.5 text-center text-xs">
+                            {log.monitored_at ? (
+                              <span className="text-green-600" title={new Date(log.monitored_at + 'Z').toLocaleString('vi-VN')}>✓ Đã kiểm tra</span>
+                            ) : (
+                              <span className="text-gray-300">Chờ 30 phút</span>
+                            )}
                           </td>
                         </tr>
                       ))}

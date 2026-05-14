@@ -75,6 +75,8 @@ class NodeStatusOut(BaseModel):
     proxy_port: Optional[int] = None
     notes: Optional[str] = None
     first_seen: Optional[datetime] = None
+    renew_count: int = 0
+    needs_renew: bool = False
 
     class Config:
         from_attributes = True
@@ -92,6 +94,7 @@ class NodeListResponse(BaseModel):
     no_internet: int
     unbound: int
     stale: int
+    needs_renew_count: int = 0
 
 
 class HistoryPoint(BaseModel):
@@ -251,9 +254,11 @@ class RenewLogOut(BaseModel):
     account: Optional[str] = None
     renewed_at: datetime
     serial_before: Optional[str] = None
+    serial_after: Optional[str] = None
     command_id: Optional[int] = None
     status: str
     renew_count: int
+    monitored_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

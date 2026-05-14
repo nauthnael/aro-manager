@@ -16,11 +16,18 @@ router = APIRouter()
 STALE_SECS = settings.stale_threshold_secs
 
 
-def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None) -> schemas.NodeStatusOut:
+def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0) -> schemas.NodeStatusOut:
     if status and status.last_seen:
         is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
     else:
         is_stale = True
+
+    needs_renew = (
+        status is not None
+        and not is_stale
+        and (status.reward_yesterday or 0) == 0
+        and (status.uptime_ratio or 0) == 0
+    )
 
     return schemas.NodeStatusOut(
         node_id=node.node_id,
@@ -41,6 +48,8 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         proxy_port=node.proxy_port,
         notes=node.notes,
         first_seen=node.created_at,
+        renew_count=renew_count,
+        needs_renew=needs_renew,
     )
 
 
@@ -104,14 +113,20 @@ def list_nodes(
     nodes = db.query(models.Node).all()
     statuses = {s.node_id: s for s in db.query(models.NodeStatus).all()}
 
+    # Renew counts per node (single aggregate query)
+    renew_counts: dict = {}
+    for row in db.query(models.NodeRenewLog.node_id, func.count(models.NodeRenewLog.id)).group_by(models.NodeRenewLog.node_id).all():
+        renew_counts[row[0]] = row[1]
+
     # Build all_out WITHOUT scores (deferred to page level)
-    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None) for n in nodes]
+    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0)) for n in nodes]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
     no_internet = sum(1 for n in all_out if not n.is_stale and n.aro_status == "NoInternet")
     unbound = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Unbound")
     stale = sum(1 for n in all_out if n.is_stale)
+    needs_renew_count = sum(1 for n in all_out if n.needs_renew)
 
     filtered = all_out
     if search:
@@ -169,6 +184,7 @@ def list_nodes(
         no_internet=no_internet,
         unbound=unbound,
         stale=stale,
+        needs_renew_count=needs_renew_count,
     )
 
 

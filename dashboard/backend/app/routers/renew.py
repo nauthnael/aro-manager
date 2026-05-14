@@ -14,6 +14,7 @@ from app.database import get_db
 router = APIRouter()
 
 COOLDOWN_HOURS = 4
+MAX_CONCURRENT_RENEWS = 5
 
 
 def _get_renew_count(db: Session, node_id: str) -> int:
@@ -36,6 +37,13 @@ def _cooldown_until(last_renew: Optional[models.NodeRenewLog]) -> Optional[datet
         return None
     cutoff = last_renew.renewed_at + timedelta(hours=COOLDOWN_HOURS)
     return cutoff if datetime.utcnow() < cutoff else None
+
+
+def _pending_renew_count(db: Session) -> int:
+    return db.query(func.count(models.Command.id)).filter(
+        models.Command.action == "renew_node",
+        models.Command.status.in_(["pending", "acked"]),
+    ).scalar() or 0
 
 
 @router.get("/renew/candidates", response_model=schemas.RenewCandidatesResponse)
@@ -106,6 +114,13 @@ def trigger_renew(
             detail=f"Cooldown: còn {remaining} phút nữa mới có thể renew lại node này.",
         )
 
+    pending = _pending_renew_count(db)
+    if pending >= MAX_CONCURRENT_RENEWS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit: đang có {pending} renew đang chờ. Tối đa {MAX_CONCURRENT_RENEWS} node cùng lúc.",
+        )
+
     # Cancel duplicate pending renew commands
     db.query(models.Command).filter(
         models.Command.node_id == body.node_id,
@@ -158,11 +173,20 @@ def bulk_renew(
     details = []
     now = datetime.utcnow()
 
+    # Track how many slots are available (global rate limit)
+    current_pending = _pending_renew_count(db)
+    slots_available = MAX_CONCURRENT_RENEWS - current_pending
+
     for node_id in body.node_ids:
         node = existing_nodes.get(node_id)
         if not node:
             skipped += 1
             details.append({"node_id": node_id, "ok": False, "reason": "Node không tồn tại"})
+            continue
+
+        if slots_available <= 0:
+            skipped += 1
+            details.append({"node_id": node_id, "ok": False, "reason": f"Rate limit: tối đa {MAX_CONCURRENT_RENEWS} node cùng lúc"})
             continue
 
         last_renew = _get_last_renew(db, node_id)
@@ -196,6 +220,7 @@ def bulk_renew(
             renew_count=renew_count,
         ))
         triggered += 1
+        slots_available -= 1
         details.append({"node_id": node_id, "ok": True, "command_id": cmd.id})
 
     db.commit()
@@ -231,9 +256,11 @@ def get_renew_history(
             account=node_accounts.get(log.node_id),
             renewed_at=log.renewed_at,
             serial_before=log.serial_before,
+            serial_after=log.serial_after,
             command_id=log.command_id,
             status=log.status,
             renew_count=log.renew_count,
+            monitored_at=log.monitored_at,
         ))
 
     return schemas.RenewHistoryResponse(

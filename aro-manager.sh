@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.4"
+SCRIPT_VERSION="3.7.5"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1876,6 +1876,37 @@ print(json.dumps({'result': d, 'success': True}))
                 result="ERROR: Không thể chụp màn hình. Cần cài scrot hoặc imagemagick (display: ${DISPLAY_NUM:-:1})"
                 success="false"
             fi
+            ;;
+        renew_node)
+            watchdog_log "Dashboard: renewing ARO (purge + reinstall) — sending early ack"
+            # Gửi complete ngay vì lệnh này chạy lâu (~2-3 phút), tránh timeout
+            curl -sf --max-time 5 \
+                -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                -H "Content-Type: application/json" \
+                -d '{"result":"Renew đang thực thi: purge + reinstall ARO...","success":true}' > /dev/null 2>&1 || true
+
+            # Purge ARO
+            watchdog_log "Renew: purging aro-desktop..."
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y aro-desktop 2>/dev/null || true
+            apt-get autoremove -y 2>/dev/null || true
+
+            # Tải và cài lại ARO
+            local deb_path="/tmp/ARO_Desktop_latest_debian.deb"
+            rm -f "$deb_path"
+            watchdog_log "Renew: downloading ARO package..."
+            if wget -q --timeout=120 -O "$deb_path" \
+                "https://download.aro.network/files/packages/linux/ARO_Desktop_latest_debian.deb"; then
+                watchdog_log "Renew: installing ARO package..."
+                if DEBIAN_FRONTEND=noninteractive apt-get install -y "$deb_path" 2>/dev/null; then
+                    watchdog_log "Renew: ARO reinstalled successfully — watchdog sẽ khởi động lại ARO trong chu kỳ tiếp theo"
+                else
+                    watchdog_log "Renew: ERROR — apt install thất bại"
+                fi
+            else
+                watchdog_log "Renew: ERROR — không tải được package từ ARO network"
+            fi
+            rm -f "$deb_path"
+            return  # Đã gửi complete phía trên, không gửi lại
             ;;
         *)
             result="Unknown action: ${action}"

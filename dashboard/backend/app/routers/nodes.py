@@ -100,6 +100,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         db.add(node)
     if body.account:
         node.account = body.account
+    old_serial = node.serial
     if body.serial:
         node.serial = body.serial
     if body.proxy_host:
@@ -127,6 +128,20 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
 
     _maybe_save_history(db, status, body)
     _track_status_errors(db, node_id, old_aro, old_proxy_ok, body.aro_status, body.proxy_ok, now)
+
+    # If serial changed, update serial_after on the most recent renew log that hasn't tracked it yet
+    if body.serial and old_serial and body.serial != old_serial:
+        recent_renew = (
+            db.query(models.NodeRenewLog)
+            .filter(
+                models.NodeRenewLog.node_id == node_id,
+                models.NodeRenewLog.serial_after.is_(None),
+            )
+            .order_by(models.NodeRenewLog.renewed_at.desc())
+            .first()
+        )
+        if recent_renew:
+            recent_renew.serial_after = body.serial
 
     db.commit()
 

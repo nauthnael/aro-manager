@@ -34,11 +34,15 @@ def migrate_db():
             node_id VARCHAR(255) REFERENCES nodes(node_id) ON DELETE CASCADE,
             renewed_at TIMESTAMP DEFAULT NOW(),
             serial_before VARCHAR(255),
+            serial_after VARCHAR(255),
             command_id INTEGER,
             status VARCHAR(20) DEFAULT 'pending',
-            renew_count INTEGER DEFAULT 1
+            renew_count INTEGER DEFAULT 1,
+            monitored_at TIMESTAMP
         )""",
         "CREATE INDEX IF NOT EXISTS ix_node_renew_log_node_ts ON node_renew_log (node_id, renewed_at)",
+        "ALTER TABLE node_renew_log ADD COLUMN serial_after VARCHAR(255)",
+        "ALTER TABLE node_renew_log ADD COLUMN monitored_at TIMESTAMP",
     ]
     for sql in ddl_migrations:
         try:
@@ -217,6 +221,75 @@ def calculate_daily_scores():
         db.close()
 
 
+def check_renew_monitoring():
+    """Runs every 5 min — after 30 min post-renew, check if node recovered and notify via Telegram."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        window_start = now - timedelta(minutes=35)
+        window_end = now - timedelta(minutes=25)
+
+        pending_logs = (
+            db.query(models.NodeRenewLog)
+            .filter(
+                models.NodeRenewLog.renewed_at >= window_start,
+                models.NodeRenewLog.renewed_at <= window_end,
+                models.NodeRenewLog.monitored_at.is_(None),
+            )
+            .all()
+        )
+
+        if not pending_logs:
+            return
+
+        cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+
+        for log in pending_logs:
+            status = db.query(models.NodeStatus).filter(models.NodeStatus.node_id == log.node_id).first()
+            node = db.query(models.Node).filter(models.Node.node_id == log.node_id).first()
+
+            is_online = (
+                status is not None
+                and status.aro_status == "Online"
+                and status.last_seen is not None
+                and (now - status.last_seen).total_seconds() < settings.stale_threshold_secs
+            )
+
+            serial_line = ""
+            if log.serial_after and log.serial_after != log.serial_before:
+                serial_line = f"\nSerial: <code>{log.serial_before}</code> → <code>{log.serial_after}</code>"
+            elif log.serial_before:
+                serial_line = f"\nSerial: <code>{log.serial_before}</code> (chưa đổi)"
+
+            icon = "✅" if is_online else "⚠️"
+            status_text = status.aro_status if status else "Unknown"
+            account_text = node.account if node else "—"
+
+            msg = (
+                f"{icon} <b>Kiểm tra sau Renew</b>\n"
+                f"Host: <code>{log.node_id}</code>\n"
+                f"Account: {account_text}\n"
+                f"Trạng thái: <b>{status_text}</b>\n"
+                f"Renew lần #{log.renew_count}"
+                + serial_line
+            )
+
+            if cfg and cfg.tg_info:
+                try:
+                    send_telegram_message(cfg.tg_info, msg)
+                except Exception as exc:
+                    logger.error("check_renew_monitoring telegram error: %s", exc)
+
+            log.monitored_at = now
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("check_renew_monitoring error: %s", exc)
+    finally:
+        db.close()
+
+
 def cleanup_old_data():
     db = SessionLocal()
     try:
@@ -252,6 +325,7 @@ async def lifespan(app: FastAPI):
     init_db()
     scheduler.add_job(cleanup_old_data, "interval", hours=6)
     scheduler.add_job(check_offline_alerts, "interval", minutes=2)
+    scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
     scheduler.start()
     yield
