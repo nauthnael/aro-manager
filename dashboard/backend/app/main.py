@@ -26,7 +26,7 @@ def migrate_db():
     ddl_migrations = [
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_min INTEGER DEFAULT 54",
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
-        "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT 1",
+        "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT TRUE",
     ]
     for sql in ddl_migrations:
         try:
