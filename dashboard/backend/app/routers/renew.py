@@ -48,11 +48,11 @@ def _pending_renew_count(db: Session) -> int:
 
 @router.get("/renew/candidates", response_model=schemas.RenewCandidatesResponse)
 def get_renew_candidates(
-    exclude_new_nodes: bool = Query(False),
+    min_history_days: int = Query(0, ge=0, le=7),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    """Return nodes where reward_yesterday=0 AND uptime_ratio=0, excluding Unbound."""
+    """Return nodes where reward_yesterday=0 AND uptime_ratio=0, excluding Unbound. min_history_days=0 means no filter."""
     threshold_secs = settings.stale_threshold_secs
     now = datetime.utcnow()
 
@@ -91,7 +91,7 @@ def get_renew_candidates(
             or (now - status.last_seen).total_seconds() > threshold_secs
         )
 
-        if exclude_new_nodes and history_days.get(node.node_id, 0) <= 1:
+        if min_history_days > 0 and history_days.get(node.node_id, 0) < min_history_days:
             continue
 
         renew_count = _get_renew_count(db, node.node_id)

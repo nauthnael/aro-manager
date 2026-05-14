@@ -56,15 +56,15 @@ export default function RenewNodes() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('candidates')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [excludeNew, setExcludeNew] = useState(false)
+  const [minHistoryDays, setMinHistoryDays] = useState(0)
   const [historyPage, setHistoryPage] = useState(1)
   const [historyNodeFilter, setHistoryNodeFilter] = useState('')
 
   const candidateParams = new URLSearchParams()
-  if (excludeNew) candidateParams.set('exclude_new_nodes', 'true')
+  if (minHistoryDays > 0) candidateParams.set('min_history_days', String(minHistoryDays))
 
   const { data: candidates, isLoading, refetch, isFetching } = useQuery<RenewCandidatesResponse>({
-    queryKey: ['renew-candidates', excludeNew],
+    queryKey: ['renew-candidates', minHistoryDays],
     queryFn: () => api.get(`/renew/candidates?${candidateParams}`).then(r => r.data),
     refetchInterval: 60_000,
   })
@@ -217,17 +217,20 @@ export default function RenewNodes() {
             {/* Toolbar */}
             <div className="flex items-center gap-3 flex-wrap">
               {/* Filter option */}
-              <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                excludeNew ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={excludeNew}
-                  onChange={e => { setExcludeNew(e.target.checked); setSelectedIds(new Set()) }}
-                  className="accent-blue-500"
-                />
-                Bỏ qua node mới (≤ 1 ngày lịch sử)
-              </label>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-gray-500 whitespace-nowrap">Bỏ qua node có lịch sử &lt;</span>
+                <select
+                  value={minHistoryDays}
+                  onChange={e => { setMinHistoryDays(Number(e.target.value)); setSelectedIds(new Set()) }}
+                  className={`border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 transition-colors ${
+                    minHistoryDays > 0 ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'
+                  }`}
+                >
+                  {[0, 1, 2, 3, 4, 5, 6, 7].map(d => (
+                    <option key={d} value={d}>{d === 0 ? 'Không lọc' : `${d} ngày`}</option>
+                  ))}
+                </select>
+              </div>
 
               {nodes.length > 0 && (
                 <>
