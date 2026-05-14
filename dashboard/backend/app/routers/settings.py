@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import get_current_user
 from app.database import get_db
-from app.telegram import send_telegram_message
+from app.telegram import check_telegram_api, get_telegram_health, send_telegram_message
 
 router = APIRouter(tags=["settings"])
 
@@ -41,6 +41,18 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     db.commit()
     db.refresh(row)
     return row
+
+
+@router.get("/settings/telegram-health")
+def telegram_health(_=Depends(get_current_user)):
+    """Return cached Telegram API health state (no live API call)."""
+    return get_telegram_health()
+
+
+@router.post("/settings/telegram-health/check")
+def telegram_health_check(_=Depends(get_current_user)):
+    """Live-check Telegram API via getMe and return fresh state."""
+    return check_telegram_api()
 
 
 @router.post("/settings/test")

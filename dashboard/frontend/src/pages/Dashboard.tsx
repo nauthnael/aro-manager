@@ -7,6 +7,7 @@ import { NodeListResponse } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
+import TelegramHealthBanner from '../components/TelegramHealthBanner'
 import { copyToClipboard } from '../utils/clipboard'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
@@ -235,6 +236,8 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
+        <TelegramHealthBanner />
+
         {data && (
           <StatsCards stats={data} activeFilter={statusFilter} onFilter={handleFilter} />
         )}
