@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, RotateCcw, History, AlertTriangle, Clock } from 'lucide-react'
+import { ArrowLeft, RefreshCw, RotateCcw, History, AlertTriangle, Clock, Download } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import api from '../api/client'
@@ -105,6 +105,36 @@ export default function RenewNodes() {
       alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh bulk renew.')
     },
   })
+
+  const updateOne = useMutation({
+    mutationFn: (node_id: string) =>
+      api.post('/dashboard/commands', { node_id, action: 'update_script' }).then(r => r.data),
+    onSuccess: (_, node_id) => {
+      alert(`Đã gửi lệnh cập nhật script đến ${node_id}.`)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh cập nhật script.')
+    },
+  })
+
+  const updateBulk = useMutation({
+    mutationFn: (node_ids: string[]) =>
+      api.post('/dashboard/commands/bulk', { action: 'update_script', node_ids }).then(r => r.data),
+    onSuccess: (result) => {
+      const skippedMsg = result.skipped > 0 ? ` (bỏ qua ${result.skipped})` : ''
+      alert(`Đã gửi lệnh cập nhật script đến ${result.created} node${skippedMsg}.`)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh bulk cập nhật script.')
+    },
+  })
+
+  const handleBulkUpdate = () => {
+    const ids = [...selectedIds]
+    if (ids.length === 0) { alert('Chưa chọn node nào.'); return }
+    if (!confirm(`Gửi lệnh cập nhật script đến ${ids.length} node đã chọn?`)) return
+    updateBulk.mutate(ids)
+  }
 
   const handleRenewOne = (node: RenewCandidate) => {
     if (node.cooldown_until) {
@@ -251,6 +281,14 @@ export default function RenewNodes() {
                         <RotateCcw size={13} />
                         Bulk Renew ({selectedCount} node)
                       </button>
+                      <button
+                        onClick={handleBulkUpdate}
+                        disabled={updateBulk.isPending}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm rounded-lg font-medium transition-colors"
+                      >
+                        <Download size={13} />
+                        Bulk Cập nhật Script ({selectedCount} node)
+                      </button>
                     </>
                   )}
                 </>
@@ -345,15 +383,29 @@ export default function RenewNodes() {
                             )}
                           </td>
                           <td className="px-3 py-2.5">
-                            <button
-                              onClick={() => handleRenewOne(node)}
-                              disabled={inCooldown || renewOne.isPending}
-                              className="flex items-center gap-1 px-2.5 py-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs rounded-md font-medium transition-colors whitespace-nowrap"
-                              title={inCooldown ? 'Đang trong thời gian cooldown' : 'Renew node này'}
-                            >
-                              <RotateCcw size={11} />
-                              Renew
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleRenewOne(node)}
+                                disabled={inCooldown || renewOne.isPending}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs rounded-md font-medium transition-colors whitespace-nowrap"
+                                title={inCooldown ? 'Đang trong thời gian cooldown' : 'Renew node này'}
+                              >
+                                <RotateCcw size={11} />
+                                Renew
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!confirm(`Cập nhật script cho node ${node.node_id}?`)) return
+                                  updateOne.mutate(node.node_id)
+                                }}
+                                disabled={updateOne.isPending}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-indigo-500 hover:bg-indigo-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs rounded-md font-medium transition-colors whitespace-nowrap"
+                                title="Cập nhật script cho node này"
+                              >
+                                <Download size={11} />
+                                Script
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )
