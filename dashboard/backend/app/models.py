@@ -16,6 +16,7 @@ class AppSettings(Base):
     alert_offline_minutes = Column(Integer, default=10)
     periodic_restart_min = Column(Integer, default=54)
     periodic_restart_max = Column(Integer, default=120)
+    daily_report_enabled = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

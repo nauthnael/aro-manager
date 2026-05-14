@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.3"
+SCRIPT_VERSION="3.7.4"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -75,6 +75,7 @@ RESET_STABLE_HOURS=2        # Sau 2h stable liên tục, reset retry counter v�
 MAX_RETRIES=5               # 5 lần retry với backoff trước khi give up
 BACKOFF_TIMES="0 0 30 60 120"  # retry 1&2: ngay lập tức; 3: 30s; 4: 60s; 5: 120s
 DAILY_REPORT_HOUR=7         # Giờ gửi daily report (0–23, không dùng leading zero)
+DAILY_REPORT_ENABLED=true   # true/false — tắt/bật báo cáo hằng ngày qua Telegram
 
 # Proxy connectivity check
 PROXY_CHECK_INTERVAL=600          # real proxy test every 10 minutes - giảm 50% outbound curl
@@ -642,6 +643,7 @@ BACKOFF_TIMES="$BACKOFF_TIMES"
 
 # === Daily Report ===
 DAILY_REPORT_HOUR=$DAILY_REPORT_HOUR
+DAILY_REPORT_ENABLED=$DAILY_REPORT_ENABLED
 
 # === ARO Binary ===
 ARO_BINARY="$WRAPPER_SCRIPT"
@@ -1987,6 +1989,22 @@ except:
             state_set "dashboard_periodic_max" "$_pmax"
         fi
     fi
+
+    # Đọc cấu hình daily report enabled từ dashboard
+    local dr_enabled
+    dr_enabled=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get('daily_report_enabled')
+    if v is not None:
+        print('true' if v else 'false')
+except:
+    pass
+" "$response" 2>/dev/null)
+    if [[ -n "$dr_enabled" ]]; then
+        state_set "dashboard_daily_report_enabled" "$dr_enabled"
+    fi
 }
 
 send_daily_report() {
@@ -2423,6 +2441,15 @@ apply_dashboard_periodic_config() {
     fi
 }
 
+apply_dashboard_daily_report_config() {
+    local new_val; new_val=$(state_get "dashboard_daily_report_enabled" "")
+    [[ -z "$new_val" ]] && return 0
+    if [[ "$new_val" != "$DAILY_REPORT_ENABLED" ]]; then
+        watchdog_log "Dashboard config: daily report ${DAILY_REPORT_ENABLED} → ${new_val}"
+        DAILY_REPORT_ENABLED=$new_val
+    fi
+}
+
 schedule_next_periodic_restart() {
     local range=$(( PERIODIC_RESTART_MAX_MINS - PERIODIC_RESTART_MIN_MINS ))
     local rand_mins=$(( RANDOM % (range + 1) + PERIODIC_RESTART_MIN_MINS ))
@@ -2519,6 +2546,7 @@ watchdog_loop() {
 
         # ── Áp dụng cấu hình periodic restart từ dashboard (nếu có cập nhật) ──
         apply_dashboard_periodic_config
+        apply_dashboard_daily_report_config
 
         # ── Maintenance mode check ──────────────────────────────────
         if is_maintenance_mode; then
@@ -2967,8 +2995,12 @@ watchdog_loop() {
         current_hour=$(( 10#$(date +%H) ))   # Force base-10, an toàn với 08, 09
         
         if [[ $current_hour -eq $DAILY_REPORT_HOUR ]] && [[ $last_daily_hour -ne $current_hour ]]; then
-            watchdog_log "Sending daily report..."
-            send_daily_report
+            if [[ "$DAILY_REPORT_ENABLED" == "true" ]]; then
+                watchdog_log "Sending daily report..."
+                send_daily_report
+            else
+                watchdog_log "Daily report disabled — skipping"
+            fi
             last_daily_hour=$current_hour
         elif [[ $current_hour -ne $DAILY_REPORT_HOUR ]]; then
             last_daily_hour=-1

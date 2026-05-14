@@ -140,14 +140,17 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         app_settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
         pmin = app_settings.periodic_restart_min if app_settings and app_settings.periodic_restart_min else 54
         pmax = app_settings.periodic_restart_max if app_settings and app_settings.periodic_restart_max else 120
+        daily_report_enabled = app_settings.daily_report_enabled if app_settings and app_settings.daily_report_enabled is not None else True
     except Exception:
         pmin, pmax = 54, 120
+        daily_report_enabled = True
 
     return schemas.NodeReportResponse(
         ok=True,
         commands=[schemas.PendingCommand(id=c.id, action=c.action) for c in pending],
         periodic_restart_min=pmin,
         periodic_restart_max=pmax,
+        daily_report_enabled=daily_report_enabled,
     )
 
 

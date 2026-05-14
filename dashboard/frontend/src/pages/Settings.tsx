@@ -12,6 +12,7 @@ interface SettingsData {
   alert_offline_minutes: number
   periodic_restart_min: number
   periodic_restart_max: number
+  daily_report_enabled: boolean
 }
 
 const TOPIC_LABELS: { key: keyof SettingsData; label: string; color: string }[] = [
@@ -75,6 +76,7 @@ export default function SettingsPage() {
     alert_offline_minutes: 10,
     periodic_restart_min: 54,
     periodic_restart_max: 120,
+    daily_report_enabled: true,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -215,6 +217,30 @@ export default function SettingsPage() {
           {form.periodic_restart_min >= form.periodic_restart_max && (
             <p className="text-xs text-red-500">Min phải nhỏ hơn Max.</p>
           )}
+        </div>
+
+        {/* Daily report */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700">Báo cáo hằng ngày</h2>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">Gửi báo cáo tự động lúc 7:00 sáng</p>
+              <p className="text-xs text-gray-400 mt-0.5">Áp dụng cho toàn bộ node sau chu kỳ báo cáo tiếp theo (~60s).</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setForm(f => ({ ...f, daily_report_enabled: !f.daily_report_enabled }))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                form.daily_report_enabled ? 'bg-blue-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  form.daily_report_enabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Save */}
