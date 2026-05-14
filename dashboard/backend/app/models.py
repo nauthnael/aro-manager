@@ -18,6 +18,8 @@ class AppSettings(Base):
     periodic_restart_max = Column(Integer, default=120)
     daily_report_enabled = Column(Boolean, default=True)
     log_stale_restart_minutes = Column(Integer, default=5)
+    node_tg_bot_token = Column(String(200), default="")   # bot token dùng trên các node (khác với dashboard bot)
+    nodes_tg_enabled = Column(Boolean, default=True)       # trạng thái Telegram trên các node (để track ý định)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

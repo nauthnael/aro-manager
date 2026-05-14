@@ -14,6 +14,7 @@ interface SettingsData {
   periodic_restart_max: number
   daily_report_enabled: boolean
   log_stale_restart_minutes: number
+  node_tg_bot_token: string
 }
 
 const TOPIC_LABELS: { key: keyof SettingsData; label: string; color: string }[] = [
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     periodic_restart_max: 120,
     daily_report_enabled: true,
     log_stale_restart_minutes: 5,
+    node_tg_bot_token: '',
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -141,10 +143,27 @@ export default function SettingsPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* Node bot token */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Node Bot Token</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Bot token đang dùng trên các node (để theo dõi health trên dashboard). Không dùng để gửi tin nhắn từ dashboard.
+            </p>
+          </div>
+          <input
+            type="text"
+            value={form.node_tg_bot_token}
+            onChange={e => setForm(f => ({ ...f, node_tg_bot_token: e.target.value }))}
+            placeholder="123456789:AABBCCDDEEFFaabbccddeeff..."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
         {/* Telegram topics */}
         <div className="bg-white rounded-xl shadow-sm p-5 space-y-5">
           <div>
-            <h2 className="text-sm font-semibold text-gray-700">Telegram Topics</h2>
+            <h2 className="text-sm font-semibold text-gray-700">Telegram Topics (Dashboard Bot)</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               Định dạng: <code className="font-mono bg-gray-100 px-1 rounded">chat_id:thread_id</code>
             </p>

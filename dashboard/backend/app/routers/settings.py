@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import get_current_user
 from app.database import get_db
-from app.telegram import check_telegram_api, get_telegram_health, send_telegram_message
+from app.telegram import (
+    check_node_telegram_api,
+    check_telegram_api,
+    get_node_telegram_health,
+    get_telegram_health,
+    send_telegram_message,
+)
 
 router = APIRouter(tags=["settings"])
 
@@ -38,22 +44,82 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     row.periodic_restart_max = max(pmin, pmax)
     row.daily_report_enabled = body.daily_report_enabled
     row.log_stale_restart_minutes = max(1, min(body.log_stale_restart_minutes, 60))
+    row.node_tg_bot_token = body.node_tg_bot_token.strip()
     db.commit()
     db.refresh(row)
     return row
 
 
+# --- Dashboard bot health (primary) ---
+
 @router.get("/settings/telegram-health")
 def telegram_health(_=Depends(get_current_user)):
-    """Return cached Telegram API health state (no live API call)."""
+    """Return cached health state for the dashboard bot (no live API call)."""
     return get_telegram_health()
 
 
 @router.post("/settings/telegram-health/check")
 def telegram_health_check(_=Depends(get_current_user)):
-    """Live-check Telegram API via getMe and return fresh state."""
+    """Live-check dashboard bot via getMe and return fresh state."""
     return check_telegram_api()
 
+
+# --- Node bot health (secondary) ---
+
+@router.get("/settings/telegram-health/node")
+def telegram_health_node(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Return cached health state for the node bot (no live API call)."""
+    row = _get_or_create_settings(db)
+    return get_node_telegram_health(row.node_tg_bot_token or "")
+
+
+@router.post("/settings/telegram-health/check/node")
+def telegram_health_check_node(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Live-check node bot via getMe and return fresh state."""
+    row = _get_or_create_settings(db)
+    return check_node_telegram_api(row.node_tg_bot_token or "")
+
+
+# --- Tele broadcast (tắt/bật Telegram trên tất cả nodes) ---
+
+@router.post("/settings/tele-broadcast", response_model=schemas.TeleBroadcastResponse)
+def tele_broadcast(
+    body: schemas.TeleBroadcastRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if body.action not in ("tele_off", "tele_on"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="action must be 'tele_off' or 'tele_on'")
+
+    all_node_ids = [r.node_id for r in db.query(models.Node.node_id).all()]
+
+    # Cancel existing pending tele_off/tele_on for all nodes
+    db.query(models.Command).filter(
+        models.Command.action.in_(["tele_off", "tele_on"]),
+        models.Command.status == "pending",
+    ).delete(synchronize_session=False)
+
+    for node_id in all_node_ids:
+        db.add(models.Command(
+            node_id=node_id,
+            action=body.action,
+            created_by=current_user.username,
+        ))
+
+    # Track intended state
+    row = _get_or_create_settings(db)
+    row.nodes_tg_enabled = (body.action == "tele_on")
+    db.commit()
+
+    return schemas.TeleBroadcastResponse(
+        sent=len(all_node_ids),
+        action=body.action,
+        nodes_tg_enabled=row.nodes_tg_enabled,
+    )
+
+
+# --- Test Telegram topic ---
 
 @router.post("/settings/test")
 def test_telegram(body: schemas.TestTelegramRequest, db: Session = Depends(get_db), _=Depends(get_current_user)):

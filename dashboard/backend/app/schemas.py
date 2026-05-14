@@ -172,6 +172,8 @@ class SettingsOut(BaseModel):
     periodic_restart_max: int
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
+    node_tg_bot_token: str = ""
+    nodes_tg_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -187,10 +189,21 @@ class SettingsIn(BaseModel):
     periodic_restart_max: int = 120
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
+    node_tg_bot_token: str = ""
 
 
 class NodeSettingsIn(BaseModel):
     log_stale_restart_minutes: Optional[int] = None
+
+
+class TeleBroadcastRequest(BaseModel):
+    action: str  # "tele_off" | "tele_on"
+
+
+class TeleBroadcastResponse(BaseModel):
+    sent: int
+    action: str
+    nodes_tg_enabled: bool
 
 
 class TestTelegramRequest(BaseModel):

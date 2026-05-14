@@ -7,91 +7,107 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Module-level health state ---
-_rate_limit_until: float = 0.0   # epoch seconds when rate limit expires
-_last_error: str = ""             # last non-429 error message
-_bot_username: str = ""           # cached from getMe
+
+# --- Generic state tracking ---
+
+def _new_state() -> dict:
+    return {"rate_limit_until": 0.0, "last_error": "", "bot_username": ""}
 
 
-def _set_rate_limit(retry_after: int) -> None:
-    global _rate_limit_until
-    _rate_limit_until = time.time() + max(retry_after, 1)
+_primary = _new_state()    # dashboard bot (from .env TELEGRAM_BOT_TOKEN)
+_secondary = _new_state()  # node bot (from AppSettings.node_tg_bot_token)
 
 
-def _clear_error() -> None:
-    global _last_error
-    _last_error = ""
+def _remaining(state: dict) -> int:
+    return max(0, int(state["rate_limit_until"] - time.time()))
 
 
-def get_rate_limit_remaining() -> int:
-    remaining = int(_rate_limit_until - time.time())
-    return max(0, remaining)
+def _set_rate_limit(state: dict, retry_after: int) -> None:
+    state["rate_limit_until"] = time.time() + max(retry_after, 1)
 
 
-def get_telegram_health() -> dict:
+# --- Health functions ---
+
+def _get_health(bot_token: str, state: dict) -> dict:
     """Return current health state without making any API call."""
-    if not settings.telegram_bot_token:
+    if not bot_token:
         return {"status": "not_configured", "bot_username": None, "retry_after": 0, "error": None}
-    remaining = get_rate_limit_remaining()
+    remaining = _remaining(state)
     if remaining > 0:
-        return {"status": "rate_limited", "bot_username": _bot_username or None, "retry_after": remaining, "error": None}
-    if _last_error:
-        return {"status": "error", "bot_username": _bot_username or None, "retry_after": 0, "error": _last_error}
-    return {"status": "ok", "bot_username": _bot_username or None, "retry_after": 0, "error": None}
+        return {"status": "rate_limited", "bot_username": state["bot_username"] or None, "retry_after": remaining, "error": None}
+    if state["last_error"]:
+        return {"status": "error", "bot_username": state["bot_username"] or None, "retry_after": 0, "error": state["last_error"]}
+    return {"status": "ok", "bot_username": state["bot_username"] or None, "retry_after": 0, "error": None}
 
 
-def check_telegram_api() -> dict:
-    """Live check via getMe. Updates module-level state."""
-    global _bot_username, _last_error
-
-    if not settings.telegram_bot_token:
+def _check_api(bot_token: str, state: dict) -> dict:
+    """Live check via getMe. Updates state in-place."""
+    if not bot_token:
         return {"status": "not_configured", "bot_username": None, "retry_after": 0, "error": "Bot token chưa cấu hình"}
-
-    remaining = get_rate_limit_remaining()
+    remaining = _remaining(state)
     if remaining > 0:
-        return {"status": "rate_limited", "bot_username": _bot_username or None, "retry_after": remaining, "error": None}
+        return {"status": "rate_limited", "bot_username": state["bot_username"] or None, "retry_after": remaining, "error": None}
 
-    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/getMe"
+    url = f"https://api.telegram.org/bot{bot_token}/getMe"
     try:
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
             bot = r.json().get("result", {})
-            _bot_username = f"@{bot.get('username', '')}" if bot.get("username") else ""
-            _last_error = ""
-            return {"status": "ok", "bot_username": _bot_username or None, "retry_after": 0, "error": None}
+            state["bot_username"] = f"@{bot.get('username', '')}" if bot.get("username") else ""
+            state["last_error"] = ""
+            return {"status": "ok", "bot_username": state["bot_username"] or None, "retry_after": 0, "error": None}
         elif r.status_code == 429:
             retry_after = 60
             try:
                 retry_after = r.json().get("parameters", {}).get("retry_after", 60)
             except Exception:
                 pass
-            _set_rate_limit(retry_after)
-            _last_error = ""
-            return {"status": "rate_limited", "bot_username": _bot_username or None, "retry_after": retry_after, "error": None}
+            _set_rate_limit(state, retry_after)
+            state["last_error"] = ""
+            return {"status": "rate_limited", "bot_username": state["bot_username"] or None, "retry_after": retry_after, "error": None}
         elif r.status_code == 401:
-            _last_error = "Bot token không hợp lệ (401 Unauthorized)"
-            return {"status": "error", "bot_username": None, "retry_after": 0, "error": _last_error}
+            state["last_error"] = "Bot token không hợp lệ (401 Unauthorized)"
+            return {"status": "error", "bot_username": None, "retry_after": 0, "error": state["last_error"]}
         else:
-            err = r.text[:200]
-            _last_error = f"HTTP {r.status_code}: {err}"
-            return {"status": "error", "bot_username": None, "retry_after": 0, "error": _last_error}
+            state["last_error"] = f"HTTP {r.status_code}: {r.text[:200]}"
+            return {"status": "error", "bot_username": None, "retry_after": 0, "error": state["last_error"]}
     except Exception as exc:
-        _last_error = str(exc)
-        return {"status": "error", "bot_username": None, "retry_after": 0, "error": _last_error}
+        state["last_error"] = str(exc)
+        return {"status": "error", "bot_username": None, "retry_after": 0, "error": state["last_error"]}
 
+
+# --- Public API (primary = dashboard bot) ---
+
+def get_telegram_health() -> dict:
+    return _get_health(settings.telegram_bot_token, _primary)
+
+
+def check_telegram_api() -> dict:
+    return _check_api(settings.telegram_bot_token, _primary)
+
+
+# --- Public API (secondary = node bot, token from DB) ---
+
+def get_node_telegram_health(bot_token: str) -> dict:
+    return _get_health(bot_token, _secondary)
+
+
+def check_node_telegram_api(bot_token: str) -> dict:
+    return _check_api(bot_token, _secondary)
+
+
+# --- Send message (uses primary bot) ---
 
 def send_telegram_message(chat_config: str, text: str) -> tuple[bool, str]:
     """Send message to a Telegram topic. chat_config format: 'chat_id:thread_id'.
     Returns (ok, error_message)."""
-    global _last_error
-
     if not settings.telegram_bot_token:
         return False, "TELEGRAM_BOT_TOKEN chưa được cấu hình trong .env"
     if not chat_config:
         return False, "Chat config trống"
 
     # Bail early if still rate limited
-    remaining = get_rate_limit_remaining()
+    remaining = _remaining(_primary)
     if remaining > 0:
         return False, f"Telegram rate limited, còn {remaining}s"
 
@@ -110,7 +126,7 @@ def send_telegram_message(chat_config: str, text: str) -> tuple[bool, str]:
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code == 200:
-            _last_error = ""
+            _primary["last_error"] = ""
             return True, ""
         elif r.status_code == 429:
             retry_after = 60
@@ -118,15 +134,15 @@ def send_telegram_message(chat_config: str, text: str) -> tuple[bool, str]:
                 retry_after = r.json().get("parameters", {}).get("retry_after", 60)
             except Exception:
                 pass
-            _set_rate_limit(retry_after)
+            _set_rate_limit(_primary, retry_after)
             logger.warning("Telegram rate limited (429) — backing off %ss", retry_after)
             return False, f"Telegram rate limited, retry after {retry_after}s"
         else:
             err = r.json().get("description", r.text[:200]) if r.headers.get("content-type", "").startswith("application/json") else r.text[:200]
-            _last_error = f"Telegram API lỗi {r.status_code}: {err}"
+            _primary["last_error"] = f"Telegram API lỗi {r.status_code}: {err}"
             logger.warning("Telegram error %s: %s", r.status_code, err)
-            return False, _last_error
+            return False, _primary["last_error"]
     except Exception as exc:
-        _last_error = str(exc)
+        _primary["last_error"] = str(exc)
         logger.error("Telegram send failed: %s", exc)
-        return False, _last_error
+        return False, _primary["last_error"]
