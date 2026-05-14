@@ -20,6 +20,11 @@ interface UpdateTarget {
   version: string | null
 }
 
+interface EditingNote {
+  node_id: string
+  value: string
+}
+
 interface Props {
   nodes: NodeStatus[]
   selectedIds: Set<string>
@@ -35,6 +40,16 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
   const qc = useQueryClient()
   const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
+  const [editingNote, setEditingNote] = useState<EditingNote | null>(null)
+
+  const saveNote = useMutation({
+    mutationFn: ({ node_id, notes }: { node_id: string; notes: string }) =>
+      api.put(`/dashboard/nodes/${encodeURIComponent(node_id)}/notes`, { notes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['nodes'] })
+      setEditingNote(null)
+    },
+  })
 
   const sendUpdate = useMutation({
     mutationFn: (node_id: string) =>
@@ -130,6 +145,38 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
+      col.accessor('notes', {
+        header: 'Ghi chú',
+        cell: info => {
+          const node_id = info.row.original.node_id
+          const current = info.getValue()
+          if (editingNote?.node_id === node_id) {
+            return (
+              <input
+                autoFocus
+                value={editingNote.value}
+                onChange={e => setEditingNote({ node_id, value: e.target.value })}
+                onBlur={() => saveNote.mutate({ node_id, notes: editingNote.value })}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveNote.mutate({ node_id, notes: editingNote.value })
+                  if (e.key === 'Escape') setEditingNote(null)
+                }}
+                onClick={e => e.stopPropagation()}
+                className="text-sm border border-blue-400 rounded px-1.5 py-0.5 w-40 outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )
+          }
+          return (
+            <span
+              onClick={e => { e.stopPropagation(); setEditingNote({ node_id, value: current ?? '' }) }}
+              title="Click để chỉnh sửa"
+              className="text-sm text-gray-600 truncate max-w-[160px] block cursor-text hover:bg-gray-100 rounded px-1 -mx-1 min-w-[80px] min-h-[20px]"
+            >
+              {current || <span className="text-gray-300">—</span>}
+            </span>
+          )
+        },
+      }),
       col.accessor('total_score', {
         header: 'Tổng điểm',
         cell: info => {
@@ -206,7 +253,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, selectedIds, allSelected, someSelected],
+    [navigate, selectedIds, allSelected, someSelected, editingNote],
   )
 
   const table = useReactTable({

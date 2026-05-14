@@ -27,6 +27,7 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_min INTEGER DEFAULT 54",
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
         "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE node ADD COLUMN notes TEXT",
     ]
     for sql in ddl_migrations:
         try:
