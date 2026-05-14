@@ -132,3 +132,42 @@ export interface ErrorStatsResponse {
   nodes: NodeErrorStats[]
   score_base: number
 }
+
+export interface RenewCandidate {
+  node_id: string
+  account: string | null
+  serial: string | null
+  aro_status: string | null
+  reward_yesterday: number | null
+  uptime_ratio: number | null
+  last_seen: string | null
+  is_stale: boolean
+  renew_count: number
+  last_renewed_at: string | null
+  last_renew_status: string | null
+  cooldown_until: string | null
+}
+
+export interface RenewCandidatesResponse {
+  nodes: RenewCandidate[]
+  total: number
+}
+
+export interface RenewLog {
+  id: number
+  node_id: string
+  account: string | null
+  renewed_at: string
+  serial_before: string | null
+  command_id: number | null
+  status: string
+  renew_count: number
+}
+
+export interface RenewHistoryResponse {
+  logs: RenewLog[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}

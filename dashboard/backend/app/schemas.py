@@ -198,3 +198,70 @@ class BulkCommandRequest(BaseModel):
 class BulkCommandResponse(BaseModel):
     created: int
     skipped: int
+
+
+# --- Renew ---
+
+class RenewCandidateOut(BaseModel):
+    node_id: str
+    account: Optional[str] = None
+    serial: Optional[str] = None
+    aro_status: Optional[str] = None
+    reward_yesterday: Optional[float] = None
+    uptime_ratio: Optional[float] = None
+    last_seen: Optional[datetime] = None
+    is_stale: bool
+    renew_count: int = 0
+    last_renewed_at: Optional[datetime] = None
+    last_renew_status: Optional[str] = None
+    cooldown_until: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RenewCandidatesResponse(BaseModel):
+    nodes: List[RenewCandidateOut]
+    total: int
+
+
+class RenewTriggerRequest(BaseModel):
+    node_id: str
+
+
+class BulkRenewRequest(BaseModel):
+    node_ids: List[str]
+
+
+class RenewTriggerResponse(BaseModel):
+    ok: bool
+    message: str
+    command_id: Optional[int] = None
+
+
+class BulkRenewResponse(BaseModel):
+    triggered: int
+    skipped: int
+    details: List[dict]
+
+
+class RenewLogOut(BaseModel):
+    id: int
+    node_id: str
+    account: Optional[str] = None
+    renewed_at: datetime
+    serial_before: Optional[str] = None
+    command_id: Optional[int] = None
+    status: str
+    renew_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class RenewHistoryResponse(BaseModel):
+    logs: List[RenewLogOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

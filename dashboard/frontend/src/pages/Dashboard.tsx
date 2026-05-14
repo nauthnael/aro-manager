@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { NodeListResponse } from '../types'
 import api from '../api/client'
@@ -173,6 +173,14 @@ export default function Dashboard() {
             >
               <ShieldAlert size={15} />
               <span className="hidden sm:inline">Chất lượng Node</span>
+            </button>
+            <button
+              onClick={() => navigate('/renew')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-600 hover:text-orange-800 hover:bg-orange-50 rounded-lg transition-colors"
+              title="Renew Node"
+            >
+              <RotateCcw size={15} />
+              <span className="hidden sm:inline">Renew Node</span>
             </button>
             <button
               onClick={() => navigate('/settings')}

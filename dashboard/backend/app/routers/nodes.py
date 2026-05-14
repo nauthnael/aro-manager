@@ -205,5 +205,13 @@ def complete_command(
     cmd.status = "completed" if body.success else "failed"
     cmd.result = body.result
     cmd.completed_at = datetime.utcnow()
+
+    if cmd.action == "renew_node":
+        renew_log = db.query(models.NodeRenewLog).filter(
+            models.NodeRenewLog.command_id == cmd_id
+        ).first()
+        if renew_log:
+            renew_log.status = "completed" if body.success else "failed"
+
     db.commit()
     return {"ok": True}

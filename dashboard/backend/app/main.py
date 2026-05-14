@@ -15,6 +15,7 @@ from app.database import Base, SessionLocal, engine
 from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
+from app.routers import renew as renew_router
 from app.scoring import calculate_score_for_day
 from app.telegram import send_telegram_message
 
@@ -28,6 +29,16 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
         "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT TRUE",
         "ALTER TABLE node ADD COLUMN notes TEXT",
+        """CREATE TABLE IF NOT EXISTS node_renew_log (
+            id SERIAL PRIMARY KEY,
+            node_id VARCHAR(255) REFERENCES nodes(node_id) ON DELETE CASCADE,
+            renewed_at TIMESTAMP DEFAULT NOW(),
+            serial_before VARCHAR(255),
+            command_id INTEGER,
+            status VARCHAR(20) DEFAULT 'pending',
+            renew_count INTEGER DEFAULT 1
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_node_renew_log_node_ts ON node_renew_log (node_id, renewed_at)",
     ]
     for sql in ddl_migrations:
         try:
@@ -262,3 +273,4 @@ app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(commands.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(errors_router.router, prefix="/api/v1")
+app.include_router(renew_router.router, prefix="/api/v1")
