@@ -68,6 +68,21 @@ def get_renew_candidates(
         .all()
     )
 
+    # Precompute distinct history day count per node (single query)
+    node_ids = [node.node_id for node, _ in rows]
+    history_days: dict = {}
+    if node_ids:
+        for row in (
+            db.query(
+                models.NodeHistory.node_id,
+                func.count(func.distinct(func.date(models.NodeHistory.timestamp))).label("days"),
+            )
+            .filter(models.NodeHistory.node_id.in_(node_ids))
+            .group_by(models.NodeHistory.node_id)
+            .all()
+        ):
+            history_days[row.node_id] = row.days
+
     result: List[schemas.RenewCandidateOut] = []
     for node, status in rows:
         is_stale = (
@@ -76,10 +91,8 @@ def get_renew_candidates(
             or (now - status.last_seen).total_seconds() > threshold_secs
         )
 
-        if exclude_new_nodes:
-            age_secs = (now - node.created_at).total_seconds() if node.created_at else 0
-            if age_secs < 86400:
-                continue
+        if exclude_new_nodes and history_days.get(node.node_id, 0) <= 2:
+            continue
 
         renew_count = _get_renew_count(db, node.node_id)
         last_renew = _get_last_renew(db, node.node_id)

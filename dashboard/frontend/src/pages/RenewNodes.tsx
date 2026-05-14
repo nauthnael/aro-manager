@@ -226,7 +226,7 @@ export default function RenewNodes() {
                   onChange={e => { setExcludeNew(e.target.checked); setSelectedIds(new Set()) }}
                   className="accent-blue-500"
                 />
-                Bỏ qua node dưới 1 ngày tuổi
+                Bỏ qua node mới (≤ 2 ngày lịch sử)
               </label>
 
               {nodes.length > 0 && (
