@@ -38,6 +38,7 @@ class Node(Base):
     serial = Column(String(255))
     proxy_host = Column(String(255))
     proxy_port = Column(Integer)
+    proxy_user = Column(String(255))
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 

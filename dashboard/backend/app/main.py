@@ -43,6 +43,7 @@ def migrate_db():
         "CREATE INDEX IF NOT EXISTS ix_node_renew_log_node_ts ON node_renew_log (node_id, renewed_at)",
         "ALTER TABLE node_renew_log ADD COLUMN serial_after VARCHAR(255)",
         "ALTER TABLE node_renew_log ADD COLUMN monitored_at TIMESTAMP",
+        "ALTER TABLE nodes ADD COLUMN proxy_user VARCHAR(255)",
     ]
     for sql in ddl_migrations:
         try:

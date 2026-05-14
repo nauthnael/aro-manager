@@ -11,6 +11,119 @@ from app.scoring import SCORE_BASE, calculate_score_for_day
 router = APIRouter(prefix="/errors", tags=["errors"])
 
 
+def _proxy_key(node: models.Node):
+    """Return (unique_key, display_label) for a node's proxy."""
+    if not node.proxy_host:
+        return "no-proxy", "No Proxy"
+    if node.proxy_user:
+        return f"{node.proxy_host}:{node.proxy_user}", f"{node.proxy_host} ({node.proxy_user})"
+    return f"{node.proxy_host}:{node.proxy_port or 0}", f"{node.proxy_host}:{node.proxy_port or ''}"
+
+
+@router.get("/recent-events")
+def get_recent_error_events(
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Return the most recent error events across all nodes, newest first."""
+    rows = (
+        db.query(models.NodeErrorLog, models.Node)
+        .join(models.Node, models.NodeErrorLog.node_id == models.Node.node_id)
+        .order_by(models.NodeErrorLog.started_at.desc())
+        .limit(limit)
+        .all()
+    )
+    now = datetime.utcnow()
+    return {
+        "events": [
+            {
+                "id": e.id,
+                "node_id": e.node_id,
+                "error_type": e.error_type,
+                "started_at": e.started_at.isoformat(),
+                "ended_at": e.ended_at.isoformat() if e.ended_at else None,
+                "duration_minutes": (
+                    e.duration_minutes
+                    if e.ended_at
+                    else max(0, int((now - e.started_at).total_seconds() / 60))
+                ),
+                "ongoing": e.ended_at is None,
+                "proxy_host": node.proxy_host,
+                "proxy_port": node.proxy_port,
+                "proxy_user": node.proxy_user,
+            }
+            for e, node in rows
+        ]
+    }
+
+
+@router.get("/proxy-stats")
+def get_proxy_stats(
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Return error statistics grouped by proxy (host:user or host:port for legacy nodes)."""
+    cutoff_dt = datetime.utcnow() - timedelta(days=days)
+
+    # All nodes → initialize groups
+    all_nodes = db.query(models.Node).all()
+    groups: dict[str, dict] = {}
+    node_to_key: dict[str, str] = {}
+
+    for node in all_nodes:
+        key, display = _proxy_key(node)
+        node_to_key[node.node_id] = key
+        if key not in groups:
+            groups[key] = {
+                "proxy_key": key,
+                "proxy_display": display,
+                "proxy_host": node.proxy_host,
+                "proxy_user": node.proxy_user,
+                "node_ids": set(),
+                "total_errors": 0,
+                "proxy_down_count": 0,
+                "errors_by_type": {},
+            }
+        groups[key]["node_ids"].add(node.node_id)
+
+    # All error events in period — single query
+    events = (
+        db.query(models.NodeErrorLog)
+        .filter(models.NodeErrorLog.started_at >= cutoff_dt)
+        .all()
+    )
+    for e in events:
+        key = node_to_key.get(e.node_id)
+        if not key:
+            continue
+        g = groups[key]
+        g["total_errors"] += 1
+        g["errors_by_type"][e.error_type] = g["errors_by_type"].get(e.error_type, 0) + 1
+        if e.error_type == "proxy_fail":
+            g["proxy_down_count"] += 1
+
+    result = sorted(
+        [
+            {
+                "proxy_key": g["proxy_key"],
+                "proxy_display": g["proxy_display"],
+                "proxy_host": g["proxy_host"],
+                "proxy_user": g["proxy_user"],
+                "node_count": len(g["node_ids"]),
+                "total_errors": g["total_errors"],
+                "proxy_down_count": g["proxy_down_count"],
+                "errors_by_type": g["errors_by_type"],
+            }
+            for g in groups.values()
+        ],
+        key=lambda x: x["total_errors"],
+        reverse=True,
+    )
+    return {"proxies": result, "days": days}
+
+
 @router.get("/stats")
 def get_error_stats(
     days: int = Query(30, ge=1, le=90),

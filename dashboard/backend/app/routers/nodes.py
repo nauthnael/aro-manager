@@ -107,6 +107,8 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         node.proxy_host = body.proxy_host
     if body.proxy_port:
         node.proxy_port = body.proxy_port
+    if body.proxy_user:
+        node.proxy_user = body.proxy_user
 
     status = db.query(models.NodeStatus).filter(models.NodeStatus.node_id == node_id).first()
     if not status:

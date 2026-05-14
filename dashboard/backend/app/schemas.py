@@ -29,6 +29,7 @@ class NodeReportRequest(BaseModel):
     public_ip: str = ""
     proxy_host: str = ""
     proxy_port: int = 0
+    proxy_user: str = ""
     serial: str = ""
     account: str = ""
     script_version: str = ""
@@ -73,6 +74,7 @@ class NodeStatusOut(BaseModel):
     serial: Optional[str] = None
     proxy_host: Optional[str] = None
     proxy_port: Optional[int] = None
+    proxy_user: Optional[str] = None
     notes: Optional[str] = None
     first_seen: Optional[datetime] = None
     renew_count: int = 0

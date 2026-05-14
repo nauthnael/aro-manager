@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.5"
+SCRIPT_VERSION="3.7.6"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1955,16 +1955,17 @@ d = {
     'public_ip':        sys.argv[8],
     'proxy_host':       sys.argv[9],
     'proxy_port':       int(sys.argv[10]) if sys.argv[10].isdigit() else 0,
-    'serial':           sys.argv[11],
-    'account':          sys.argv[12],
-    'script_version':   sys.argv[13],
+    'proxy_user':       sys.argv[11],
+    'serial':           sys.argv[12],
+    'account':          sys.argv[13],
+    'script_version':   sys.argv[14],
 }
 print(json.dumps(d))
 " "$node_id" "$DASHBOARD_API_KEY" \
   "${tray_state:-unknown}" "$proxy_status" \
   "${REWARD_TODAY:-0}" "${REWARD_YESTERDAY:-0}" "${UPTIME_RATIO:-0}" \
   "${PUBLIC_IP:-}" "${PROXY_HOST:-}" "${PROXY_PORT:-0}" \
-  "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" 2>/dev/null) || {
+  "${PROXY_USER:-}" "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" 2>/dev/null) || {
         watchdog_log "Dashboard: failed to build payload"
         return 0
     }

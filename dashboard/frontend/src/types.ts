@@ -15,6 +15,7 @@ export interface NodeStatus {
   serial: string | null
   proxy_host: string | null
   proxy_port: number | null
+  proxy_user: string | null
   notes: string | null
   first_seen: string | null
   renew_count: number
@@ -134,6 +135,39 @@ export interface NodeErrorStats {
 export interface ErrorStatsResponse {
   nodes: NodeErrorStats[]
   score_base: number
+}
+
+export interface RecentErrorEvent {
+  id: number
+  node_id: string
+  error_type: ErrorType
+  started_at: string
+  ended_at: string | null
+  duration_minutes: number
+  ongoing: boolean
+  proxy_host: string | null
+  proxy_port: number | null
+  proxy_user: string | null
+}
+
+export interface RecentEventsResponse {
+  events: RecentErrorEvent[]
+}
+
+export interface ProxyStat {
+  proxy_key: string
+  proxy_display: string
+  proxy_host: string | null
+  proxy_user: string | null
+  node_count: number
+  total_errors: number
+  proxy_down_count: number
+  errors_by_type: Partial<Record<ErrorType, number>>
+}
+
+export interface ProxyStatsResponse {
+  proxies: ProxyStat[]
+  days: number
 }
 
 export interface RenewCandidate {
