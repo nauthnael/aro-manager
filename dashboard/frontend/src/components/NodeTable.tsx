@@ -94,12 +94,13 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
       col.accessor('node_id', {
         header: 'Hostname',
         cell: info => (
-          <button
-            onClick={() => navigate(`/nodes/${encodeURIComponent(info.getValue())}`)}
+          <a
+            href={`/nodes/${encodeURIComponent(info.getValue())}`}
+            onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(info.getValue())}`) }}
             className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
           >
             {info.getValue()}
-          </button>
+          </a>
         ),
       }),
       col.accessor('serial', {

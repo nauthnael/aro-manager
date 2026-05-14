@@ -28,7 +28,7 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center px-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">ARO Dashboard</h1>
+          <h1 className="text-2xl font-bold text-gray-800">💲 ARO Dashboard</h1>
           <p className="text-gray-500 text-sm mt-1">Quản lý 500 node từ một nơi</p>
         </div>
 
