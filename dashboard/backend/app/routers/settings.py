@@ -5,10 +5,10 @@ from app import models, schemas
 from app.auth import get_current_user
 from app.database import get_db
 from app.telegram import (
-    check_node_telegram_api,
-    check_telegram_api,
     get_node_telegram_health,
     get_telegram_health,
+    send_node_health_check,
+    send_primary_health_check,
     send_telegram_message,
 )
 
@@ -59,25 +59,26 @@ def telegram_health(_=Depends(get_current_user)):
 
 
 @router.post("/settings/telegram-health/check")
-def telegram_health_check(_=Depends(get_current_user)):
-    """Live-check dashboard bot via getMe and return fresh state."""
-    return check_telegram_api()
+def telegram_health_check(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Send 1 test message to tg_critical using dashboard bot. Returns real rate-limit state."""
+    row = _get_or_create_settings(db)
+    return send_primary_health_check(row.tg_critical or "")
 
 
 # --- Node bot health (secondary) ---
 
 @router.get("/settings/telegram-health/node")
 def telegram_health_node(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Return cached health state for the node bot (no live API call)."""
+    """Return cached health state for the node bot (no API call)."""
     row = _get_or_create_settings(db)
     return get_node_telegram_health(row.node_tg_bot_token or "")
 
 
 @router.post("/settings/telegram-health/check/node")
 def telegram_health_check_node(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Live-check node bot via getMe and return fresh state."""
+    """Send 1 test message to tg_critical using node bot. Returns real rate-limit state."""
     row = _get_or_create_settings(db)
-    return check_node_telegram_api(row.node_tg_bot_token or "")
+    return send_node_health_check(row.node_tg_bot_token or "", row.tg_critical or "")
 
 
 # --- Tele broadcast (tắt/bật Telegram trên tất cả nodes) ---
