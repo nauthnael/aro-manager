@@ -89,7 +89,7 @@ export type ErrorType = 'vps_offline' | 'aro_offline' | 'no_internet' | 'unbound
 export const ERROR_LABELS: Record<ErrorType, string> = {
   vps_offline: 'VPS Offline',
   aro_offline:  'ARO Offline',
-  no_internet:  'No Internet',
+  no_internet:  'ARO No Internet',
   unbound:      'Unbound',
   proxy_fail:   'Proxy Fail',
 }

@@ -1936,7 +1936,11 @@ report_to_dashboard() {
 
     local tray_state; tray_state=$(get_aro_tray_state)
     local proxy_status="false"
-    check_proxy_health > /dev/null 2>&1 && proxy_status="true"
+    if check_proxy_health > /dev/null 2>&1; then
+        # Also require real proxy check (SOCKS5+credentials) to have passed recently
+        local real_ok; real_ok=$(state_get "real_proxy_ok" "true")
+        [[ "$real_ok" == "true" ]] && proxy_status="true"
+    fi
 
     local base_url="${DASHBOARD_URL%/}"
     local node_id="$HOSTNAME"
@@ -2208,6 +2212,7 @@ check_real_proxy() {
 
     if [[ -z "$exit_ip" ]]; then
         watchdog_log "ERROR: Real proxy check FAILED — cannot reach ${PROXY_HOST}:${PROXY_PORT}"
+        state_set "real_proxy_ok" "false"
         send_notify_proxy_down "proxy server unreachable or credentials rejected" || true
         return 1
     fi
@@ -2216,6 +2221,7 @@ check_real_proxy() {
         watchdog_log "Real proxy check OK — exit IP: ${exit_ip}${_last_known_exit_ip:+ (was: $_last_known_exit_ip)}"
         _last_known_exit_ip="$exit_ip"
     fi
+    state_set "real_proxy_ok" "true"
     return 0
 }
 

@@ -20,7 +20,7 @@ SCORE_RULES: dict[str, dict] = {
 ERROR_LABELS = {
     "vps_offline": "VPS Offline",
     "aro_offline":  "ARO Offline",
-    "no_internet":  "No Internet",
+    "no_internet":  "ARO No Internet",
     "unbound":      "Unbound",
     "proxy_fail":   "Proxy Fail",
 }
