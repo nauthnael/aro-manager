@@ -34,6 +34,7 @@ export default function Dashboard() {
   const [noPointsYesterday, setNoPointsYesterday] = useState(false)
   const [noPointsAvg, setNoPointsAvg] = useState(false)
   const [excludeNewNodes, setExcludeNewNodes] = useState(false)
+  const [page, setPage] = useState(1)
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
@@ -41,9 +42,11 @@ export default function Dashboard() {
   if (noPointsYesterday) params.set('no_points_yesterday', 'true')
   if (noPointsAvg)       params.set('no_points_avg', 'true')
   if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
+  params.set('page', String(page))
+  params.set('page_size', '50')
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes],
+    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
@@ -127,6 +130,7 @@ export default function Dashboard() {
     setNoPointsAvg(false)
     setExcludeNewNodes(false)
     setSelectedIds(new Set())
+    setPage(1)
   }
 
   const handleSearch = (v: string) => {
@@ -135,6 +139,7 @@ export default function Dashboard() {
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
     setSelectedIds(new Set())
+    setPage(1)
   }
 
   const selectedCount = selectedIds.size
@@ -218,7 +223,7 @@ export default function Dashboard() {
             </button>
           )}
           <span className="text-sm text-gray-400 whitespace-nowrap">
-            {visibleNodes.length} / {data?.total ?? 0} nodes
+            {data?.total_filtered ?? 0} / {data?.total ?? 0} nodes
           </span>
         </div>
 
@@ -234,6 +239,7 @@ export default function Dashboard() {
                 setStatusFilter(null)
                 setSearch('')
                 setSelectedIds(new Set())
+                setPage(1)
               }}
               className="accent-orange-500"
             />
@@ -249,6 +255,7 @@ export default function Dashboard() {
                 setStatusFilter(null)
                 setSearch('')
                 setSelectedIds(new Set())
+                setPage(1)
               }}
               className="accent-red-500"
             />
@@ -259,13 +266,44 @@ export default function Dashboard() {
               <input
                 type="checkbox"
                 checked={excludeNewNodes}
-                onChange={e => setExcludeNewNodes(e.target.checked)}
+                onChange={e => { setExcludeNewNodes(e.target.checked); setPage(1) }}
                 className="accent-gray-500"
               />
               Chỉ node hoạt động trên 1 ngày
             </label>
           )}
         </div>
+
+        {/* Pagination */}
+        {data && data.total_pages > 1 && (
+          <div className="flex items-center gap-3 justify-between flex-wrap">
+            <span className="text-sm text-gray-500">
+              Trang {data.page} / {data.total_pages} · {data.total_filtered} nodes
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page <= 1}
+                className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              >«</button>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              >← Trước</button>
+              <button
+                onClick={() => setPage(p => Math.min(data.total_pages, p + 1))}
+                disabled={page >= data.total_pages}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              >Tiếp →</button>
+              <button
+                onClick={() => setPage(data.total_pages)}
+                disabled={page >= data.total_pages}
+                className="px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              >»</button>
+            </div>
+          </div>
+        )}
 
         {/* Bulk action bar */}
         {selectedCount > 0 && (

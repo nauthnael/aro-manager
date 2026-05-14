@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -43,6 +44,37 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
     )
 
 
+def _compute_scores(db: Session, node_ids: list) -> dict:
+    """Compute total and avg reward score for given node IDs from NodeHistory."""
+    if not node_ids:
+        return {}
+    daily_max_sq = (
+        db.query(
+            models.NodeHistory.node_id.label('node_id'),
+            func.date(models.NodeHistory.timestamp).label('day'),
+            func.max(models.NodeHistory.reward_today).label('daily_max'),
+        )
+        .filter(models.NodeHistory.node_id.in_(node_ids))
+        .group_by(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp))
+        .subquery()
+    )
+    rows = (
+        db.query(
+            daily_max_sq.c.node_id,
+            func.sum(daily_max_sq.c.daily_max).label('total'),
+            func.count(daily_max_sq.c.day).label('days'),
+        )
+        .group_by(daily_max_sq.c.node_id)
+        .all()
+    )
+    result = {}
+    for row in rows:
+        total = round(row.total, 2) if row.total is not None else None
+        avg = round(row.total / row.days, 2) if row.total is not None and row.days else None
+        result[row.node_id] = (total, avg)
+    return result
+
+
 @router.post("/auth/login", response_model=schemas.TokenResponse)
 def login(body: schemas.LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == body.username).first()
@@ -63,6 +95,8 @@ def list_nodes(
     no_points_yesterday: bool = Query(False),
     no_points_avg: bool = Query(False),
     exclude_new_nodes: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -70,31 +104,8 @@ def list_nodes(
     nodes = db.query(models.Node).all()
     statuses = {s.node_id: s for s in db.query(models.NodeStatus).all()}
 
-    daily_max_sq = (
-        db.query(
-            models.NodeHistory.node_id.label('node_id'),
-            func.date(models.NodeHistory.timestamp).label('day'),
-            func.max(models.NodeHistory.reward_today).label('daily_max'),
-        )
-        .group_by(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp))
-        .subquery()
-    )
-    score_rows = (
-        db.query(
-            daily_max_sq.c.node_id,
-            func.sum(daily_max_sq.c.daily_max).label('total'),
-            func.count(daily_max_sq.c.day).label('days'),
-        )
-        .group_by(daily_max_sq.c.node_id)
-        .all()
-    )
-    total_scores = {}
-    avg_scores = {}
-    for row in score_rows:
-        total_scores[row.node_id] = round(row.total, 2) if row.total is not None else None
-        avg_scores[row.node_id] = round(row.total / row.days, 2) if row.total is not None and row.days else None
-
-    all_out = [_node_out(n, statuses.get(n.node_id), now, total_scores.get(n.node_id), avg_scores.get(n.node_id)) for n in nodes]
+    # Build all_out WITHOUT scores (deferred to page level)
+    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None) for n in nodes]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
@@ -122,15 +133,37 @@ def list_nodes(
             n for n in filtered
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
+
+    # no_points_avg requires scores for all filtered nodes to apply the filter
     if no_points_avg:
-        filtered = [
-            n for n in filtered
-            if n.avg_score is not None and n.avg_score == 0
-        ]
+        scores = _compute_scores(db, [n.node_id for n in filtered])
+        for n in filtered:
+            pair = scores.get(n.node_id, (None, None))
+            n.total_score = pair[0]
+            n.avg_score = pair[1]
+        filtered = [n for n in filtered if n.avg_score is not None and n.avg_score == 0]
+
+    total_filtered = len(filtered)
+    total_pages = math.ceil(total_filtered / page_size) if total_filtered > 0 else 1
+
+    start = (page - 1) * page_size
+    paged = filtered[start:start + page_size]
+
+    # For normal (non-avg-filter) requests, compute scores only for the current page
+    if not no_points_avg:
+        scores = _compute_scores(db, [n.node_id for n in paged])
+        for n in paged:
+            pair = scores.get(n.node_id, (None, None))
+            n.total_score = pair[0]
+            n.avg_score = pair[1]
 
     return schemas.NodeListResponse(
-        nodes=filtered,
+        nodes=paged,
         total=len(nodes),
+        total_filtered=total_filtered,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
         online=online,
         offline=offline,
         no_internet=no_internet,

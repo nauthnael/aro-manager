@@ -83,6 +83,10 @@ class NodeStatusOut(BaseModel):
 class NodeListResponse(BaseModel):
     nodes: List[NodeStatusOut]
     total: int
+    total_filtered: int
+    page: int
+    page_size: int
+    total_pages: int
     online: int
     offline: int
     no_internet: int

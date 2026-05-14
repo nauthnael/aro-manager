@@ -22,6 +22,10 @@ export interface NodeStatus {
 export interface NodeListResponse {
   nodes: NodeStatus[]
   total: number
+  total_filtered: number
+  page: number
+  page_size: number
+  total_pages: number
   online: number
   offline: number
   no_internet: number
