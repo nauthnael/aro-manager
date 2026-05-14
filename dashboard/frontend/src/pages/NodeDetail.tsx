@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert } from 'lucide-react'
-import { formatDistanceToNow, format } from 'date-fns'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock } from 'lucide-react'
+import { formatDistanceToNow, format, parseISO } from 'date-fns'
+import { vi } from 'date-fns/locale'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
-import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType } from '../types'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -58,11 +59,30 @@ export default function NodeDetail() {
     enabled: !!nodeId,
   })
 
+  const { data: renewHistory } = useQuery<RenewHistoryResponse>({
+    queryKey: ['renew-history-node', nodeId],
+    queryFn: () => api.get(`/renew/history?node_id=${encodeURIComponent(nodeId!)}&page_size=5`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
   const saveNotes = useMutation({
     mutationFn: () => api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/notes`, { notes: notesValue }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['node', nodeId] })
       setEditingNotes(false)
+    },
+  })
+
+  const renewNode = useMutation({
+    mutationFn: () => api.post('/renew/trigger', { node_id: nodeId }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['renew-history-node', nodeId] })
+      qc.invalidateQueries({ queryKey: ['node', nodeId] })
+      alert(`Đã gửi lệnh renew đến ${nodeId}.\nNode sẽ thực thi khi báo cáo lần tiếp theo.`)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh renew.')
     },
   })
 
@@ -94,6 +114,23 @@ export default function NodeDetail() {
             <p className="text-xs text-gray-400 truncate">{node.account ?? '—'}</p>
           </div>
           <StatusBadge status={node.aro_status} isStale={node.is_stale} />
+          <button
+            onClick={() => {
+              if (!confirm(`Renew node ${node.node_id}?\n\nSerial hiện tại: ${node.serial ?? 'N/A'}\nThao tác này sẽ xóa và cài lại ARO Desktop.`)) return
+              renewNode.mutate()
+            }}
+            disabled={renewNode.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors whitespace-nowrap"
+            title="Renew: xóa và cài lại ARO Desktop"
+          >
+            <RotateCcw size={14} className={renewNode.isPending ? 'animate-spin' : ''} />
+            Renew
+            {(node.renew_count ?? 0) > 0 && (
+              <span className="bg-orange-400 text-white text-xs px-1.5 py-0.5 rounded-full font-bold">
+                {node.renew_count}×
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
@@ -344,6 +381,69 @@ export default function NodeDetail() {
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Màn hình VNC</h2>
           <ScreenshotPanel nodeId={node.node_id} />
         </div>
+
+        {/* Renew history */}
+        {renewHistory && renewHistory.total > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <RotateCcw size={15} className="text-orange-500" />
+              <h2 className="text-sm font-semibold text-gray-700">Lịch sử Renew</h2>
+              <span className="ml-auto text-xs text-gray-400">{renewHistory.total} lần</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">Thời gian</th>
+                    <th className="pb-2 pr-4 font-medium">Lần #</th>
+                    <th className="pb-2 pr-4 font-medium">Serial trước → sau</th>
+                    <th className="pb-2 pr-4 font-medium">Trạng thái</th>
+                    <th className="pb-2 font-medium">Theo dõi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renewHistory.logs.map(log => (
+                    <tr key={log.id} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5 pr-4 text-gray-600 font-mono whitespace-nowrap">
+                        {format(parseISO(log.renewed_at + 'Z'), 'dd/MM/yyyy HH:mm')}
+                      </td>
+                      <td className="py-1.5 pr-4 font-bold text-gray-700">#{log.renew_count}</td>
+                      <td className="py-1.5 pr-4 font-mono text-gray-600">
+                        {log.serial_before ?? '—'}
+                        {log.serial_after && log.serial_after !== log.serial_before && (
+                          <span className="text-green-600"> → {log.serial_after}</span>
+                        )}
+                        {log.serial_after && log.serial_after === log.serial_before && (
+                          <span className="text-gray-400"> (không đổi)</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {log.status === 'completed'
+                          ? <span className="text-green-600 font-medium">✓ Thành công</span>
+                          : log.status === 'failed'
+                          ? <span className="text-red-500 font-medium">✗ Thất bại</span>
+                          : <span className="text-amber-500 font-medium flex items-center gap-1"><Clock size={10} /> Đang chờ</span>
+                        }
+                      </td>
+                      <td className="py-1.5 text-gray-400">
+                        {log.monitored_at
+                          ? <span className="text-green-600" title={format(parseISO(log.monitored_at + 'Z'), 'HH:mm dd/MM')}>✓ Đã kiểm tra</span>
+                          : <span className="italic">Chờ 30 phút</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {node.needs_renew && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 text-xs text-orange-600">
+                <RotateCcw size={12} />
+                Node này đang có reward = 0 và uptime = 0 — cần renew.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Control */}
         <div className="bg-white rounded-xl shadow-sm p-5">
