@@ -46,6 +46,7 @@ class NodeReportResponse(BaseModel):
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
     daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
 
 
 # --- Command complete (node → backend) ---
@@ -121,6 +122,8 @@ class NodeDetailResponse(BaseModel):
     node: NodeStatusOut
     history: List[HistoryPoint]
     restart_events: List[RestartEventOut] = []
+    node_log_stale_restart_minutes: Optional[int] = None
+    global_log_stale_restart_minutes: int = 5
 
 
 class CommandOut(BaseModel):
@@ -168,6 +171,7 @@ class SettingsOut(BaseModel):
     periodic_restart_min: int
     periodic_restart_max: int
     daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
 
     class Config:
         from_attributes = True
@@ -182,6 +186,11 @@ class SettingsIn(BaseModel):
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
     daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
+
+
+class NodeSettingsIn(BaseModel):
+    log_stale_restart_minutes: Optional[int] = None
 
 
 class TestTelegramRequest(BaseModel):
