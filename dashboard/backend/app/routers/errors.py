@@ -15,9 +15,10 @@ def _proxy_key(node: models.Node):
     """Return (unique_key, display_label) for a node's proxy."""
     if not node.proxy_host:
         return "no-proxy", "No Proxy"
+    port = node.proxy_port or 0
     if node.proxy_user:
-        return f"{node.proxy_host}:{node.proxy_user}", f"{node.proxy_host} ({node.proxy_user})"
-    return f"{node.proxy_host}:{node.proxy_port or 0}", f"{node.proxy_host}:{node.proxy_port or ''}"
+        return f"{node.proxy_host}:{port}:{node.proxy_user}", f"{node.proxy_host}:{port} ({node.proxy_user})"
+    return f"{node.proxy_host}:{port}", f"{node.proxy_host}:{port}"
 
 
 @router.get("/recent-events")
