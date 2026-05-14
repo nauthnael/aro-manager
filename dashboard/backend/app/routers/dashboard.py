@@ -116,7 +116,7 @@ def list_nodes(
     filtered = all_out
     if search:
         q = search.lower()
-        filtered = [n for n in filtered if q in (n.node_id or "").lower() or q in (n.account or "").lower()]
+        filtered = [n for n in filtered if q in (n.node_id or "").lower() or q in (n.account or "").lower() or q in (n.serial or "").lower()]
     if status_filter == "stale":
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter:
