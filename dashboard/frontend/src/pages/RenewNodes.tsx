@@ -161,11 +161,20 @@ export default function RenewNodes() {
     })
   }
 
-  const selectAll = () => {
-    const all = (candidates?.nodes ?? [])
-      .filter(n => !n.cooldown_until)
-      .map(n => n.node_id)
-    setSelectedIds(new Set(all))
+  const selectableNodes = (candidates?.nodes ?? []).filter(n => !n.cooldown_until)
+  const allSelected = selectableNodes.length > 0 && selectableNodes.every(n => selectedIds.has(n.node_id))
+  const someSelected = selectableNodes.some(n => selectedIds.has(n.node_id))
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      const next = new Set(selectedIds)
+      selectableNodes.forEach(n => next.delete(n.node_id))
+      setSelectedIds(next)
+    } else {
+      const next = new Set(selectedIds)
+      selectableNodes.forEach(n => next.add(n.node_id))
+      setSelectedIds(next)
+    }
   }
 
   const nodes = candidates?.nodes ?? []
@@ -262,37 +271,33 @@ export default function RenewNodes() {
                 </select>
               </div>
 
-              {nodes.length > 0 && (
+              {selectedCount > 0 && (
                 <>
                   <div className="h-4 w-px bg-gray-200" />
-                  <button onClick={selectAll} className="text-xs text-blue-600 hover:underline">
-                    Chọn tất cả ({nodes.filter(n => !n.cooldown_until).length})
+                  <span className="text-xs text-gray-500">Đã chọn {selectedCount} node</span>
+                  <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                    Bỏ chọn
                   </button>
-                  {selectedCount > 0 && (
-                    <>
-                      <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:underline">
-                        Bỏ chọn
-                      </button>
-                      <button
-                        onClick={handleBulkRenew}
-                        disabled={renewBulk.isPending}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors"
-                      >
-                        <RotateCcw size={13} />
-                        Bulk Renew ({selectedCount} node)
-                      </button>
-                      <button
-                        onClick={handleBulkUpdate}
-                        disabled={updateBulk.isPending}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm rounded-lg font-medium transition-colors"
-                      >
-                        <Download size={13} />
-                        Bulk Cập nhật Script ({selectedCount} node)
-                      </button>
-                    </>
-                  )}
+                  <div className="h-4 w-px bg-gray-200" />
+                  <button
+                    onClick={handleBulkRenew}
+                    disabled={renewBulk.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors"
+                  >
+                    <RotateCcw size={13} />
+                    Bulk Renew ({selectedCount} node)
+                  </button>
+                  <button
+                    onClick={handleBulkUpdate}
+                    disabled={updateBulk.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm rounded-lg font-medium transition-colors"
+                  >
+                    <Download size={13} />
+                    Bulk Cập nhật Script ({selectedCount} node)
+                  </button>
                 </>
               )}
+
             </div>
 
             {/* Table */}
@@ -309,7 +314,16 @@ export default function RenewNodes() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th className="w-8 px-3 py-2.5"></th>
+                      <th className="w-8 px-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          ref={el => { if (el) el.indeterminate = someSelected && !allSelected }}
+                          onChange={toggleSelectAll}
+                          disabled={selectableNodes.length === 0}
+                          className="rounded border-gray-300 accent-orange-500 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial</th>
