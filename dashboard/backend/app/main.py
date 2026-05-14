@@ -46,6 +46,8 @@ def migrate_db():
         "ALTER TABLE nodes ADD COLUMN proxy_user VARCHAR(255)",
         "ALTER TABLE app_settings ADD COLUMN log_stale_restart_minutes INTEGER DEFAULT 5",
         "ALTER TABLE nodes ADD COLUMN log_stale_restart_minutes INTEGER",
+        "ALTER TABLE app_settings ADD COLUMN node_tg_bot_token VARCHAR(200) DEFAULT ''",
+        "ALTER TABLE app_settings ADD COLUMN nodes_tg_enabled BOOLEAN DEFAULT TRUE",
     ]
     for sql in ddl_migrations:
         try:
