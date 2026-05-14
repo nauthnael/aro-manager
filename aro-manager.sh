@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.7"
+SCRIPT_VERSION="3.7.8"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1907,6 +1907,18 @@ print(json.dumps({'result': d, 'success': True}))
             fi
             rm -f "$deb_path"
             return  # Đã gửi complete phía trên, không gửi lại
+            ;;
+        tele_off)
+            watchdog_log "Dashboard: disabling Telegram notifications"
+            TG_ENABLED=0
+            save_watchdog_config
+            result="Telegram notifications DISABLED on ${HOSTNAME}"
+            ;;
+        tele_on)
+            watchdog_log "Dashboard: enabling Telegram notifications"
+            TG_ENABLED=1
+            save_watchdog_config
+            result="Telegram notifications ENABLED on ${HOSTNAME}"
             ;;
         *)
             result="Unknown action: ${action}"
@@ -3935,13 +3947,19 @@ do_full_install() {
     if [[ -n "$token" ]]; then
         TG_BOT_TOKEN="$token"
     fi
-    
+
     if [[ -n "$chatid" ]]; then
         TG_CHAT_ID="$chatid"
     fi
-    
-    validate_telegram_credentials
-    
+
+    if [[ "${TG_ENABLED:-1}" == "0" ]]; then
+        TG_BOT_TOKEN=""
+        TG_CHAT_ID=""
+        log_info "Telegram notifications: DISABLED (--no-telegram)"
+    else
+        validate_telegram_credentials
+    fi
+
     echo ""
     log_info "Installation plan:"
     if [[ "$USE_PROXY" -eq 1 ]]; then
@@ -3950,7 +3968,11 @@ do_full_install() {
         echo "  • Proxy: DISABLED (no-proxy mode)"
     fi
     echo "  • CRD User: $CRD_USER"
-    echo "  • Telegram: $([ -n "$TG_BOT_TOKEN" ] && echo "Enabled" || echo "Disabled")"
+    if [[ "${TG_ENABLED:-1}" == "0" ]]; then
+        echo "  • Telegram: DISABLED"
+    else
+        echo "  • Telegram: $([ -n "$TG_BOT_TOKEN" ] && echo "Enabled" || echo "Disabled")"
+    fi
     echo ""
     
     read -p "Continue with full installation? [Y/n] " -n 1 -r
@@ -5274,11 +5296,13 @@ USAGE:
   $SCRIPT_NAME <command> [arguments]
 
 MAIN COMMANDS:
-  deploy <proxy> --ssh-key KEY [--vnc-pass PASS] [--crd] [--no-proxy]
-                      --no-proxy: deploy without SOCKS5 proxy (direct connection)
+  deploy <proxy> --ssh-key KEY [--vnc-pass PASS] [--crd] [--no-proxy] [--no-telegram]
+                      --no-proxy:     deploy without SOCKS5 proxy (direct connection)
+                      --no-telegram:  tắt Telegram notifications (bảo vệ bot token)
 
-  full-install [<proxy>] [--no-proxy] [--token TOKEN] [--chatid ID]
-                      --no-proxy: install without proxy (proxy string optional)
+  full-install [<proxy>] [--no-proxy] [--token TOKEN] [--chatid ID] [--no-telegram]
+                      --no-proxy:     install without proxy (proxy string optional)
+                      --no-telegram:  tắt Telegram notifications (bảo vệ bot token)
 
   setup vps [--ssh-key KEY]
                       Cài VPS cơ bản: user, swap, SSH, XFCE, firewall
@@ -5298,6 +5322,8 @@ MAIN COMMANDS:
   update              Cập nhật script: rebuild wrapper + restart toàn bộ services
   update --watchdog-only
                       Chỉ reload watchdog (ARO giữ nguyên, không mất uptime)
+  tele-off            Tắt Telegram notifications trên node này
+  tele-on             Bật lại Telegram notifications trên node này
   report              Send daily report to Telegram immediately
   test-telegram       Gửi tin nhắn Telegram thử để kiểm tra kết nối
   dashboard [status]  Xem trạng thái cấu hình dashboard
@@ -5327,6 +5353,13 @@ EXAMPLES:
 
   # Full install không proxy
   sudo bash $SCRIPT_NAME full-install --no-proxy --token "123:ABC..." --chatid "987"
+
+  # Install không có Telegram (bảo vệ bot token khỏi rate limit)
+  sudo bash $SCRIPT_NAME full-install "proxy.com:1234:user:pass" --no-telegram
+
+  # Tắt/bật Telegram trên node hiện tại
+  sudo bash $SCRIPT_NAME tele-off
+  sudo bash $SCRIPT_NAME tele-on
 
   # Check status
   sudo bash $SCRIPT_NAME status
@@ -5409,12 +5442,13 @@ main() {
 
             while [[ $# -gt 0 ]]; do
                 case "$1" in
-                    --vnc-pass) VNC_PASS="$2";       has_vnc_pass=1; shift 2 ;;
-                    --crd)      REMOTE_MODE="crd";   has_crd=1;      shift   ;;
-                    --ssh-key)  UBUNTU_SSH_KEY="$2";                 shift 2 ;;
-                    --token)    TG_BOT_TOKEN="$2";                   shift 2 ;;
-                    --chatid)   TG_CHAT_ID="$2";                     shift 2 ;;
-                    --no-proxy) USE_PROXY=0;                         shift   ;;
+                    --vnc-pass)     VNC_PASS="$2";       has_vnc_pass=1; shift 2 ;;
+                    --crd)          REMOTE_MODE="crd";   has_crd=1;      shift   ;;
+                    --ssh-key)      UBUNTU_SSH_KEY="$2";                 shift 2 ;;
+                    --token)        TG_BOT_TOKEN="$2";                   shift 2 ;;
+                    --chatid)       TG_CHAT_ID="$2";                     shift 2 ;;
+                    --no-proxy)     USE_PROXY=0;                         shift   ;;
+                    --no-telegram)  TG_ENABLED=0;                        shift   ;;
                     *) shift ;;
                 esac
             done
@@ -5463,6 +5497,10 @@ main() {
                         USE_PROXY=0
                         shift
                         ;;
+                    --no-telegram)
+                        TG_ENABLED=0
+                        shift
+                        ;;
                     *)
                         shift
                         ;;
@@ -5474,6 +5512,7 @@ main() {
                 echo ""
                 echo "Usage: $SCRIPT_NAME full-install <proxy> [--token TOKEN] [--chatid ID]"
                 echo "       $SCRIPT_NAME full-install --no-proxy [--token TOKEN] [--chatid ID]"
+                echo "       $SCRIPT_NAME full-install <proxy> --no-telegram"
                 echo ""
                 exit 1
             fi
