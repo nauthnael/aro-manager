@@ -125,6 +125,11 @@ def _sort_key(sort_by: str):
         return lambda n: n.total_score or 0
     if sort_by == 'avg_score':
         return lambda n: n.avg_score or 0
+    if sort_by == 'script_version':
+        def _semver(n):
+            parts = (n.script_version or '').split('.')
+            return [int(x) if x.isdigit() else 0 for x in parts] or [0]
+        return _semver
     return None
 
 
