@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.9"
+SCRIPT_VERSION="3.8.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -99,6 +99,7 @@ TG_ENABLED=1                       # 1 = bật Telegram notify, 0 = tắt hoàn 
 TG_BOT_TOKEN=""
 TG_CHAT_ID=""
 TG_RETRY_AFTER_FILE="/tmp/aro_tg_retry_after"  # Lưu timestamp hết hạn rate limit
+TG_NOTIFY_COOLDOWN_MINS=0          # Min phút giữa 2 tin nhắn bất kỳ (0 = không giới hạn)
 
 # Throttle states
 _last_proxy_down_notify=0
@@ -402,13 +403,27 @@ parse_proxy_string() {
 send_telegram() {
     local message="$1"
 
-    # Check kill switch
-    if [[ "${TG_ENABLED:-1}" == "0" ]]; then
+    # Check kill switch — đọc từ state file để có hiệu lực ngay (không cần restart watchdog)
+    if [[ "$(state_get 'tg_enabled' "${TG_ENABLED:-1}")" == "0" ]]; then
         return 0
     fi
 
     if [[ -z "$TG_BOT_TOKEN" ]] || [[ -z "$TG_CHAT_ID" ]]; then
         return 0
+    fi
+
+    # Per-node cooldown (nếu TG_NOTIFY_COOLDOWN_MINS > 0)
+    local _cooldown_mins; _cooldown_mins=$(state_get "tg_notify_cooldown_mins" "${TG_NOTIFY_COOLDOWN_MINS:-0}")
+    if [[ "$_cooldown_mins" =~ ^[0-9]+$ ]] && [[ "$_cooldown_mins" -gt 0 ]]; then
+        local _last_sent; _last_sent=$(state_get "tg_last_sent" "0")
+        local _now_cd; _now_cd=$(date +%s)
+        local _cooldown_secs=$(( _cooldown_mins * 60 ))
+        if (( _now_cd - _last_sent < _cooldown_secs )); then
+            local _remaining=$(( _cooldown_secs - (_now_cd - _last_sent) ))
+            watchdog_log "TG cooldown (${_cooldown_mins}m) — skipping (retry in ${_remaining}s)"
+            return 0
+        fi
+        state_set "tg_last_sent" "$_now_cd"
     fi
 
     # Check global rate limit backoff
@@ -622,6 +637,7 @@ TG_ENABLED=$TG_ENABLED
 TG_BOT_TOKEN="$TG_BOT_TOKEN"
 TG_CHAT_ID="$TG_CHAT_ID"
 TG_API_FALLBACK_URL="$TG_API_FALLBACK_URL"
+TG_NOTIFY_COOLDOWN_MINS=${TG_NOTIFY_COOLDOWN_MINS:-0}
 
 # === Timing ===
 CHECK_INTERVAL=$CHECK_INTERVAL
@@ -1913,12 +1929,14 @@ print(json.dumps({'result': d, 'success': True}))
             watchdog_log "Dashboard: disabling Telegram notifications"
             TG_ENABLED=0
             save_watchdog_config
+            state_set "tg_enabled" "0"   # Có hiệu lực ngay trong watchdog loop
             result="Telegram notifications DISABLED on ${HOSTNAME}"
             ;;
         tele_on)
             watchdog_log "Dashboard: enabling Telegram notifications"
             TG_ENABLED=1
             save_watchdog_config
+            state_set "tg_enabled" "1"   # Có hiệu lực ngay trong watchdog loop
             result="Telegram notifications ENABLED on ${HOSTNAME}"
             ;;
         set_tg_chatid)
@@ -2676,6 +2694,7 @@ watchdog_loop() {
         watchdog_log "State preserved: last_restart=$preserved_last_restart retry_count=$(state_get retry_count 0)"
     fi
     rm -f "$TG_RETRY_AFTER_FILE"   # Clear rate limit state on watchdog start
+    state_set "tg_enabled" "${TG_ENABLED:-1}"   # Sync state file từ config khi khởi động
     _unbound_last_log=0
 
     local last_daily_hour=-1
@@ -5596,8 +5615,8 @@ main() {
             load_configs
             TG_ENABLED=0
             save_watchdog_config
-            echo "✅ Telegram notifications DISABLED"
-            echo "   Watchdog will pick up the change on next check cycle."
+            state_set "tg_enabled" "0"   # Có hiệu lực ngay, không cần restart watchdog
+            echo "✅ Telegram notifications DISABLED (hiệu lực ngay lập tức)"
             echo "   Run './aro-manager.sh tele-on' to re-enable."
             ;;
 
@@ -5605,7 +5624,8 @@ main() {
             load_configs
             TG_ENABLED=1
             save_watchdog_config
-            echo "✅ Telegram notifications ENABLED"
+            state_set "tg_enabled" "1"   # Có hiệu lực ngay, không cần restart watchdog
+            echo "✅ Telegram notifications ENABLED (hiệu lực ngay lập tức)"
             echo "   Run './aro-manager.sh tele-off' to disable."
             ;;
 
