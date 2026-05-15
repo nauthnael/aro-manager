@@ -6,6 +6,7 @@ Backups stored in BACKUP_DIR (default /app/backups inside container).
 import logging
 import os
 import subprocess
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,12 +38,14 @@ def _parse_db_url():
 
 
 def create_backup() -> dict:
-    """Run pg_dump and save to BACKUP_DIR. Returns file info dict."""
+    """Run pg_dump, compress to ZIP, verify integrity, then delete raw SQL."""
     ensure_backup_dir()
     db_info = _parse_db_url()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"aro_backup_{timestamp}.sql"
-    filepath = BACKUP_DIR / filename
+    sql_name = f"aro_backup_{timestamp}.sql"
+    zip_name = f"aro_backup_{timestamp}.zip"
+    sql_path = BACKUP_DIR / sql_name
+    zip_path = BACKUP_DIR / zip_name
 
     env = os.environ.copy()
     env["PGPASSWORD"] = db_info["password"]
@@ -54,23 +57,47 @@ def create_backup() -> dict:
         "-U", db_info["user"],
         "-d", db_info["dbname"],
         "--no-password",
-        "-f", str(filepath),
+        "-f", str(sql_path),
     ]
 
     result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
+        sql_path.unlink(missing_ok=True)
         raise RuntimeError(f"pg_dump thất bại: {result.stderr.strip()}")
 
-    size = filepath.stat().st_size
-    logger.info("backup: created %s (%d bytes)", filename, size)
-    return {"filename": filename, "size": size, "created_at": datetime.utcnow()}
+    # Compress SQL → ZIP
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            zf.write(sql_path, arcname=sql_name)
+    except Exception as exc:
+        sql_path.unlink(missing_ok=True)
+        zip_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Nén file thất bại: {exc}")
+
+    # Verify ZIP integrity before accepting
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            bad = zf.testzip()
+            if bad is not None:
+                raise RuntimeError(f"File ZIP bị lỗi tại: {bad}")
+    except Exception as exc:
+        zip_path.unlink(missing_ok=True)
+        sql_path.unlink(missing_ok=True)
+        raise RuntimeError(f"Kiểm tra ZIP thất bại: {exc}")
+
+    # Only delete SQL after ZIP is verified
+    sql_path.unlink(missing_ok=True)
+
+    size = zip_path.stat().st_size
+    logger.info("backup: created %s (%d bytes)", zip_name, size)
+    return {"filename": zip_name, "size": size, "created_at": datetime.utcnow()}
 
 
 def list_backups() -> list[dict]:
     """Return list of backup files sorted newest first."""
     ensure_backup_dir()
     files = []
-    for f in BACKUP_DIR.glob("aro_backup_*.sql"):
+    for f in BACKUP_DIR.glob("aro_backup_*.zip"):
         stat = f.stat()
         files.append({
             "filename": f.name,
@@ -84,7 +111,7 @@ def list_backups() -> list[dict]:
 def delete_backup(filename: str) -> bool:
     """Delete a backup file by name. Returns True if deleted."""
     # Sanitize: only allow expected filename pattern
-    if not filename.startswith("aro_backup_") or not filename.endswith(".sql"):
+    if not filename.startswith("aro_backup_") or not filename.endswith(".zip"):
         return False
     filepath = BACKUP_DIR / filename
     if filepath.exists():

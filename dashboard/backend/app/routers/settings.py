@@ -237,20 +237,22 @@ def create_backup_endpoint(_=Depends(get_current_user)):
 
 @router.get("/settings/database/backups/{filename}/download")
 def download_backup(filename: str, _=Depends(get_current_user)):
-    if not filename.startswith("aro_backup_") or not filename.endswith(".sql"):
+    if not filename.startswith("aro_backup_") or not filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
     filepath = BACKUP_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File backup không tồn tại.")
     return FileResponse(
         path=str(filepath),
-        media_type="application/octet-stream",
+        media_type="application/zip",
         filename=filename,
     )
 
 
 @router.delete("/settings/database/backups/{filename}")
 def delete_backup_endpoint(filename: str, _=Depends(get_current_user)):
+    if not filename.startswith("aro_backup_") or not filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
     if not delete_backup(filename):
         raise HTTPException(status_code=404, detail="File backup không tồn tại.")
     return {"ok": True}
