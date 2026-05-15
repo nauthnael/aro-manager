@@ -430,30 +430,12 @@ def rename_node(
     if conflict:
         raise HTTPException(status_code=409, detail=f"Hostname '{new_id}' đã tồn tại.")
 
-    # Update node_id across all FK tables in one deferred-constraint transaction
-    child_tables = [
-        "node_status",
-        "node_history",
-        "node_error_log",
-        "node_daily_score",
-        "node_renew_log",
-        "node_restart_log",
-        "node_offline_log",
-        "node_account_history",
-        "commands",
-    ]
+    # ON UPDATE CASCADE on all FK constraints handles child tables automatically
     try:
-        with db.begin_nested():
-            db.execute(text("SET CONSTRAINTS ALL DEFERRED"))
-            db.execute(
-                text("UPDATE nodes SET node_id = :new WHERE node_id = :old"),
-                {"new": new_id, "old": node_id},
-            )
-            for table in child_tables:
-                db.execute(
-                    text(f"UPDATE {table} SET node_id = :new WHERE node_id = :old"),
-                    {"new": new_id, "old": node_id},
-                )
+        db.execute(
+            text("UPDATE nodes SET node_id = :new WHERE node_id = :old"),
+            {"new": new_id, "old": node_id},
+        )
         db.commit()
     except Exception as exc:
         db.rollback()

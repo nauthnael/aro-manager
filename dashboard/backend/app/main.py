@@ -64,6 +64,25 @@ def migrate_db():
             country_code VARCHAR(5) NOT NULL,
             cached_at TIMESTAMP DEFAULT NOW()
         )""",
+        # Add ON UPDATE CASCADE to all node_id FK constraints so hostname rename cascades automatically
+        "ALTER TABLE node_status DROP CONSTRAINT IF EXISTS node_status_node_id_fkey",
+        "ALTER TABLE node_status ADD CONSTRAINT node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_history DROP CONSTRAINT IF EXISTS node_history_node_id_fkey",
+        "ALTER TABLE node_history ADD CONSTRAINT node_history_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_error_log DROP CONSTRAINT IF EXISTS node_error_log_node_id_fkey",
+        "ALTER TABLE node_error_log ADD CONSTRAINT node_error_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_daily_score DROP CONSTRAINT IF EXISTS node_daily_score_node_id_fkey",
+        "ALTER TABLE node_daily_score ADD CONSTRAINT node_daily_score_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_renew_log DROP CONSTRAINT IF EXISTS node_renew_log_node_id_fkey",
+        "ALTER TABLE node_renew_log ADD CONSTRAINT node_renew_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_restart_log DROP CONSTRAINT IF EXISTS node_restart_log_node_id_fkey",
+        "ALTER TABLE node_restart_log ADD CONSTRAINT node_restart_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_offline_log DROP CONSTRAINT IF EXISTS node_offline_log_node_id_fkey",
+        "ALTER TABLE node_offline_log ADD CONSTRAINT node_offline_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_account_history DROP CONSTRAINT IF EXISTS node_account_history_node_id_fkey",
+        "ALTER TABLE node_account_history ADD CONSTRAINT node_account_history_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE commands DROP CONSTRAINT IF EXISTS commands_node_id_fkey",
+        "ALTER TABLE commands ADD CONSTRAINT commands_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
     ]
     for sql in ddl_migrations:
         try:
