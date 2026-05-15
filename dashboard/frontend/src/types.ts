@@ -194,7 +194,7 @@ export interface RenewCandidate {
   account: string | null
   serial: string | null
   aro_status: string | null
-  reward_yesterday: number | null
+  avg_score: number | null
   uptime_ratio: number | null
   last_seen: string | null
   is_stale: boolean

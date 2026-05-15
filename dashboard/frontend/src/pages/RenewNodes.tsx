@@ -58,14 +58,18 @@ export default function RenewNodes() {
   const [tab, setTab] = useState<Tab>('candidates')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [minHistoryDays, setMinHistoryDays] = useState(0)
+  const [filterAvgScore, setFilterAvgScore] = useState(true)
+  const [filterUptime, setFilterUptime] = useState(false)
   const [historyPage, setHistoryPage] = useState(1)
   const [historyNodeFilter, setHistoryNodeFilter] = useState('')
 
   const candidateParams = new URLSearchParams()
   if (minHistoryDays > 0) candidateParams.set('min_history_days', String(minHistoryDays))
+  candidateParams.set('filter_avg_score', String(filterAvgScore))
+  candidateParams.set('filter_uptime', String(filterUptime))
 
   const { data: candidates, isLoading, refetch, isFetching } = useQuery<RenewCandidatesResponse>({
-    queryKey: ['renew-candidates', minHistoryDays],
+    queryKey: ['renew-candidates', minHistoryDays, filterAvgScore, filterUptime],
     queryFn: () => api.get(`/renew/candidates?${candidateParams}`).then(r => r.data),
     refetchInterval: 60_000,
   })
@@ -200,7 +204,7 @@ export default function RenewNodes() {
                 Renew Node
               </h1>
               <p className="text-xs text-gray-400">
-                Nodes có reward_yesterday = 0 và uptime = 0
+                Lọc node theo TB điểm/ngày và uptime
               </p>
             </div>
           </div>
@@ -256,7 +260,32 @@ export default function RenewNodes() {
           <div className="space-y-3">
             {/* Toolbar */}
             <div className="flex items-center gap-3 flex-wrap">
-              {/* Filter option */}
+              {/* Condition checkboxes */}
+              <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+                <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Điều kiện:</span>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filterAvgScore}
+                    onChange={e => { setFilterAvgScore(e.target.checked); setSelectedIds(new Set()) }}
+                    className="accent-orange-500 cursor-pointer"
+                  />
+                  <span className="text-xs text-gray-700 whitespace-nowrap">TB điểm/ngày = 0</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filterUptime}
+                    onChange={e => { setFilterUptime(e.target.checked); setSelectedIds(new Set()) }}
+                    className="accent-orange-500 cursor-pointer"
+                  />
+                  <span className="text-xs text-gray-700 whitespace-nowrap">Uptime = 0</span>
+                </label>
+              </div>
+
+              <div className="h-4 w-px bg-gray-200" />
+
+              {/* History days filter */}
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-gray-500 whitespace-nowrap">Bỏ qua node có lịch sử &lt;</span>
                 <select
@@ -329,7 +358,7 @@ export default function RenewNodes() {
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
-                      <th className="text-right px-3 py-2.5 font-semibold text-gray-600">Reward hôm qua</th>
+                      <th className="text-right px-3 py-2.5 font-semibold text-gray-600">TB điểm/ngày</th>
                       <th className="text-right px-3 py-2.5 font-semibold text-gray-600">Uptime</th>
                       <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Đã renew</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Lần cuối</th>
@@ -369,7 +398,7 @@ export default function RenewNodes() {
                           <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{node.serial ?? '—'}</td>
                           <td className="px-3 py-2.5"><StatusBadge status={node.aro_status} /></td>
                           <td className="px-3 py-2.5 text-right text-red-600 font-medium">
-                            {node.reward_yesterday ?? 0}
+                            {node.avg_score != null ? node.avg_score.toFixed(1) : '0.0'}
                           </td>
                           <td className="px-3 py-2.5 text-right text-red-600 font-medium">
                             {node.uptime_ratio != null ? `${(node.uptime_ratio * 100).toFixed(0)}%` : '—'}
@@ -434,7 +463,7 @@ export default function RenewNodes() {
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Lưu ý:</p>
               <ul className="list-disc list-inside space-y-0.5">
-                <li>Danh sách <strong>loại trừ node Unbound</strong> (Unbound thường do lỗi cấu hình, không phải do ARO).</li>
+                <li>Danh sách <strong>loại trừ node Unbound</strong>. Chọn điều kiện lọc bằng 2 checkbox phía trên.</li>
                 <li>Serial của mỗi node được lưu lại trước khi renew để tra cứu sau.</li>
                 <li>Cooldown <strong>4 giờ</strong> giữa các lần renew trên cùng 1 node.</li>
                 <li>Tối đa <strong>5 node</strong> renew cùng lúc trên toàn hệ thống.</li>

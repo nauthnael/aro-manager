@@ -321,7 +321,7 @@ class RenewCandidateOut(BaseModel):
     account: Optional[str] = None
     serial: Optional[str] = None
     aro_status: Optional[str] = None
-    reward_yesterday: Optional[float] = None
+    avg_score: Optional[float] = None
     uptime_ratio: Optional[float] = None
     last_seen: Optional[datetime] = None
     is_stale: bool

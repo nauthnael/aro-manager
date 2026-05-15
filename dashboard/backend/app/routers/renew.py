@@ -49,27 +49,41 @@ def _pending_renew_count(db: Session) -> int:
 @router.get("/renew/candidates", response_model=schemas.RenewCandidatesResponse)
 def get_renew_candidates(
     min_history_days: int = Query(0, ge=0, le=7),
+    filter_avg_score: bool = Query(True),
+    filter_uptime: bool = Query(False),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
-    """Return nodes where reward_yesterday=0 AND uptime_ratio=0, excluding Unbound. min_history_days=0 means no filter."""
+    """Return renew candidates based on selected filters, excluding Unbound nodes."""
     threshold_secs = settings.stale_threshold_secs
     now = datetime.utcnow()
 
-    rows = (
+    query = (
         db.query(models.Node, models.NodeStatus)
         .join(models.NodeStatus, models.Node.node_id == models.NodeStatus.node_id, isouter=True)
-        .filter(
-            models.NodeStatus.reward_yesterday == 0,
-            models.NodeStatus.uptime_ratio == 0,
-            models.NodeStatus.aro_status != "Unbound",
-        )
-        .order_by(models.Node.node_id)
-        .all()
+        .filter(models.NodeStatus.aro_status != "Unbound")
     )
+    if filter_uptime:
+        query = query.filter(models.NodeStatus.uptime_ratio == 0)
 
-    # Precompute distinct history day count per node (single query)
+    rows = query.order_by(models.Node.node_id).all()
     node_ids = [node.node_id for node, _ in rows]
+
+    # Precompute avg_score per node (avg of all NodeDailyScore entries)
+    avg_scores: dict = {}
+    if node_ids:
+        for row in (
+            db.query(
+                models.NodeDailyScore.node_id,
+                func.avg(models.NodeDailyScore.score).label("avg"),
+            )
+            .filter(models.NodeDailyScore.node_id.in_(node_ids))
+            .group_by(models.NodeDailyScore.node_id)
+            .all()
+        ):
+            avg_scores[row.node_id] = float(row.avg) if row.avg is not None else 0.0
+
+    # Precompute distinct history day count per node
     history_days: dict = {}
     if node_ids:
         for row in (
@@ -85,14 +99,21 @@ def get_renew_candidates(
 
     result: List[schemas.RenewCandidateOut] = []
     for node, status in rows:
+        node_avg = avg_scores.get(node.node_id, 0.0)
+
+        # Apply avg_score filter: skip nodes that have avg_score > 0
+        if filter_avg_score and node_avg > 0:
+            continue
+
+        # Apply history filter
+        if min_history_days > 0 and history_days.get(node.node_id, 0) < min_history_days:
+            continue
+
         is_stale = (
             status is None
             or status.last_seen is None
             or (now - status.last_seen).total_seconds() > threshold_secs
         )
-
-        if min_history_days > 0 and history_days.get(node.node_id, 0) < min_history_days:
-            continue
 
         renew_count = _get_renew_count(db, node.node_id)
         last_renew = _get_last_renew(db, node.node_id)
@@ -103,7 +124,7 @@ def get_renew_candidates(
             account=node.account,
             serial=node.serial,
             aro_status=status.aro_status if status else None,
-            reward_yesterday=status.reward_yesterday if status else None,
+            avg_score=node_avg,
             uptime_ratio=status.uptime_ratio if status else None,
             last_seen=status.last_seen if status else None,
             is_stale=is_stale,
