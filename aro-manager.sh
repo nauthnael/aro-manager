@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.0"
+SCRIPT_VERSION="3.8.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -88,7 +88,7 @@ TRAY_UNKNOWN_THRESHOLD_MINUTES=15  # tray=unknown >15m khi log fresh → restart
 CONNECTING_GRACE_SECS=600   # Sau launch, cho ARO 10 phút để connect trước khi coi là stuck
 CONNECTING_WAIT_SECS=600    # Chờ tối đa 10 phút cho ARO reconnect sau restart
 CONNECTING_POLL_INTERVAL=30 # Poll tray state mỗi 30s
-PROXY_RESTART_TIMEOUT_SECS=60 # Chờ tối đa 60s cho redsocks restart functional
+PROXY_RESTART_TIMEOUT_SECS=120 # Chờ tối đa 120s cho redsocks restart functional
 REDSOCKS_QUEUE_THRESHOLD=500  # recv-Q >500 bytes = redsocks backpressure, coi là hung
                              # (empirically: healthy redsocks thường <100)
 
@@ -2327,12 +2327,33 @@ check_real_proxy() {
 check_redsocks_functional() {
     local test_ip=""
     for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
-        test_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 5 "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
+        test_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 3 "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
         if [[ "$test_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             return 0
         fi
     done
     return 1
+}
+
+# ── Redsocks failure root-cause diagnosis ────────────────────────
+# Gọi sau khi check_redsocks_functional trả về 1.
+# Trả về: "dead" | "hung" | "iptables"
+#   dead    — port không listen (daemon crash/chưa start)
+#   hung    — recv-Q vượt threshold (daemon kẹt, không drain)
+#   iptables — daemon sống, recv-Q bình thường → iptables redirect bị lỗi
+diagnose_redsocks_failure() {
+    if ! ss -tlnp 2>/dev/null | grep -q ":${REDSOCKS_PORT} "; then
+        echo "dead"
+        return
+    fi
+    local recv_q
+    recv_q=$(ss -tlnp 2>/dev/null | grep "127.0.0.1:${REDSOCKS_PORT} " | awk '{print $2}' || echo "0")
+    recv_q="${recv_q:-0}"
+    if [[ "$recv_q" =~ ^[0-9]+$ ]] && [[ "$recv_q" -gt "$REDSOCKS_QUEUE_THRESHOLD" ]]; then
+        echo "hung"
+        return
+    fi
+    echo "iptables"
 }
 
 check_disconnect_alert() {
@@ -2374,68 +2395,85 @@ handle_stuck_connecting() {
 
     watchdog_log "ARO stuck NoInternet for ${stuck_mins}m — starting recovery"
 
-    # ── Bước 1: Test path thực sự của ARO (ubuntu traffic) ──────
     local tray_state; tray_state=$(get_aro_tray_state)
-    if ! check_redsocks_functional; then
-        # Redsocks transparent proxy bị broken (hung hoặc lỗi iptables)
-        watchdog_log "Transparent proxy BROKEN — redsocks issue"
-        send_notify_pre_restart "Transparent proxy broken (redsocks hung/iptables error)" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
-        kill_aro
-        
-        # Restart redsocks và poll đến khi functional hoặc timeout
-        systemctl restart redsocks-aro 2>/dev/null || true
-        local proxy_wait_start; proxy_wait_start=$(date +%s)
-        local redsocks_ok=false
-        
-        while true; do
-            local elapsed=$(( $(date +%s) - proxy_wait_start ))
-            if [[ "$elapsed" -ge "$PROXY_RESTART_TIMEOUT_SECS" ]]; then
-                break
-            fi
-            sleep 5
-            if check_redsocks_functional; then
-                redsocks_ok=true
-                break
-            fi
-        done
-        
-        if $redsocks_ok; then
-            watchdog_log "Redsocks recovered — launching ARO"
-            send_notify_proxy_recovered "stuck_connecting" || true
-            launch_aro
-            state_set "last_restart" "$(date +%s)"
-            _wait_for_aro_online "redsocks_recovered"
-        else
-            watchdog_log "Redsocks recovery FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
-            send_notify_proxy_dead || true
-            # ARO tắt, chờ can thiệp thủ công
-        fi
-        return 0
-    fi
 
-    # ── Bước 2: Redsocks functional nhưng ARO vẫn NoInternet ───
-    # Kiểm tra upstream proxy server (SOCKS5 target)
-    watchdog_log "Transparent proxy OK — checking upstream proxy server"
-    
+    # ── Bước 0: Check upstream proxy TRƯỚC ─────────────────────
+    # Tránh nhầm "redsocks broken" khi thực ra upstream mới là vấn đề.
+    watchdog_log "Step 0: checking upstream proxy server"
     if ! check_real_proxy 2>/dev/null; then
-        # Proxy server thực sự offline
         watchdog_log "Upstream proxy server DOWN — killing ARO to protect IP"
         send_notify_pre_restart "Upstream SOCKS5 proxy server unreachable" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
         kill_aro
         send_notify_proxy_down "proxy server unreachable" || true
         return 0
     fi
+    watchdog_log "Upstream proxy OK — checking transparent proxy path"
 
-    # ── Bước 3: Mạng OK hết nhưng ARO vẫn stuck ────────────────
-    # Có thể app gặp vấn đề nội bộ
-    watchdog_log "Network path OK but ARO still stuck — restarting ARO app"
-    send_notify_pre_restart "Network OK but ARO app stuck internally" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
+    # ── Bước 1: Test full path (ubuntu → iptables → redsocks → upstream) ──
+    if check_redsocks_functional; then
+        # Toàn bộ network path OK nhưng ARO vẫn stuck → vấn đề nội bộ app
+        watchdog_log "Network path OK but ARO still stuck — restarting ARO app"
+        send_notify_pre_restart "Network OK but ARO app stuck internally" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
+        kill_aro
+        sleep 3
+        launch_aro
+        state_set "last_restart" "$(date +%s)"
+        _wait_for_aro_online "proxy_ok_aro_restarted"
+        return 0
+    fi
+
+    # ── Bước 2: Redsocks path broken — diagnose chính xác nguyên nhân ──
+    local redsocks_failure; redsocks_failure=$(diagnose_redsocks_failure)
+    watchdog_log "Transparent proxy BROKEN — diagnosis: ${redsocks_failure}"
+
+    local notify_reason
+    case "$redsocks_failure" in
+        hung)
+            local recv_q; recv_q=$(ss -tlnp 2>/dev/null | grep "127.0.0.1:${REDSOCKS_PORT} " | awk '{print $2}' || echo "?")
+            notify_reason="Redsocks hung (recv-Q=${recv_q} > threshold=${REDSOCKS_QUEUE_THRESHOLD})"
+            ;;
+        dead)
+            notify_reason="Redsocks daemon dead (port ${REDSOCKS_PORT} not listening)"
+            ;;
+        iptables)
+            notify_reason="Redsocks iptables broken (daemon alive, redirect not working)"
+            ;;
+        *)
+            notify_reason="Transparent proxy broken (redsocks/${redsocks_failure})"
+            ;;
+    esac
+
+    send_notify_pre_restart "$notify_reason" "$tray_state" "$stuck_mins" "$(state_get retry_count 0)" || true
     kill_aro
-    sleep 3
-    launch_aro
-    state_set "last_restart" "$(date +%s)"
-    
-    _wait_for_aro_online "proxy_ok_aro_restarted"
+
+    # Restart redsocks-aro (re-applies iptables rules + resets daemon)
+    systemctl restart redsocks-aro 2>/dev/null || true
+    local proxy_wait_start; proxy_wait_start=$(date +%s)
+    local redsocks_ok=false
+
+    while true; do
+        local elapsed=$(( $(date +%s) - proxy_wait_start ))
+        if [[ "$elapsed" -ge "$PROXY_RESTART_TIMEOUT_SECS" ]]; then
+            break
+        fi
+        sleep 5
+        if check_redsocks_functional; then
+            redsocks_ok=true
+            break
+        fi
+    done
+
+    if $redsocks_ok; then
+        watchdog_log "Redsocks recovered — launching ARO"
+        send_notify_proxy_recovered "stuck_connecting" || true
+        launch_aro
+        state_set "last_restart" "$(date +%s)"
+        _wait_for_aro_online "redsocks_recovered"
+    else
+        watchdog_log "Redsocks recovery FAILED after ${PROXY_RESTART_TIMEOUT_SECS}s — ARO stays down"
+        send_notify_proxy_dead || true
+    fi
+    return 0
 }
 
 # Helper: chờ ARO Online (tray state), poll mỗi CONNECTING_POLL_INTERVAL
