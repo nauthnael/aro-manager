@@ -20,6 +20,7 @@ export interface NodeStatus {
   first_seen: string | null
   renew_count: number
   needs_renew: boolean
+  country_code: string | null
 }
 
 export interface NodeListResponse {

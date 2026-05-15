@@ -81,6 +81,7 @@ class NodeStatusOut(BaseModel):
     first_seen: Optional[datetime] = None
     renew_count: int = 0
     needs_renew: bool = False
+    country_code: Optional[str] = None
 
     class Config:
         from_attributes = True

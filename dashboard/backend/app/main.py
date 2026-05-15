@@ -16,6 +16,7 @@ from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
 from app.routers import renew as renew_router
+from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
 from app.telegram import enqueue_telegram_message, flush_telegram_queue
 
@@ -58,6 +59,11 @@ def migrate_db():
             last_seen TIMESTAMP NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS ix_node_account_history_node_ts ON node_account_history (node_id, first_seen)",
+        """CREATE TABLE IF NOT EXISTS ip_country_cache (
+            ip VARCHAR(50) PRIMARY KEY,
+            country_code VARCHAR(5) NOT NULL,
+            cached_at TIMESTAMP DEFAULT NOW()
+        )""",
     ]
     for sql in ddl_migrations:
         try:
@@ -128,6 +134,8 @@ def init_db():
         if not db.query(models.AppSettings).filter(models.AppSettings.id == 1).first():
             db.add(models.AppSettings(id=1))
             db.commit()
+
+        warm_ip_cache(db)
     finally:
         db.close()
 
@@ -328,6 +336,14 @@ def check_renew_monitoring():
         db.close()
 
 
+def refresh_ip_countries_task():
+    db = SessionLocal()
+    try:
+        refresh_ip_countries(db)
+    finally:
+        db.close()
+
+
 def cleanup_old_data():
     db = SessionLocal()
     try:
@@ -366,6 +382,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
     scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
+    scheduler.add_job(refresh_ip_countries_task, "interval", minutes=10)
     scheduler.start()
     yield
     scheduler.shutdown()

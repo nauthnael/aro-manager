@@ -37,6 +37,9 @@ const col = createColumnHelper<NodeStatus>()
 
 const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 
+const toFlagEmoji = (cc: string) =>
+  cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
+
 export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -107,12 +110,12 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
           />
         ),
       }),
-      col.accessor(row => ({ id: row.node_id, needs_renew: row.needs_renew }), {
+      col.accessor(row => ({ id: row.node_id, needs_renew: row.needs_renew, country_code: row.country_code }), {
         id: 'node_id',
         header: 'Hostname',
         sortingFn: (a, b) => a.original.node_id.localeCompare(b.original.node_id),
         cell: info => {
-          const { id, needs_renew } = info.getValue()
+          const { id, needs_renew, country_code } = info.getValue()
           return (
             <span className="flex items-center gap-1.5">
               <a
@@ -122,6 +125,11 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
               >
                 {id}
               </a>
+              {country_code && (
+                <span title={country_code} className="text-base leading-none shrink-0">
+                  {toFlagEmoji(country_code)}
+                </span>
+              )}
               {needs_renew && (
                 <span title="Cần renew: reward=0 và uptime=0" className="text-orange-500 shrink-0">
                   <RotateCcw size={11} />

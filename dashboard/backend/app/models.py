@@ -159,6 +159,14 @@ class NodeAccountHistory(Base):
     __table_args__ = (Index("ix_node_account_history_node_ts", "node_id", "first_seen"),)
 
 
+class IPCountryCache(Base):
+    __tablename__ = "ip_country_cache"
+
+    ip = Column(String(50), primary_key=True)
+    country_code = Column(String(5), nullable=False)
+    cached_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Command(Base):
     __tablename__ = "commands"
 

@@ -10,6 +10,7 @@ from app import models, schemas
 from app.auth import create_token, get_current_user, verify_password
 from app.config import settings
 from app.database import get_db
+from app.ip_country import get_node_country
 
 router = APIRouter()
 
@@ -50,6 +51,10 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         first_seen=node.created_at,
         renew_count=renew_count,
         needs_renew=needs_renew,
+        country_code=get_node_country(
+            node.proxy_host,
+            status.public_ip if status else None,
+        ),
     )
 
 
