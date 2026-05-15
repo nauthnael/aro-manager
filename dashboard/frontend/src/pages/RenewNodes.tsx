@@ -5,7 +5,7 @@ import { ArrowLeft, RefreshCw, RotateCcw, History, AlertTriangle, Clock, Downloa
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import api from '../api/client'
-import { RenewCandidatesResponse, RenewHistoryResponse, RenewCandidate } from '../types'
+import { RenewCandidatesResponse, RenewHistoryResponse, RenewCandidate, RenewLog } from '../types'
 
 type Tab = 'candidates' | 'history'
 
@@ -479,7 +479,8 @@ export default function RenewNodes() {
                       <tr>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Thời gian</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
-                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
+                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account trước renew</th>
+                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account hiện tại</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial trước → sau</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Lần #</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
@@ -500,7 +501,24 @@ export default function RenewNodes() {
                               {log.node_id}
                             </button>
                           </td>
-                          <td className="px-3 py-2.5 text-xs text-gray-500">{log.account ?? '—'}</td>
+                          <td className="px-3 py-2.5 text-xs">
+                            {log.account_before ? (
+                              <span className="text-gray-700 font-medium">{log.account_before}</span>
+                            ) : (
+                              <span className="text-gray-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs">
+                            {log.account ? (
+                              log.account !== log.account_before ? (
+                                <span className="text-green-600 font-medium">{log.account}</span>
+                              ) : (
+                                <span className="text-gray-400">{log.account}</span>
+                              )
+                            ) : (
+                              <span className="text-red-400 italic">N/A</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2.5 font-mono text-xs">
                             {log.serial_before ? (
                               <span className="text-gray-600">{log.serial_before}</span>

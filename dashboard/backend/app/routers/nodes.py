@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from typing import List
 
 from app import models, schemas
+from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 
@@ -54,6 +56,27 @@ def _close_error(db: Session, node_id: str, error_type: str, now: datetime):
     if log:
         log.ended_at = now
         log.duration_minutes = max(0, int((now - log.started_at).total_seconds() / 60))
+
+
+def _track_account_history(db: Session, node_id: str, new_account: str, now: datetime):
+    """Create or update NodeAccountHistory when account value changes or is first seen."""
+    if not new_account:
+        return
+    latest = (
+        db.query(models.NodeAccountHistory)
+        .filter(models.NodeAccountHistory.node_id == node_id)
+        .order_by(models.NodeAccountHistory.first_seen.desc())
+        .first()
+    )
+    if latest is None or latest.account != new_account:
+        db.add(models.NodeAccountHistory(
+            node_id=node_id,
+            account=new_account,
+            first_seen=now,
+            last_seen=now,
+        ))
+    else:
+        latest.last_seen = now
 
 
 def _track_status_errors(
@@ -130,6 +153,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
 
     _maybe_save_history(db, status, body)
     _track_status_errors(db, node_id, old_aro, old_proxy_ok, body.aro_status, body.proxy_ok, now)
+    _track_account_history(db, node_id, body.account, now)
 
     # If serial changed, update serial_after on the most recent renew log that hasn't tracked it yet
     if body.serial and old_serial and body.serial != old_serial:
@@ -237,3 +261,19 @@ def complete_command(
 
     db.commit()
     return {"ok": True}
+
+
+@router.get("/nodes/{node_id}/account-history", response_model=List[schemas.NodeAccountHistoryOut])
+def get_account_history(
+    node_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    return (
+        db.query(models.NodeAccountHistory)
+        .filter(models.NodeAccountHistory.node_id == node_id)
+        .order_by(models.NodeAccountHistory.first_seen.desc())
+        .limit(limit)
+        .all()
+    )

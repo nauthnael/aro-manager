@@ -296,6 +296,7 @@ class RenewLogOut(BaseModel):
     renewed_at: datetime
     serial_before: Optional[str] = None
     serial_after: Optional[str] = None
+    account_before: Optional[str] = None
     command_id: Optional[int] = None
     status: str
     renew_count: int
@@ -311,3 +312,14 @@ class RenewHistoryResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class NodeAccountHistoryOut(BaseModel):
+    id: int
+    node_id: str
+    account: str
+    first_seen: datetime
+    last_seen: datetime
+
+    class Config:
+        from_attributes = True

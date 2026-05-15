@@ -7,7 +7,7 @@ import { vi } from 'date-fns/locale'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
-import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse } from '../types'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -65,6 +65,13 @@ export default function NodeDetail() {
   const { data: renewHistory } = useQuery<RenewHistoryResponse>({
     queryKey: ['renew-history-node', nodeId],
     queryFn: () => api.get(`/renew/history?node_id=${encodeURIComponent(nodeId!)}&page_size=5`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
+  const { data: accountHistory } = useQuery<NodeAccountHistory[]>({
+    queryKey: ['account-history', nodeId],
+    queryFn: () => api.get(`/nodes/${encodeURIComponent(nodeId!)}/account-history?limit=20`).then(r => r.data),
     refetchInterval: 60_000,
     enabled: !!nodeId,
   })
@@ -520,6 +527,7 @@ export default function NodeDetail() {
                   <tr className="text-left text-gray-400 border-b border-gray-100">
                     <th className="pb-2 pr-4 font-medium">Thời gian</th>
                     <th className="pb-2 pr-4 font-medium">Lần #</th>
+                    <th className="pb-2 pr-4 font-medium">Account trước</th>
                     <th className="pb-2 pr-4 font-medium">Serial trước → sau</th>
                     <th className="pb-2 pr-4 font-medium">Trạng thái</th>
                     <th className="pb-2 font-medium">Theo dõi</th>
@@ -532,6 +540,9 @@ export default function NodeDetail() {
                         {format(parseISO(log.renewed_at + 'Z'), 'dd/MM/yyyy HH:mm')}
                       </td>
                       <td className="py-1.5 pr-4 font-bold text-gray-700">#{log.renew_count}</td>
+                      <td className="py-1.5 pr-4 font-mono text-gray-600">
+                        {log.account_before ?? <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="py-1.5 pr-4 font-mono text-gray-600">
                         {log.serial_before ?? '—'}
                         {log.serial_after && log.serial_after !== log.serial_before && (
@@ -566,6 +577,46 @@ export default function NodeDetail() {
                 Node này đang có reward = 0 và uptime = 0 — cần renew.
               </div>
             )}
+          </div>
+        )}
+
+        {/* Account History */}
+        {accountHistory && accountHistory.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-base">👤</span>
+              <h2 className="text-sm font-semibold text-gray-700">Lịch sử Account</h2>
+              <span className="ml-auto text-xs text-gray-400">{accountHistory.length} bản ghi</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">#</th>
+                    <th className="pb-2 pr-4 font-medium">Account</th>
+                    <th className="pb-2 pr-4 font-medium">Lần đầu gặp</th>
+                    <th className="pb-2 font-medium">Lần cuối gặp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountHistory.map((h, i) => (
+                    <tr key={h.id} className={`border-b border-gray-50 last:border-0 ${i === 0 ? 'font-semibold' : ''}`}>
+                      <td className="py-1.5 pr-4 text-gray-400">{i + 1}</td>
+                      <td className="py-1.5 pr-4 text-gray-800 font-mono">{h.account}</td>
+                      <td className="py-1.5 pr-4 text-gray-500 whitespace-nowrap">
+                        {format(parseISO(h.first_seen + 'Z'), 'dd/MM/yyyy HH:mm')}
+                      </td>
+                      <td className="py-1.5 text-gray-500 whitespace-nowrap">
+                        {i === 0
+                          ? <span className="text-green-600 font-medium">Hiện tại ({format(parseISO(h.last_seen + 'Z'), 'dd/MM HH:mm')})</span>
+                          : format(parseISO(h.last_seen + 'Z'), 'dd/MM/yyyy HH:mm')
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

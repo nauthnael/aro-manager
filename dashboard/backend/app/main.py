@@ -49,6 +49,15 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN node_tg_bot_token VARCHAR(200) DEFAULT ''",
         "ALTER TABLE app_settings ADD COLUMN nodes_tg_enabled BOOLEAN DEFAULT TRUE",
         "ALTER TABLE commands ADD COLUMN payload TEXT",
+        "ALTER TABLE node_renew_log ADD COLUMN account_before VARCHAR(255)",
+        """CREATE TABLE IF NOT EXISTS node_account_history (
+            id SERIAL PRIMARY KEY,
+            node_id VARCHAR(255) REFERENCES nodes(node_id) ON DELETE CASCADE,
+            account VARCHAR(255) NOT NULL,
+            first_seen TIMESTAMP NOT NULL,
+            last_seen TIMESTAMP NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_node_account_history_node_ts ON node_account_history (node_id, first_seen)",
     ]
     for sql in ddl_migrations:
         try:

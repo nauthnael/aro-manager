@@ -161,6 +161,7 @@ def trigger_renew(
     log = models.NodeRenewLog(
         node_id=body.node_id,
         serial_before=node.serial,
+        account_before=node.account,
         command_id=cmd.id,
         status="pending",
         renew_count=renew_count,
@@ -236,6 +237,7 @@ def bulk_renew(
         db.add(models.NodeRenewLog(
             node_id=node_id,
             serial_before=node.serial,
+            account_before=node.account,
             command_id=cmd.id,
             status="pending",
             renew_count=renew_count,

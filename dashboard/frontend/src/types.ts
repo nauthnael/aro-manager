@@ -199,6 +199,7 @@ export interface RenewLog {
   renewed_at: string
   serial_before: string | null
   serial_after: string | null
+  account_before: string | null
   command_id: number | null
   status: string
   renew_count: number
@@ -211,4 +212,12 @@ export interface RenewHistoryResponse {
   page: number
   page_size: number
   total_pages: number
+}
+
+export interface NodeAccountHistory {
+  id: number
+  node_id: string
+  account: string
+  first_seen: string
+  last_seen: string
 }

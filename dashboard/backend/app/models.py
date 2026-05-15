@@ -138,12 +138,25 @@ class NodeRenewLog(Base):
     renewed_at = Column(DateTime, default=datetime.utcnow, index=True)
     serial_before = Column(String(255), nullable=True)
     serial_after = Column(String(255), nullable=True)
+    account_before = Column(String(255), nullable=True)
     command_id = Column(Integer, nullable=True)
     status = Column(String(20), default="pending")  # pending | completed | failed
     renew_count = Column(Integer, default=1)
     monitored_at = Column(DateTime, nullable=True)
 
     __table_args__ = (Index("ix_node_renew_log_node_ts", "node_id", "renewed_at"),)
+
+
+class NodeAccountHistory(Base):
+    __tablename__ = "node_account_history"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
+    account = Column(String(255), nullable=False)
+    first_seen = Column(DateTime, nullable=False, index=True)
+    last_seen = Column(DateTime, nullable=False)
+
+    __table_args__ = (Index("ix_node_account_history_node_ts", "node_id", "first_seen"),)
 
 
 class Command(Base):
