@@ -74,6 +74,16 @@ def migrate_db():
         "UPDATE nodes SET serial = NULL WHERE UPPER(serial) = 'N/A'",
         "UPDATE nodes SET account = NULL WHERE UPPER(account) = 'N/A'",
         "DELETE FROM node_account_history WHERE UPPER(account) = 'N/A'",
+        # Backfill serial_after: if node serial already changed from serial_before,
+        # set serial_after = current node serial (covers rows where "N/A" was just cleared)
+        """UPDATE node_renew_log nrl
+           SET serial_after = n.serial
+           FROM nodes n
+           WHERE nrl.node_id = n.node_id
+             AND nrl.serial_after IS NULL
+             AND n.serial IS NOT NULL
+             AND nrl.serial_before IS NOT NULL
+             AND n.serial != nrl.serial_before""",
     ]
     for sql in cleanup_sqls:
         try:
