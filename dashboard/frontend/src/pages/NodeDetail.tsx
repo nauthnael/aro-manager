@@ -40,6 +40,9 @@ export default function NodeDetail() {
   const [staleOverride, setStaleOverride] = useState<string>('')
   const [proxyInput, setProxyInput] = useState('')
   const [proxyError, setProxyError] = useState<string | null>(null)
+  const [renamingNode, setRenamingNode] = useState(false)
+  const [renameInput, setRenameInput] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<NodeDetailResponse>({
     queryKey: ['node', nodeId],
@@ -102,6 +105,19 @@ export default function NodeDetail() {
     },
   })
 
+  const renameNode = useMutation({
+    mutationFn: (new_node_id: string) =>
+      api.post(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/rename`, { new_node_id }).then(r => r.data),
+    onSuccess: (data) => {
+      setRenamingNode(false)
+      setRenameError(null)
+      navigate(`/nodes/${encodeURIComponent(data.new_node_id)}`, { replace: true })
+    },
+    onError: (err: any) => {
+      setRenameError(err?.response?.data?.detail ?? 'Lỗi khi đổi hostname.')
+    },
+  })
+
   const renewNode = useMutation({
     mutationFn: () => api.post('/renew/trigger', { node_id: nodeId }).then(r => r.data),
     onSuccess: () => {
@@ -138,7 +154,48 @@ export default function NodeDetail() {
             <ArrowLeft size={18} />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold font-mono text-gray-800 truncate">{node.node_id}</h1>
+            {renamingNode ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={renameInput}
+                  onChange={e => { setRenameInput(e.target.value); setRenameError(null) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && renameInput.trim()) renameNode.mutate(renameInput.trim())
+                    if (e.key === 'Escape') { setRenamingNode(false); setRenameError(null) }
+                  }}
+                  className="font-mono text-sm font-bold border border-blue-400 rounded px-2 py-0.5 w-48 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder={node.node_id}
+                />
+                <button
+                  onClick={() => { if (renameInput.trim()) renameNode.mutate(renameInput.trim()) }}
+                  disabled={renameNode.isPending || !renameInput.trim()}
+                  className="p-1 text-green-600 hover:text-green-700 disabled:opacity-40"
+                  title="Lưu"
+                >
+                  <Check size={15} />
+                </button>
+                <button
+                  onClick={() => { setRenamingNode(false); setRenameError(null) }}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  title="Huỷ"
+                >
+                  <X size={15} />
+                </button>
+                {renameError && <span className="text-xs text-red-500">{renameError}</span>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-base font-bold font-mono text-gray-800 truncate">{node.node_id}</h1>
+                <button
+                  onClick={() => { setRenameInput(node.node_id); setRenamingNode(true) }}
+                  className="p-0.5 text-gray-300 hover:text-gray-500 shrink-0"
+                  title="Đổi hostname"
+                >
+                  <Pencil size={13} />
+                </button>
+              </div>
+            )}
             <p className="text-xs text-gray-400 truncate">{node.account ?? '—'}</p>
           </div>
           <StatusBadge status={node.aro_status} isStale={node.is_stale} />

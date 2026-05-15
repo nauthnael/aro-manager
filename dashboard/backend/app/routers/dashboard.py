@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -407,6 +407,59 @@ def update_node_settings(
         node.log_stale_restart_minutes = max(1, min(body.log_stale_restart_minutes, 60))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/dashboard/nodes/{node_id}/rename", response_model=schemas.RenameNodeResponse)
+def rename_node(
+    node_id: str,
+    body: schemas.RenameNodeRequest,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    new_id = body.new_node_id.strip()
+    if not new_id:
+        raise HTTPException(status_code=422, detail="Hostname mới không được để trống.")
+    if new_id == node_id:
+        raise HTTPException(status_code=422, detail="Hostname mới phải khác hostname hiện tại.")
+
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node không tồn tại.")
+
+    conflict = db.query(models.Node).filter(models.Node.node_id == new_id).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail=f"Hostname '{new_id}' đã tồn tại.")
+
+    # Update node_id across all FK tables in one deferred-constraint transaction
+    child_tables = [
+        "node_status",
+        "node_history",
+        "node_error_log",
+        "node_daily_score",
+        "node_renew_log",
+        "node_restart_log",
+        "node_offline_log",
+        "node_account_history",
+        "commands",
+    ]
+    try:
+        with db.begin_nested():
+            db.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+            db.execute(
+                text("UPDATE nodes SET node_id = :new WHERE node_id = :old"),
+                {"new": new_id, "old": node_id},
+            )
+            for table in child_tables:
+                db.execute(
+                    text(f"UPDATE {table} SET node_id = :new WHERE node_id = :old"),
+                    {"new": new_id, "old": node_id},
+                )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Lỗi khi đổi hostname: {exc}")
+
+    return schemas.RenameNodeResponse(ok=True, old_node_id=node_id, new_node_id=new_id)
 
 
 @router.get("/dashboard/accounts", response_model=List[schemas.AccountStatsOut])

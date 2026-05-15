@@ -152,6 +152,16 @@ class UpdateNotesRequest(BaseModel):
     notes: str
 
 
+class RenameNodeRequest(BaseModel):
+    new_node_id: str
+
+
+class RenameNodeResponse(BaseModel):
+    ok: bool
+    old_node_id: str
+    new_node_id: str
+
+
 class AccountStatsOut(BaseModel):
     account: str
     total: int
