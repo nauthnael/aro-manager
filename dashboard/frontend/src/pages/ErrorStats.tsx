@@ -181,7 +181,10 @@ function LiveFeed({ events }: { events: RecentErrorEvent[] }) {
 // ─── Module D: Proxy Stats ────────────────────────────────────────────────────
 type ProxySortKey = 'total_errors' | 'node_count' | 'proxy_down_count'
 
+const MAX_SHOWN_NODES = 3
+
 function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number }) {
+  const navigate = useNavigate()
   const [sortKey, setSortKey] = useState<ProxySortKey>('total_errors')
   const [showAll, setShowAll] = useState(false)
 
@@ -191,13 +194,16 @@ function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number
   )
   const display = showAll ? sorted : sorted.slice(0, 15)
 
-  function SortBtn({ k, label }: { k: ProxySortKey; label: string }) {
+  function SortBtn({ k, label, right = true }: { k: ProxySortKey; label: string; right?: boolean }) {
+    const active = sortKey === k
     return (
       <button
         onClick={() => setSortKey(k)}
-        className={`flex items-center gap-0.5 text-[11px] font-medium ${sortKey === k ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+        className={`inline-flex items-center gap-0.5 text-[11px] font-medium whitespace-nowrap
+          ${active ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'}
+          ${right ? 'justify-end w-full' : ''}`}
       >
-        {label}<ArrowUpDown size={10} />
+        {label}<ArrowUpDown size={10} className="shrink-0" />
       </button>
     )
   }
@@ -212,40 +218,63 @@ function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number
       </div>
 
       <div className="overflow-y-auto flex-1">
-        <table className="w-full text-xs">
+        <table className="w-full text-xs table-fixed">
+          <colgroup>
+            <col />
+            <col style={{ width: 52 }} />
+            <col style={{ width: 52 }} />
+          </colgroup>
           <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="text-left px-3 py-2 font-medium text-gray-500">Proxy</th>
-              <th className="px-2 py-2 text-right">
-                <SortBtn k="node_count" label="Nodes" />
+              <th className="text-left px-3 py-2 font-medium text-gray-500">
+                Proxy / Nodes
               </th>
-              <th className="px-2 py-2 text-right">
+              <th className="px-2 py-2">
                 <SortBtn k="total_errors" label="Lỗi" />
               </th>
-              <th className="px-2 py-2 text-right">
+              <th className="px-2 py-2">
                 <SortBtn k="proxy_down_count" label="P.Down" />
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {display.map(p => (
-              <tr key={p.proxy_key} className="hover:bg-gray-50">
-                <td className="px-3 py-1.5 font-mono max-w-[180px]">
-                  <span className="truncate block text-gray-700">{p.proxy_display}</span>
-                </td>
-                <td className="px-2 py-1.5 text-right text-gray-600">{p.node_count}</td>
-                <td className="px-2 py-1.5 text-right">
-                  <span className={p.total_errors > 0 ? 'font-semibold text-red-600' : 'text-green-500'}>
-                    {p.total_errors}
-                  </span>
-                </td>
-                <td className="px-2 py-1.5 text-right">
-                  <span className={p.proxy_down_count > 0 ? 'font-semibold text-red-600' : 'text-gray-400'}>
-                    {p.proxy_down_count || '—'}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {display.map(p => {
+              const visibleNodes = p.node_ids.slice(0, MAX_SHOWN_NODES)
+              const hiddenCount = p.node_ids.length - visibleNodes.length
+              return (
+                <tr key={p.proxy_key} className="hover:bg-gray-50 align-top">
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-[11px] text-gray-700 block leading-tight">
+                      {p.proxy_display}
+                    </span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {visibleNodes.map(nid => (
+                        <button
+                          key={nid}
+                          onClick={() => navigate(`/nodes/${encodeURIComponent(nid)}`)}
+                          className="px-1.5 py-0 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-mono text-[10px] leading-5 transition-colors"
+                        >
+                          {nid}
+                        </button>
+                      ))}
+                      {hiddenCount > 0 && (
+                        <span className="text-[10px] text-gray-400 leading-5">+{hiddenCount}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 text-right align-top">
+                    <span className={p.total_errors > 0 ? 'font-semibold text-red-600' : 'text-green-500'}>
+                      {p.total_errors}
+                    </span>
+                  </td>
+                  <td className="px-2 py-2 text-right align-top">
+                    <span className={p.proxy_down_count > 0 ? 'font-semibold text-red-600' : 'text-gray-400'}>
+                      {p.proxy_down_count || '—'}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
         {!showAll && sorted.length > 15 && (

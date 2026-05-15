@@ -163,6 +163,7 @@ export interface ProxyStat {
   proxy_host: string | null
   proxy_user: string | null
   node_count: number
+  node_ids: string[]
   total_errors: number
   proxy_down_count: number
   errors_by_type: Partial<Record<ErrorType, number>>

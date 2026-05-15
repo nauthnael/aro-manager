@@ -113,6 +113,7 @@ def get_proxy_stats(
                 "proxy_host": g["proxy_host"],
                 "proxy_user": g["proxy_user"],
                 "node_count": len(g["node_ids"]),
+                "node_ids": sorted(g["node_ids"]),
                 "total_errors": g["total_errors"],
                 "proxy_down_count": g["proxy_down_count"],
                 "errors_by_type": g["errors_by_type"],
