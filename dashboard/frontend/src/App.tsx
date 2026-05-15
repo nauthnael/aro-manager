@@ -5,6 +5,7 @@ import NodeDetail from './pages/NodeDetail'
 import AccountStats from './pages/AccountStats'
 import Settings from './pages/Settings'
 import ErrorStats from './pages/ErrorStats'
+import ProxyStats from './pages/ProxyStats'
 import RenewNodes from './pages/RenewNodes'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/nodes/:nodeId" element={<PrivateRoute><NodeDetail /></PrivateRoute>} />
         <Route path="/accounts" element={<PrivateRoute><AccountStats /></PrivateRoute>} />
         <Route path="/errors" element={<PrivateRoute><ErrorStats /></PrivateRoute>} />
+        <Route path="/proxy-stats" element={<PrivateRoute><ProxyStats /></PrivateRoute>} />
         <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
         <Route path="/renew" element={<PrivateRoute><RenewNodes /></PrivateRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />

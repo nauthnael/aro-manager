@@ -65,8 +65,10 @@ def get_proxy_stats(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Return error statistics grouped by proxy (host:user or host:port for legacy nodes)."""
+    """Return error statistics grouped by proxy (host:port:user)."""
+    today = date.today()
     cutoff_dt = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = today - timedelta(days=days)
 
     # All nodes → initialize groups
     all_nodes = db.query(models.Node).all()
@@ -86,6 +88,7 @@ def get_proxy_stats(
                 "total_errors": 0,
                 "proxy_down_count": 0,
                 "errors_by_type": {},
+                "total_score": 0.0,
             }
         groups[key]["node_ids"].add(node.node_id)
 
@@ -105,6 +108,26 @@ def get_proxy_stats(
         if e.error_type == "proxy_fail":
             g["proxy_down_count"] += 1
 
+    # Historical daily scores — single query, accumulate per proxy group
+    score_rows = (
+        db.query(models.NodeDailyScore)
+        .filter(models.NodeDailyScore.date >= cutoff_date)
+        .all()
+    )
+    for row in score_rows:
+        key = node_to_key.get(row.node_id)
+        if key:
+            groups[key]["total_score"] += row.score
+
+    # Add today's live score for each node
+    now = datetime.utcnow()
+    for node in all_nodes:
+        key = node_to_key.get(node.node_id)
+        if not key:
+            continue
+        today_result = calculate_score_for_day(node.node_id, today, db, now)
+        groups[key]["total_score"] += today_result["score"]
+
     result = sorted(
         [
             {
@@ -117,6 +140,7 @@ def get_proxy_stats(
                 "total_errors": g["total_errors"],
                 "proxy_down_count": g["proxy_down_count"],
                 "errors_by_type": g["errors_by_type"],
+                "total_score": round(g["total_score"], 1),
             }
             for g in groups.values()
         ],

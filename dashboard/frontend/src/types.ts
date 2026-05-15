@@ -167,6 +167,7 @@ export interface ProxyStat {
   total_errors: number
   proxy_down_count: number
   errors_by_type: Partial<Record<ErrorType, number>>
+  total_score: number
 }
 
 export interface ProxyStatsResponse {

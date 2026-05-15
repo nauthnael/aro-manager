@@ -178,73 +178,74 @@ function LiveFeed({ events }: { events: RecentErrorEvent[] }) {
   )
 }
 
-// ─── Module D: Proxy Stats ────────────────────────────────────────────────────
-type ProxySortKey = 'total_errors' | 'node_count' | 'proxy_down_count'
+// ─── Module D: Proxy Stats (compact preview) ─────────────────────────────────
+const MAX_SHOWN_NODES = 2
 
-const MAX_SHOWN_NODES = 3
+function ProxyStatsPanel({
+  proxies, days, navigate,
+}: {
+  proxies: ProxyStat[]
+  days: number
+  navigate: ReturnType<typeof useNavigate>
+}) {
+  const duplicateCount = proxies.filter(p => p.node_count > 1).length
+  const downCount = proxies.filter(p => p.proxy_down_count > 0).length
 
-function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number }) {
-  const navigate = useNavigate()
-  const [sortKey, setSortKey] = useState<ProxySortKey>('total_errors')
-  const [showAll, setShowAll] = useState(false)
-
-  const sorted = useMemo(
-    () => [...proxies].sort((a, b) => b[sortKey] - a[sortKey]),
-    [proxies, sortKey]
+  // Show top 10 by errors
+  const top = useMemo(
+    () => [...proxies].sort((a, b) => b.total_errors - a.total_errors).slice(0, 10),
+    [proxies]
   )
-  const display = showAll ? sorted : sorted.slice(0, 15)
-
-  function SortBtn({ k, label, right = true }: { k: ProxySortKey; label: string; right?: boolean }) {
-    const active = sortKey === k
-    return (
-      <button
-        onClick={() => setSortKey(k)}
-        className={`inline-flex items-center gap-0.5 text-[11px] font-medium whitespace-nowrap
-          ${active ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'}
-          ${right ? 'justify-end w-full' : ''}`}
-      >
-        {label}<ArrowUpDown size={10} className="shrink-0" />
-      </button>
-    )
-  }
 
   return (
     <div className="bg-white rounded-xl shadow-sm flex flex-col" style={{ height: 420 }}>
       <div className="px-4 pt-4 pb-2 border-b border-gray-100 flex items-center gap-2">
         <Wifi size={15} className="text-blue-500" />
         <span className="text-sm font-semibold text-gray-700">Proxy Stats</span>
-        <span className="text-xs text-gray-400 ml-1">({days}d)</span>
-        <span className="ml-auto text-xs text-gray-400">{proxies.length} proxies</span>
+        <span className="text-xs text-gray-400 ml-1">({days}d · top 10)</span>
+        {duplicateCount > 0 && (
+          <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold">
+            ⚠ {duplicateCount} proxy trùng
+          </span>
+        )}
+        <button
+          onClick={() => navigate('/proxy-stats')}
+          className="ml-auto text-xs text-blue-600 hover:text-blue-800 font-medium"
+        >
+          Xem trang đầy đủ →
+        </button>
       </div>
 
       <div className="overflow-y-auto flex-1">
         <table className="w-full text-xs table-fixed">
           <colgroup>
+            <col style={{ width: 36 }} />
             <col />
-            <col style={{ width: 52 }} />
+            <col style={{ width: 48 }} />
             <col style={{ width: 52 }} />
           </colgroup>
           <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
             <tr>
-              <th className="text-left px-3 py-2 font-medium text-gray-500">
-                Proxy / Nodes
-              </th>
-              <th className="px-2 py-2">
-                <SortBtn k="total_errors" label="Lỗi" />
-              </th>
-              <th className="px-2 py-2">
-                <SortBtn k="proxy_down_count" label="P.Down" />
-              </th>
+              <th className="px-2 py-2 text-center text-gray-500 font-medium">N</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Proxy / Nodes</th>
+              <th className="px-2 py-2 text-right text-gray-500 font-medium">Lỗi</th>
+              <th className="px-2 py-2 text-right text-gray-500 font-medium">P.Down</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {display.map(p => {
+            {top.map(p => {
+              const isDuplicate = p.node_count > 1
               const visibleNodes = p.node_ids.slice(0, MAX_SHOWN_NODES)
               const hiddenCount = p.node_ids.length - visibleNodes.length
               return (
-                <tr key={p.proxy_key} className="hover:bg-gray-50 align-top">
+                <tr key={p.proxy_key} className={`hover:bg-gray-50 align-top ${isDuplicate ? 'bg-amber-50' : ''}`}>
+                  <td className="px-2 py-2 text-center">
+                    <span className={`font-bold text-xs ${isDuplicate ? 'text-amber-600' : 'text-gray-500'}`}>
+                      {p.node_count}
+                    </span>
+                  </td>
                   <td className="px-3 py-2">
-                    <span className="font-mono text-[11px] text-gray-700 block leading-tight">
+                    <span className="font-mono text-[11px] text-gray-700 block leading-tight truncate">
                       {p.proxy_display}
                     </span>
                     <div className="flex flex-wrap gap-1 mt-1">
@@ -264,7 +265,7 @@ function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number
                   </td>
                   <td className="px-2 py-2 text-right align-top">
                     <span className={p.total_errors > 0 ? 'font-semibold text-red-600' : 'text-green-500'}>
-                      {p.total_errors}
+                      {p.total_errors || '—'}
                     </span>
                   </td>
                   <td className="px-2 py-2 text-right align-top">
@@ -275,16 +276,20 @@ function ProxyStatsPanel({ proxies, days }: { proxies: ProxyStat[]; days: number
                 </tr>
               )
             })}
+            {proxies.length > 10 && (
+              <tr>
+                <td colSpan={4} className="px-3 py-2 text-center">
+                  <button
+                    onClick={() => navigate('/proxy-stats')}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    + {proxies.length - 10} proxies khác — xem trang đầy đủ
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
-        {!showAll && sorted.length > 15 && (
-          <button
-            onClick={() => setShowAll(true)}
-            className="w-full py-2 text-xs text-blue-600 hover:text-blue-800 border-t border-gray-100"
-          >
-            Xem thêm {sorted.length - 15} proxies…
-          </button>
-        )}
       </div>
     </div>
   )
@@ -365,7 +370,6 @@ export default function ErrorStats() {
   useEffect(() => { document.title = '💲 Error Stats | ARO Dashboard' }, [])
   const navigate = useNavigate()
   const [days, setDays] = useState(30)
-  const [proxyDays, setProxyDays] = useState(7)
   const [sortKey, setSortKey] = useState<SortKey>('today_score')
   const [sortAsc, setSortAsc] = useState(true)
 
@@ -381,9 +385,9 @@ export default function ErrorStats() {
     refetchInterval: 30_000,
   })
 
-  const { data: proxyData, refetch: refetchProxy } = useQuery<ProxyStatsResponse>({
-    queryKey: ['error-proxy-stats', proxyDays],
-    queryFn: () => api.get(`/errors/proxy-stats?days=${proxyDays}`).then(r => r.data),
+  const { data: proxyData } = useQuery<ProxyStatsResponse>({
+    queryKey: ['error-proxy-stats'],
+    queryFn: () => api.get('/errors/proxy-stats?days=7').then(r => r.data),
     refetchInterval: 60_000,
   })
 
@@ -414,7 +418,7 @@ export default function ErrorStats() {
   }
 
   const handleRefreshAll = () => {
-    refetch(); refetchEvents(); refetchProxy()
+    refetch(); refetchEvents()
   }
 
   return (
@@ -485,23 +489,7 @@ export default function ErrorStats() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <LiveFeed events={eventsData?.events ?? []} />
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Kỳ proxy stats:</span>
-              {[7, 14, 30].map(d => (
-                <button
-                  key={d}
-                  onClick={() => setProxyDays(d)}
-                  className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    proxyDays === d ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
-            <ProxyStatsPanel proxies={proxyData?.proxies ?? []} days={proxyDays} />
-          </div>
+            <ProxyStatsPanel proxies={proxyData?.proxies ?? []} days={proxyDays} navigate={navigate} />
         </div>
 
         {/* Node Health Grid */}
