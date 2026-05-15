@@ -69,16 +69,16 @@ def get_renew_candidates(
     rows = query.order_by(models.Node.node_id).all()
     node_ids = [node.node_id for node, _ in rows]
 
-    # Precompute avg_score per node (avg of all NodeDailyScore entries)
+    # Precompute avg reward per node from node_history.reward_today snapshots
     avg_scores: dict = {}
     if node_ids:
         for row in (
             db.query(
-                models.NodeDailyScore.node_id,
-                func.avg(models.NodeDailyScore.score).label("avg"),
+                models.NodeHistory.node_id,
+                func.avg(models.NodeHistory.reward_today).label("avg"),
             )
-            .filter(models.NodeDailyScore.node_id.in_(node_ids))
-            .group_by(models.NodeDailyScore.node_id)
+            .filter(models.NodeHistory.node_id.in_(node_ids))
+            .group_by(models.NodeHistory.node_id)
             .all()
         ):
             avg_scores[row.node_id] = float(row.avg) if row.avg is not None else 0.0
