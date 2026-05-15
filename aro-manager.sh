@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.7.8"
+SCRIPT_VERSION="3.7.9"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1754,6 +1754,7 @@ send_notify_proxy_dead() {
 _execute_dashboard_command() {
     local cmd_id="$1"
     local action="$2"
+    local payload_b64="${3:-}"
     local node_id="$HOSTNAME"
     local base_url="${DASHBOARD_URL%/}"
     local api_key="$DASHBOARD_API_KEY"
@@ -1920,6 +1921,71 @@ print(json.dumps({'result': d, 'success': True}))
             save_watchdog_config
             result="Telegram notifications ENABLED on ${HOSTNAME}"
             ;;
+        set_tg_chatid)
+            if [[ -z "$payload_b64" ]]; then
+                result="ERROR: payload trống"
+                success="false"
+            else
+                local new_chatid
+                new_chatid=$(echo "$payload_b64" | base64 -d 2>/dev/null)
+                if [[ -z "$new_chatid" ]]; then
+                    result="ERROR: base64 decode thất bại"
+                    success="false"
+                else
+                    watchdog_log "Dashboard: setting TG_CHAT_ID to ${new_chatid}"
+                    TG_CHAT_ID="$new_chatid"
+                    save_watchdog_config
+                    result="TG_CHAT_ID updated to ${new_chatid} on ${HOSTNAME}"
+                fi
+            fi
+            ;;
+        set_tg_token)
+            if [[ -z "$payload_b64" ]]; then
+                result="ERROR: payload trống"
+                success="false"
+            else
+                local new_token
+                new_token=$(echo "$payload_b64" | base64 -d 2>/dev/null)
+                if [[ -z "$new_token" ]]; then
+                    result="ERROR: base64 decode thất bại"
+                    success="false"
+                else
+                    watchdog_log "Dashboard: updating TG_BOT_TOKEN"
+                    TG_BOT_TOKEN="$new_token"
+                    save_watchdog_config
+                    result="TG_BOT_TOKEN updated on ${HOSTNAME}"
+                fi
+            fi
+            ;;
+        set_proxy)
+            if [[ -z "$payload_b64" ]]; then
+                result="ERROR: payload trống"
+                success="false"
+            else
+                local new_proxy
+                new_proxy=$(echo "$payload_b64" | base64 -d 2>/dev/null)
+                if [[ -z "$new_proxy" ]]; then
+                    result="ERROR: base64 decode thất bại"
+                    success="false"
+                else
+                    watchdog_log "Dashboard: changing proxy to ${new_proxy%%:*}:..."
+                    # Parse new proxy string host:port:user:pass
+                    IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$new_proxy"
+                    if [[ -z "$PROXY_HOST" ]] || [[ -z "$PROXY_PORT" ]]; then
+                        result="ERROR: định dạng proxy không hợp lệ (cần host:port:user:pass)"
+                        success="false"
+                    else
+                        # Kill ARO first so wrapper doesn't block redsocks restart
+                        kill_aro
+                        save_proxy_config
+                        create_redsocks_config
+                        systemctl restart redsocks-aro 2>/dev/null || true
+                        watchdog_log "Dashboard: proxy changed — watchdog sẽ khởi động lại ARO"
+                        result="Proxy changed to ${PROXY_HOST}:${PROXY_PORT} on ${HOSTNAME} — ARO will restart"
+                    fi
+                fi
+            fi
+            ;;
         *)
             result="Unknown action: ${action}"
             success="false"
@@ -2003,15 +2069,15 @@ try:
     data = json.loads(sys.argv[1])
     cmds = data.get('commands', [])
     for c in cmds:
-        print(c['id'], c['action'])
+        print(c['id'], c['action'], c.get('payload') or '')
 except:
     pass
 " "$response" 2>/dev/null)
 
     if [[ -n "$cmds_json" ]]; then
-        while IFS=' ' read -r cmd_id cmd_action; do
+        while IFS=' ' read -r cmd_id cmd_action cmd_payload; do
             [[ -z "$cmd_id" ]] && continue
-            _execute_dashboard_command "$cmd_id" "$cmd_action"
+            _execute_dashboard_command "$cmd_id" "$cmd_action" "$cmd_payload"
         done <<< "$cmds_json"
     fi
 

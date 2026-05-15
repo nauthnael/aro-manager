@@ -325,6 +325,67 @@ def update_notes(
     return {"ok": True}
 
 
+@router.post("/dashboard/nodes/{node_id}/set-proxy")
+def set_node_proxy(
+    node_id: str,
+    body: schemas.SetProxyRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Queue a set_proxy command for a node. Validates format and proxy uniqueness (host:port:user)."""
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    parts = body.proxy.strip().split(":")
+    if len(parts) != 4:
+        raise HTTPException(status_code=400, detail="Định dạng proxy phải là host:port:user:pass")
+
+    proxy_host, proxy_port_str, proxy_user, _ = parts
+    try:
+        proxy_port = int(proxy_port_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Port phải là số nguyên")
+
+    # Uniqueness check: same host:port:user → reject (regardless of pass)
+    conflict = (
+        db.query(models.Node)
+        .filter(
+            models.Node.node_id != node_id,
+            models.Node.proxy_host == proxy_host,
+            models.Node.proxy_port == proxy_port,
+            models.Node.proxy_user == proxy_user,
+        )
+        .first()
+    )
+    if conflict:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Proxy {proxy_host}:{proxy_port}:{proxy_user} đang được dùng bởi node {conflict.node_id}",
+        )
+
+    import base64
+    payload_b64 = base64.b64encode(body.proxy.strip().encode()).decode()
+
+    # Cancel existing pending set_proxy commands for this node
+    db.query(models.Command).filter(
+        models.Command.node_id == node_id,
+        models.Command.action == "set_proxy",
+        models.Command.status == "pending",
+    ).delete()
+
+    cmd = models.Command(
+        node_id=node_id,
+        action="set_proxy",
+        payload=payload_b64,
+        created_by=current_user.username,
+    )
+    db.add(cmd)
+    db.commit()
+    db.refresh(cmd)
+    return {"ok": True, "command_id": cmd.id}
+
+
 @router.put("/dashboard/nodes/{node_id}/settings")
 def update_node_settings(
     node_id: str,

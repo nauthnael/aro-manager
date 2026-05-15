@@ -38,6 +38,8 @@ export default function NodeDetail() {
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
   const [staleOverride, setStaleOverride] = useState<string>('')
+  const [proxyInput, setProxyInput] = useState('')
+  const [proxyError, setProxyError] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<NodeDetailResponse>({
     queryKey: ['node', nodeId],
@@ -79,6 +81,18 @@ export default function NodeDetail() {
     mutationFn: (val: number | null) =>
       api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/settings`, { log_stale_restart_minutes: val }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['node', nodeId] }),
+  })
+
+  const setProxy = useMutation({
+    mutationFn: () => api.post(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/set-proxy`, { proxy: proxyInput }),
+    onSuccess: () => {
+      alert(`Đã gửi lệnh đổi proxy đến ${nodeId}.\nNode sẽ áp dụng khi báo cáo lần tiếp theo (~60s).`)
+      setProxyInput('')
+      setProxyError(null)
+    },
+    onError: (err: any) => {
+      setProxyError(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh đổi proxy.')
+    },
   })
 
   const renewNode = useMutation({
@@ -289,6 +303,46 @@ export default function NodeDetail() {
             </div>
           )
         })()}
+
+        {/* Proxy change */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Đổi Proxy</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Proxy hiện tại: <span className="font-mono text-gray-600">{node.proxy_host ? `${node.proxy_host}:${node.proxy_port}${node.proxy_user ? `:${node.proxy_user}` : ''}` : '—'}</span>
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={proxyInput}
+              onChange={e => { setProxyInput(e.target.value); setProxyError(null) }}
+              placeholder="host:port:user:pass"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={() => {
+                const parts = proxyInput.trim().split(':')
+                if (parts.length !== 4) {
+                  setProxyError('Định dạng phải là host:port:user:pass')
+                  return
+                }
+                if (confirm(`Đổi proxy của ${node.node_id} thành:\n${proxyInput}\n\nNode sẽ restart redsocks và ARO sẽ tự khởi động lại.`)) {
+                  setProxy.mutate()
+                }
+              }}
+              disabled={setProxy.isPending || !proxyInput.trim()}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+            >
+              {setProxy.isPending ? <RefreshCw size={14} className="animate-spin" /> : null}
+              Đổi proxy
+            </button>
+          </div>
+          {proxyError && <p className="text-xs text-red-600">{proxyError}</p>}
+          <p className="text-xs text-gray-400">
+            Sau khi gửi lệnh: node sẽ kill ARO → đổi proxy → restart redsocks → watchdog tự khởi động lại ARO.
+          </p>
+        </div>
 
         {/* Reward chart */}
         <div className="bg-white rounded-xl shadow-sm p-5">

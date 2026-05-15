@@ -38,6 +38,7 @@ class NodeReportRequest(BaseModel):
 class PendingCommand(BaseModel):
     id: int
     action: str
+    payload: Optional[str] = None
 
 
 class NodeReportResponse(BaseModel):
@@ -204,6 +205,22 @@ class TeleBroadcastResponse(BaseModel):
     sent: int
     action: str
     nodes_tg_enabled: bool
+
+
+class BroadcastTgChatIdRequest(BaseModel):
+    tg_chat_id: str  # new chat_id:thread_id value
+
+
+class BroadcastTgTokenRequest(BaseModel):
+    tg_bot_token: str  # new bot token
+
+
+class BroadcastResponse(BaseModel):
+    sent: int
+
+
+class SetProxyRequest(BaseModel):
+    proxy: str  # host:port:user:pass
 
 
 class TestTelegramRequest(BaseModel):

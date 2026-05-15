@@ -168,7 +168,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
 
     return schemas.NodeReportResponse(
         ok=True,
-        commands=[schemas.PendingCommand(id=c.id, action=c.action) for c in pending],
+        commands=[schemas.PendingCommand(id=c.id, action=c.action, payload=c.payload) for c in pending],
         periodic_restart_min=pmin,
         periodic_restart_max=pmax,
         daily_report_enabled=daily_report_enabled,

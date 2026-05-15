@@ -152,6 +152,7 @@ class Command(Base):
     id = Column(Integer, primary_key=True)
     node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), index=True)
     action = Column(String(50))
+    payload = Column(Text, nullable=True)
     status = Column(String(20), default="pending")  # pending | acked | completed | failed
     result = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Send } from 'lucide-react'
+import { ArrowLeft, Send, Radio } from 'lucide-react'
 import api from '../api/client'
 
 interface SettingsData {
@@ -85,6 +85,8 @@ export default function SettingsPage() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [broadcastChatId, setBroadcastChatId] = useState('')
+  const [broadcastToken, setBroadcastToken] = useState('')
 
   const { data, isLoading } = useQuery<SettingsData>({
     queryKey: ['settings'],
@@ -116,6 +118,16 @@ export default function SettingsPage() {
       setTestingTopic(null)
     }
   }
+
+  const broadcastChatIdMut = useMutation({
+    mutationFn: () => api.post('/settings/broadcast-tg-chatid', { tg_chat_id: broadcastChatId }),
+    onSuccess: (r) => alert(`Đã gửi lệnh đổi Chat ID tới ${r.data.sent} node.`),
+  })
+
+  const broadcastTokenMut = useMutation({
+    mutationFn: () => api.post('/settings/broadcast-tg-token', { tg_bot_token: broadcastToken }),
+    onSuccess: (r) => alert(`Đã gửi lệnh đổi Bot Token tới ${r.data.sent} node.`),
+  })
 
   const setField = (key: keyof SettingsData) => (v: string) =>
     setForm(f => ({ ...f, [key]: v }))
@@ -283,6 +295,71 @@ export default function SettingsPage() {
                 }`}
               />
             </button>
+          </div>
+        </div>
+
+        {/* Broadcast TG settings to all nodes */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+              <Radio size={14} />
+              Phát lệnh đến tất cả Node
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Gửi lệnh thay đổi cấu hình Telegram đến tất cả node đang được quản lý. Node sẽ nhận và áp dụng khi báo cáo tiếp theo (~60s).
+            </p>
+          </div>
+
+          {/* Broadcast Chat ID */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-600">Đổi TG_CHAT_ID cho tất cả node</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={broadcastChatId}
+                onChange={e => setBroadcastChatId(e.target.value)}
+                placeholder="chat_id:thread_id mới"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={() => {
+                  if (!broadcastChatId.trim()) return
+                  if (confirm(`Gửi TG_CHAT_ID mới (${broadcastChatId}) đến TẤT CẢ node?`))
+                    broadcastChatIdMut.mutate()
+                }}
+                disabled={broadcastChatIdMut.isPending || !broadcastChatId.trim()}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+              >
+                <Radio size={14} />
+                Phát lệnh
+              </button>
+            </div>
+          </div>
+
+          {/* Broadcast Bot Token */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-600">Đổi TG_BOT_TOKEN cho tất cả node</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={broadcastToken}
+                onChange={e => setBroadcastToken(e.target.value)}
+                placeholder="Bot token mới (123456:AABB...)"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={() => {
+                  if (!broadcastToken.trim()) return
+                  if (confirm('Gửi TG_BOT_TOKEN mới đến TẤT CẢ node?'))
+                    broadcastTokenMut.mutate()
+                }}
+                disabled={broadcastTokenMut.isPending || !broadcastToken.trim()}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+              >
+                <Radio size={14} />
+                Phát lệnh
+              </button>
+            </div>
           </div>
         </div>
 

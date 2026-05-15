@@ -17,7 +17,7 @@ from app.routers import settings as settings_router
 from app.routers import errors as errors_router
 from app.routers import renew as renew_router
 from app.scoring import calculate_score_for_day
-from app.telegram import send_telegram_message
+from app.telegram import enqueue_telegram_message, flush_telegram_queue
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def migrate_db():
         "ALTER TABLE nodes ADD COLUMN log_stale_restart_minutes INTEGER",
         "ALTER TABLE app_settings ADD COLUMN node_tg_bot_token VARCHAR(200) DEFAULT ''",
         "ALTER TABLE app_settings ADD COLUMN nodes_tg_enabled BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE commands ADD COLUMN payload TEXT",
     ]
     for sql in ddl_migrations:
         try:
@@ -160,7 +161,7 @@ def check_offline_alerts():
                     node = db.query(models.Node).filter(models.Node.node_id == ns.node_id).first()
                     account = node.account if node else ns.node_id
                     minutes = int((now - open_log.offline_at).total_seconds() / 60)
-                    send_telegram_message(
+                    enqueue_telegram_message(
                         cfg.tg_critical,
                         f"🔴 <b>Node Offline</b>\n"
                         f"Host: <code>{ns.node_id}</code>\n"
@@ -280,10 +281,7 @@ def check_renew_monitoring():
             )
 
             if cfg and cfg.tg_info:
-                try:
-                    send_telegram_message(cfg.tg_info, msg)
-                except Exception as exc:
-                    logger.error("check_renew_monitoring telegram error: %s", exc)
+                enqueue_telegram_message(cfg.tg_info, msg)
 
             log.monitored_at = now
 
@@ -331,6 +329,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(cleanup_old_data, "interval", hours=6)
     scheduler.add_job(check_offline_alerts, "interval", minutes=2)
     scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
+    scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
     scheduler.start()
     yield

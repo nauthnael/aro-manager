@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import get_current_user
 from app.database import get_db
+import base64
+
 from app.telegram import (
     get_node_telegram_health,
     get_telegram_health,
@@ -118,6 +120,68 @@ def tele_broadcast(
         action=body.action,
         nodes_tg_enabled=row.nodes_tg_enabled,
     )
+
+
+# --- Broadcast TG Chat ID / Token to all nodes ---
+
+@router.post("/settings/broadcast-tg-chatid", response_model=schemas.BroadcastResponse)
+def broadcast_tg_chatid(
+    body: schemas.BroadcastTgChatIdRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Send set_tg_chatid command to all nodes with base64-encoded new chat_id."""
+    if not body.tg_chat_id.strip():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="tg_chat_id không được để trống")
+
+    payload_b64 = base64.b64encode(body.tg_chat_id.strip().encode()).decode()
+    all_node_ids = [r.node_id for r in db.query(models.Node.node_id).all()]
+
+    db.query(models.Command).filter(
+        models.Command.action == "set_tg_chatid",
+        models.Command.status == "pending",
+    ).delete(synchronize_session=False)
+
+    for node_id in all_node_ids:
+        db.add(models.Command(
+            node_id=node_id,
+            action="set_tg_chatid",
+            payload=payload_b64,
+            created_by=current_user.username,
+        ))
+    db.commit()
+    return schemas.BroadcastResponse(sent=len(all_node_ids))
+
+
+@router.post("/settings/broadcast-tg-token", response_model=schemas.BroadcastResponse)
+def broadcast_tg_token(
+    body: schemas.BroadcastTgTokenRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Send set_tg_token command to all nodes with base64-encoded new bot token."""
+    if not body.tg_bot_token.strip():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="tg_bot_token không được để trống")
+
+    payload_b64 = base64.b64encode(body.tg_bot_token.strip().encode()).decode()
+    all_node_ids = [r.node_id for r in db.query(models.Node.node_id).all()]
+
+    db.query(models.Command).filter(
+        models.Command.action == "set_tg_token",
+        models.Command.status == "pending",
+    ).delete(synchronize_session=False)
+
+    for node_id in all_node_ids:
+        db.add(models.Command(
+            node_id=node_id,
+            action="set_tg_token",
+            payload=payload_b64,
+            created_by=current_user.username,
+        ))
+    db.commit()
+    return schemas.BroadcastResponse(sent=len(all_node_ids))
 
 
 # --- Test Telegram topic ---
