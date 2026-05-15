@@ -66,6 +66,22 @@ def migrate_db():
         except Exception:
             pass  # column already exists → ignore
 
+    # Clear invalid "N/A" sentinel values from serial/account fields
+    cleanup_sqls = [
+        "UPDATE node_renew_log SET serial_after = NULL WHERE UPPER(serial_after) = 'N/A'",
+        "UPDATE node_renew_log SET serial_before = NULL WHERE UPPER(serial_before) = 'N/A'",
+        "UPDATE node_renew_log SET account_before = NULL WHERE UPPER(account_before) = 'N/A'",
+        "UPDATE nodes SET serial = NULL WHERE UPPER(serial) = 'N/A'",
+        "UPDATE nodes SET account = NULL WHERE UPPER(account) = 'N/A'",
+        "DELETE FROM node_account_history WHERE UPPER(account) = 'N/A'",
+    ]
+    for sql in cleanup_sqls:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(sql))
+        except Exception:
+            pass
+
     # Migrate existing NodeOfflineLog rows into NodeErrorLog
     migrate_sql = """
         INSERT INTO node_error_log (node_id, error_type, started_at, ended_at, duration_minutes)

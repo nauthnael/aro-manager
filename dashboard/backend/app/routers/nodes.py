@@ -60,7 +60,7 @@ def _close_error(db: Session, node_id: str, error_type: str, now: datetime):
 
 def _track_account_history(db: Session, node_id: str, new_account: str, now: datetime):
     """Create or update NodeAccountHistory when account value changes or is first seen."""
-    if not new_account:
+    if not _valid(new_account):
         return
     latest = (
         db.query(models.NodeAccountHistory)
@@ -109,6 +109,11 @@ def _track_status_errors(
             _close_error(db, node_id, "proxy_fail", now)
 
 
+def _valid(value: str) -> bool:
+    """Return True if value is a real value, not empty or a sentinel like 'N/A'."""
+    return bool(value) and value.strip().upper() != "N/A"
+
+
 @router.post("/nodes/report", response_model=schemas.NodeReportResponse)
 def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     if body.api_key != settings.dashboard_api_key:
@@ -121,10 +126,10 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     if not node:
         node = models.Node(node_id=node_id)
         db.add(node)
-    if body.account:
+    if _valid(body.account):
         node.account = body.account
     old_serial = node.serial
-    if body.serial:
+    if _valid(body.serial):
         node.serial = body.serial
     if body.proxy_host:
         node.proxy_host = body.proxy_host
@@ -156,7 +161,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     _track_account_history(db, node_id, body.account, now)
 
     # If serial changed, update serial_after on the most recent renew log that hasn't tracked it yet
-    if body.serial and old_serial and body.serial != old_serial:
+    if _valid(body.serial) and old_serial and body.serial != old_serial:
         recent_renew = (
             db.query(models.NodeRenewLog)
             .filter(
