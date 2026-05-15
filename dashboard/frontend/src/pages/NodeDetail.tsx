@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock } from 'lucide-react'
@@ -129,6 +129,11 @@ export default function NodeDetail() {
       alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh renew.')
     },
   })
+
+  useEffect(() => {
+    document.title = nodeId ? `💲 ${nodeId} | ARO Dashboard` : '💲 ARO Dashboard'
+    return () => { document.title = '💲 ARO Dashboard' }
+  }, [nodeId])
 
   const startEditNotes = () => {
     setNotesValue(data?.node.notes ?? '')

@@ -71,6 +71,7 @@ function TopicInput({
 }
 
 export default function SettingsPage() {
+  useEffect(() => { document.title = '💲 Cài đặt | ARO Dashboard' }, [])
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [form, setForm] = useState<SettingsData>({

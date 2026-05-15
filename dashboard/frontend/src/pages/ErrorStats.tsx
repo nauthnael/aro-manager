@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -333,6 +333,7 @@ function sortNodes(nodes: NodeErrorStats[], key: SortKey, asc: boolean) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function ErrorStats() {
+  useEffect(() => { document.title = '💲 Error Stats | ARO Dashboard' }, [])
   const navigate = useNavigate()
   const [days, setDays] = useState(30)
   const [proxyDays, setProxyDays] = useState(7)

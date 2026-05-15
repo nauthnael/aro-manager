@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -25,6 +25,7 @@ function Pill({ value, cls }: { value: number; cls: string }) {
 }
 
 export default function AccountStatsPage() {
+  useEffect(() => { document.title = '💲 Account Stats | ARO Dashboard' }, [])
   const navigate = useNavigate()
   const [sorting, setSorting] = useState<SortingState>([{ id: 'total_points', desc: true }])
 

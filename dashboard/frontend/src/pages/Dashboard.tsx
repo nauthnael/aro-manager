@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -30,6 +30,7 @@ const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n
 ]
 
 export default function Dashboard() {
+  useEffect(() => { document.title = '💲 ARO Dashboard' }, [])
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
