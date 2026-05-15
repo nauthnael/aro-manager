@@ -489,7 +489,7 @@ export default function ErrorStats() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <LiveFeed events={eventsData?.events ?? []} />
 
-            <ProxyStatsPanel proxies={proxyData?.proxies ?? []} days={proxyDays} navigate={navigate} />
+            <ProxyStatsPanel proxies={proxyData?.proxies ?? []} days={7} navigate={navigate} />
         </div>
 
         {/* Node Health Grid */}
