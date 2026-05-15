@@ -280,6 +280,7 @@ def get_renew_history(
             renewed_at=log.renewed_at,
             serial_before=log.serial_before,
             serial_after=log.serial_after,
+            account_before=log.account_before,
             command_id=log.command_id,
             status=log.status,
             renew_count=log.renew_count,
