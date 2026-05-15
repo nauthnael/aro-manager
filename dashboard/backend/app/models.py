@@ -183,3 +183,19 @@ class Command(Base):
     acked_at = Column(DateTime)
     completed_at = Column(DateTime)
     created_by = Column(String(50))
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), unique=True, nullable=False, index=True)
+    color = Column(String(7), default="#3b82f6")  # hex color
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NodeTag(Base):
+    __tablename__ = "node_tags"
+
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)

@@ -16,6 +16,7 @@ from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
 from app.routers import renew as renew_router
+from app.routers import tags as tags_router
 from app.backup import ensure_backup_dir, scheduled_backup
 from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
@@ -446,3 +447,4 @@ app.include_router(commands.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(errors_router.router, prefix="/api/v1")
 app.include_router(renew_router.router, prefix="/api/v1")
+app.include_router(tags_router.router, prefix="/api/v1")

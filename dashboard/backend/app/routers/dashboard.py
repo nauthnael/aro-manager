@@ -17,7 +17,7 @@ router = APIRouter()
 STALE_SECS = settings.stale_threshold_secs
 
 
-def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0) -> schemas.NodeStatusOut:
+def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0, tags: Optional[list] = None) -> schemas.NodeStatusOut:
     if status and status.last_seen:
         is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
     else:
@@ -55,6 +55,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
             node.proxy_host,
             status.public_ip if status else None,
         ),
+        tags=tags or [],
     )
 
 
@@ -144,6 +145,8 @@ def list_nodes(
     page_size: int = Query(50, ge=1, le=500),
     sort_by: Optional[str] = Query(None),
     sort_dir: str = Query("asc"),
+    tag_ids: Optional[str] = Query(None),
+    tag_mode: Optional[str] = Query("or"),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -156,7 +159,19 @@ def list_nodes(
     for row in db.query(models.NodeRenewLog.node_id, func.count(models.NodeRenewLog.id)).group_by(models.NodeRenewLog.node_id).all():
         renew_counts[row[0]] = row[1]
 
-    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0)) for n in nodes]
+    # Fetch all node-tag mappings in one query
+    node_tag_rows = (
+        db.query(models.NodeTag, models.Tag)
+        .join(models.Tag, models.NodeTag.tag_id == models.Tag.id)
+        .all()
+    )
+    tags_by_node: dict = {}
+    for nt, tag in node_tag_rows:
+        tags_by_node.setdefault(nt.node_id, []).append(
+            schemas.TagRef(id=tag.id, name=tag.name, color=tag.color)
+        )
+
+    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0), tags_by_node.get(n.node_id, [])) for n in nodes]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
@@ -184,6 +199,16 @@ def list_nodes(
             n for n in filtered
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
+
+    # Filter by tags (AND/OR)
+    if tag_ids:
+        filter_ids = [int(i) for i in tag_ids.split(',') if i.strip().isdigit()]
+        if filter_ids:
+            node_tag_ids = lambda n: {t.id for t in n.tags}  # noqa: E731
+            if tag_mode == "and":
+                filtered = [n for n in filtered if all(fid in node_tag_ids(n) for fid in filter_ids)]
+            else:
+                filtered = [n for n in filtered if any(fid in node_tag_ids(n) for fid in filter_ids)]
 
     # --- Score computation (when needed for filtering or sorting) ---
     scores_computed = False
@@ -262,6 +287,15 @@ def get_node(
     total_score = round(sum(daily_maxes.values()), 2) if daily_maxes else None
     avg_score = round(sum(daily_maxes.values()) / len(daily_maxes), 2) if daily_maxes else None
 
+    node_tags = (
+        db.query(models.Tag)
+        .join(models.NodeTag, models.NodeTag.tag_id == models.Tag.id)
+        .filter(models.NodeTag.node_id == node_id)
+        .order_by(models.Tag.name)
+        .all()
+    )
+    tags = [schemas.TagRef(id=t.id, name=t.name, color=t.color) for t in node_tags]
+
     restart_events = (
         db.query(models.NodeRestartLog)
         .filter(models.NodeRestartLog.node_id == node_id, models.NodeRestartLog.timestamp >= cutoff)
@@ -274,7 +308,7 @@ def get_node(
     global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
 
     return schemas.NodeDetailResponse(
-        node=_node_out(node, status, now, total_score, avg_score),
+        node=_node_out(node, status, now, total_score, avg_score, tags=tags),
         history=[
             schemas.HistoryPoint(
                 timestamp=h.timestamp,

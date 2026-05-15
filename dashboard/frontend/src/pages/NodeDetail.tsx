@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2 } from 'lucide-react'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
-import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory } from '../types'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory, TagOut } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -19,6 +19,87 @@ function scoreColor(s: number) {
   if (s >= 800) return '#f59e0b'
   if (s >= 600) return '#f97316'
   return '#dc2626'
+}
+
+function NodeTagsEditor({ nodeId, currentTags }: { nodeId: string; currentTags: { id: number; name: string; color: string }[] }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const { data: allTags = [] } = useQuery<TagOut[]>({
+    queryKey: ['tags'],
+    queryFn: () => api.get('/tags').then(r => r.data),
+  })
+
+  const setTags = useMutation({
+    mutationFn: (tag_ids: number[]) =>
+      api.put(`/dashboard/nodes/${encodeURIComponent(nodeId)}/tags`, { tag_ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['node', nodeId] }),
+  })
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const currentIds = new Set(currentTags.map(t => t.id))
+
+  const toggle = (tagId: number) => {
+    const next = new Set(currentIds)
+    if (next.has(tagId)) next.delete(tagId)
+    else next.add(tagId)
+    setTags.mutate([...next])
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-100">
+      <div className="flex items-center gap-2 mb-2">
+        <p className="text-xs text-gray-500">Tags</p>
+        <div ref={ref} className="relative">
+          <button onClick={() => setOpen(o => !o)}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-500 border border-dashed border-gray-300 rounded-full hover:border-blue-400 hover:text-blue-600 transition-colors">
+            <TagIcon size={11} /> Thêm tag
+          </button>
+          {open && (
+            <div className="absolute left-0 top-7 z-20 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1">
+              {allTags.length === 0 ? (
+                <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có tag nào. Tạo tag trong Cài đặt.</p>
+              ) : (
+                allTags.map(tag => (
+                  <button key={tag.id} onClick={() => toggle(tag.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-left">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0 border-2"
+                      style={{ backgroundColor: currentIds.has(tag.id) ? tag.color : 'transparent', borderColor: tag.color }} />
+                    <span className="text-sm text-gray-700 flex-1">{tag.name}</span>
+                    {currentIds.has(tag.id) && <Check size={12} className="text-blue-500" />}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {currentTags.length === 0 ? (
+          <span className="text-xs text-gray-300 italic">Chưa có tag</span>
+        ) : (
+          currentTags.map(t => (
+            <span key={t.id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white"
+              style={{ backgroundColor: t.color }}>
+              {t.name}
+              <button onClick={() => toggle(t.id)} className="opacity-70 hover:opacity-100 transition-opacity ml-0.5">
+                <X size={11} />
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+    </div>
+  )
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -283,6 +364,8 @@ export default function NodeDetail() {
               }
             />
           </div>
+
+          <NodeTagsEditor nodeId={node.node_id} currentTags={node.tags} />
 
           {/* Notes */}
           <div className="mt-4 pt-4 border-t border-gray-100">

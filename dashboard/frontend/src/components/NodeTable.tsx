@@ -31,6 +31,7 @@ interface Props {
   onSelectionChange: (ids: Set<string>) => void
   sorting: SortingState
   onSortingChange: (s: SortingState) => void
+  onTagClick?: (tagId: number) => void
 }
 
 const col = createColumnHelper<NodeStatus>()
@@ -40,7 +41,7 @@ const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 const toFlagEmoji = (cc: string) =>
   cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
@@ -165,6 +166,31 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
       col.accessor('account', {
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
+      }),
+      col.accessor('tags', {
+        id: 'tags',
+        header: 'Tags',
+        enableSorting: false,
+        cell: info => {
+          const tags = info.getValue() ?? []
+          if (tags.length === 0) return <span className="text-gray-300 text-xs">—</span>
+          const visible = tags.slice(0, 3)
+          const rest = tags.length - visible.length
+          return (
+            <div className="flex items-center gap-1 flex-wrap">
+              {visible.map((t: { id: number; name: string; color: string }) => (
+                <button key={t.id}
+                  onClick={e => { e.stopPropagation(); onTagClick?.(t.id) }}
+                  title={`Lọc theo tag "${t.name}"`}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white hover:opacity-80 transition-opacity"
+                  style={{ backgroundColor: t.color }}>
+                  {t.name}
+                </button>
+              ))}
+              {rest > 0 && <span className="text-xs text-gray-400">+{rest}</span>}
+            </div>
+          )
+        },
       }),
       col.accessor('notes', {
         header: 'Ghi chú',
@@ -302,7 +328,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, selectedIds, allSelected, someSelected, editingNote],
+    [navigate, selectedIds, allSelected, someSelected, editingNote, onTagClick],
   )
 
   const table = useReactTable({

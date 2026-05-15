@@ -57,6 +57,41 @@ class CommandCompleteRequest(BaseModel):
     success: bool = True
 
 
+# --- Tags ---
+
+class TagRef(BaseModel):
+    id: int
+    name: str
+    color: str
+
+
+class TagOut(BaseModel):
+    id: int
+    name: str
+    color: str
+    node_count: int = 0
+
+
+class CreateTagRequest(BaseModel):
+    name: str
+    color: Optional[str] = None
+
+
+class UpdateTagRequest(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+
+class SetNodeTagsRequest(BaseModel):
+    tag_ids: List[int] = []
+
+
+class BulkTagRequest(BaseModel):
+    node_ids: List[str]
+    add_tag_ids: List[int] = []
+    remove_tag_ids: List[int] = []
+
+
 # --- Dashboard ---
 
 class NodeStatusOut(BaseModel):
@@ -82,6 +117,7 @@ class NodeStatusOut(BaseModel):
     renew_count: int = 0
     needs_renew: bool = False
     country_code: Optional[str] = None
+    tags: List[TagRef] = []
 
     class Config:
         from_attributes = True
