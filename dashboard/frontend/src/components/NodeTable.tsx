@@ -24,13 +24,14 @@ interface Props {
   nodes: NodeStatus[]
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void
+  onTagClick?: (tagId: number) => void
 }
 
 const col = createColumnHelper<NodeStatus>()
 
 const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, onTagClick }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
@@ -129,6 +130,35 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
+      col.accessor('tags', {
+        id: 'tags',
+        header: 'Tags',
+        enableSorting: false,
+        cell: info => {
+          const tags = info.getValue() ?? []
+          if (tags.length === 0) return <span className="text-gray-300 text-xs">—</span>
+          const visible = tags.slice(0, 3)
+          const rest = tags.length - visible.length
+          return (
+            <div className="flex items-center gap-1 flex-wrap">
+              {visible.map((t: { id: number; name: string; color: string }) => (
+                <button
+                  key={t.id}
+                  onClick={e => { e.stopPropagation(); onTagClick?.(t.id) }}
+                  title={`Lọc theo tag "${t.name}"`}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white hover:opacity-80 transition-opacity"
+                  style={{ backgroundColor: t.color }}
+                >
+                  {t.name}
+                </button>
+              ))}
+              {rest > 0 && (
+                <span className="text-xs text-gray-400">+{rest}</span>
+              )}
+            </div>
+          )
+        },
+      }),
       col.accessor('total_score', {
         header: 'Tổng điểm',
         cell: info => {
@@ -205,7 +235,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange }: Pro
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, selectedIds, allSelected, someSelected],
+    [navigate, selectedIds, allSelected, someSelected, onTagClick],
   )
 
   const table = useReactTable({

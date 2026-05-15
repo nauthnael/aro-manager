@@ -1,3 +1,16 @@
+export interface TagRef {
+  id: number
+  name: string
+  color: string
+}
+
+export interface TagOut {
+  id: number
+  name: string
+  color: string
+  node_count: number
+}
+
 export interface NodeStatus {
   node_id: string
   aro_status: string | null
@@ -16,6 +29,7 @@ export interface NodeStatus {
   proxy_host: string | null
   proxy_port: number | null
   notes: string | null
+  tags: TagRef[]
 }
 
 export interface NodeListResponse {

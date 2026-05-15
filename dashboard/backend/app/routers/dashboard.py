@@ -15,7 +15,14 @@ router = APIRouter()
 STALE_SECS = settings.stale_threshold_secs
 
 
-def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None) -> schemas.NodeStatusOut:
+def _node_out(
+    node: models.Node,
+    status: Optional[models.NodeStatus],
+    now: datetime,
+    total_score: Optional[float] = None,
+    avg_score: Optional[float] = None,
+    tags: Optional[list] = None,
+) -> schemas.NodeStatusOut:
     if status and status.last_seen:
         is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
     else:
@@ -39,6 +46,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         proxy_host=node.proxy_host,
         proxy_port=node.proxy_port,
         notes=node.notes,
+        tags=tags or [],
     )
 
 
@@ -59,6 +67,8 @@ def me(current_user: models.User = Depends(get_current_user)):
 def list_nodes(
     status_filter: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    tag_ids: Optional[str] = Query(None),   # comma-separated tag IDs
+    tag_mode: Optional[str] = Query("or"),  # "and" | "or"
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
@@ -90,7 +100,26 @@ def list_nodes(
         total_scores[row.node_id] = round(row.total, 2) if row.total is not None else None
         avg_scores[row.node_id] = round(row.total / row.days, 2) if row.total is not None and row.days else None
 
-    all_out = [_node_out(n, statuses.get(n.node_id), now, total_scores.get(n.node_id), avg_scores.get(n.node_id)) for n in nodes]
+    # Fetch all node-tag mappings in one query
+    node_tag_rows = (
+        db.query(models.NodeTag, models.Tag)
+        .join(models.Tag, models.NodeTag.tag_id == models.Tag.id)
+        .all()
+    )
+    tags_by_node: dict = {}
+    for nt, tag in node_tag_rows:
+        tags_by_node.setdefault(nt.node_id, []).append(
+            schemas.TagRef(id=tag.id, name=tag.name, color=tag.color)
+        )
+
+    all_out = [
+        _node_out(
+            n, statuses.get(n.node_id), now,
+            total_scores.get(n.node_id), avg_scores.get(n.node_id),
+            tags_by_node.get(n.node_id, []),
+        )
+        for n in nodes
+    ]
 
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
@@ -106,6 +135,16 @@ def list_nodes(
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter:
         filtered = [n for n in filtered if not n.is_stale and n.aro_status == status_filter]
+
+    # Filter by tags (AND/OR)
+    if tag_ids:
+        filter_ids = [int(i) for i in tag_ids.split(',') if i.strip().isdigit()]
+        if filter_ids:
+            node_tag_ids = lambda n: {t.id for t in n.tags}  # noqa: E731
+            if tag_mode == "and":
+                filtered = [n for n in filtered if all(fid in node_tag_ids(n) for fid in filter_ids)]
+            else:
+                filtered = [n for n in filtered if any(fid in node_tag_ids(n) for fid in filter_ids)]
 
     return schemas.NodeListResponse(
         nodes=filtered,
@@ -146,6 +185,15 @@ def get_node(
     total_score = round(sum(daily_maxes.values()), 2) if daily_maxes else None
     avg_score = round(sum(daily_maxes.values()) / len(daily_maxes), 2) if daily_maxes else None
 
+    node_tags = (
+        db.query(models.Tag)
+        .join(models.NodeTag, models.NodeTag.tag_id == models.Tag.id)
+        .filter(models.NodeTag.node_id == node_id)
+        .order_by(models.Tag.name)
+        .all()
+    )
+    tags = [schemas.TagRef(id=t.id, name=t.name, color=t.color) for t in node_tags]
+
     restart_events = (
         db.query(models.NodeRestartLog)
         .filter(models.NodeRestartLog.node_id == node_id, models.NodeRestartLog.timestamp >= cutoff)
@@ -155,7 +203,7 @@ def get_node(
     )
 
     return schemas.NodeDetailResponse(
-        node=_node_out(node, status, now, total_score, avg_score),
+        node=_node_out(node, status, now, total_score, avg_score, tags),
         history=[
             schemas.HistoryPoint(
                 timestamp=h.timestamp,

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Send } from 'lucide-react'
+import { ArrowLeft, Check, Pencil, Plus, Send, Trash2, X } from 'lucide-react'
 import api from '../api/client'
+import { TagOut } from '../types'
 
 interface SettingsData {
   tg_critical: string
@@ -62,6 +63,166 @@ function TopicInput({
         <p className={`text-xs ${testResult.ok ? 'text-green-600' : 'text-red-600'}`}>
           {testResult.ok ? '✓ Gửi thành công' : `✗ ${testResult.error}`}
         </p>
+      )}
+    </div>
+  )
+}
+
+// ── Bảng màu tự động ──────────────────────────────────────────────────────
+const TAG_PALETTE = [
+  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#06b6d4', '#f97316', '#ec4899', '#14b8a6', '#6366f1',
+  '#84cc16', '#a855f7',
+]
+
+// ── Component quản lý Tags ─────────────────────────────────────────────────
+function TagManager() {
+  const qc = useQueryClient()
+  const [newName, setNewName] = useState('')
+  const [newColor, setNewColor] = useState(TAG_PALETTE[0])
+  const [editId, setEditId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editColor, setEditColor] = useState('')
+
+  const { data: tags = [] } = useQuery<TagOut[]>({
+    queryKey: ['tags'],
+    queryFn: () => api.get('/tags').then(r => r.data),
+  })
+
+  const createTag = useMutation({
+    mutationFn: () => api.post('/tags', { name: newName.trim(), color: newColor }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tags'] })
+      setNewName('')
+      // Advance color to next unused
+      const used = new Set(tags.map(t => t.color))
+      const next = TAG_PALETTE.find(c => !used.has(c)) ?? TAG_PALETTE[0]
+      setNewColor(next)
+    },
+  })
+
+  const updateTag = useMutation({
+    mutationFn: ({ id, name, color }: { id: number; name: string; color: string }) =>
+      api.put(`/tags/${id}`, { name, color }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tags'] })
+      setEditId(null)
+    },
+  })
+
+  const deleteTag = useMutation({
+    mutationFn: (id: number) => api.delete(`/tags/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tags'] }),
+  })
+
+  const startEdit = (t: TagOut) => {
+    setEditId(t.id)
+    setEditName(t.name)
+    setEditColor(t.color)
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-gray-700">Quản lý Tags</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Tạo và quản lý tag để phân nhóm node.</p>
+      </div>
+
+      {/* Tạo tag mới */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="text"
+          placeholder="Tên tag mới..."
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && newName.trim() && createTag.mutate()}
+          className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {/* Bảng màu */}
+        <div className="flex items-center gap-1 flex-wrap">
+          {TAG_PALETTE.map(c => (
+            <button
+              key={c}
+              onClick={() => setNewColor(c)}
+              style={{ backgroundColor: c }}
+              className={`w-5 h-5 rounded-full border-2 transition-transform ${newColor === c ? 'border-gray-800 scale-110' : 'border-transparent'}`}
+            />
+          ))}
+        </div>
+        <button
+          onClick={() => newName.trim() && createTag.mutate()}
+          disabled={!newName.trim() || createTag.isPending}
+          className="flex items-center gap-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          <Plus size={14} /> Tạo
+        </button>
+      </div>
+
+      {/* Danh sách tags */}
+      {tags.length === 0 ? (
+        <p className="text-sm text-gray-400 italic">Chưa có tag nào.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {tags.map(tag => (
+            <div key={tag.id} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-gray-50">
+              {editId === tag.id ? (
+                <>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {TAG_PALETTE.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => setEditColor(c)}
+                        style={{ backgroundColor: c }}
+                        className={`w-4 h-4 rounded-full border-2 transition-transform ${editColor === c ? 'border-gray-800 scale-110' : 'border-transparent'}`}
+                      />
+                    ))}
+                  </div>
+                  <input
+                    autoFocus
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') updateTag.mutate({ id: tag.id, name: editName.trim(), color: editColor })
+                      if (e.key === 'Escape') setEditId(null)
+                    }}
+                    className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={() => updateTag.mutate({ id: tag.id, name: editName.trim(), color: editColor })}
+                    disabled={!editName.trim()}
+                    className="p-1 text-green-600 hover:text-green-700 disabled:opacity-40"
+                  >
+                    <Check size={15} />
+                  </button>
+                  <button onClick={() => setEditId(null)} className="p-1 text-gray-400 hover:text-gray-600">
+                    <X size={15} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span
+                    className="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: tag.color }}
+                  />
+                  <span className="flex-1 text-sm text-gray-700 font-medium">{tag.name}</span>
+                  <span className="text-xs text-gray-400">{tag.node_count} node</span>
+                  <button onClick={() => startEdit(tag)} className="p-1 text-gray-400 hover:text-gray-600 transition-colors">
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!confirm(`Xóa tag "${tag.name}"? Tag sẽ bị gỡ khỏi ${tag.node_count} node.`)) return
+                      deleteTag.mutate(tag.id)
+                    }}
+                    className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -216,6 +377,9 @@ export default function SettingsPage() {
             <p className="text-xs text-red-500">Min phải nhỏ hơn Max.</p>
           )}
         </div>
+
+        {/* Tags */}
+        <TagManager />
 
         {/* Save */}
         <div className="flex justify-end">

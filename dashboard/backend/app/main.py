@@ -15,6 +15,7 @@ from app.database import Base, SessionLocal, engine
 from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
+from app.routers import tags as tags_router
 from app.scoring import calculate_score_for_day
 from app.telegram import send_telegram_message
 
@@ -261,3 +262,4 @@ app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(commands.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(errors_router.router, prefix="/api/v1")
+app.include_router(tags_router.router, prefix="/api/v1")

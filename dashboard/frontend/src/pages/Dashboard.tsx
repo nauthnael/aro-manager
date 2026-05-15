@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { NodeListResponse } from '../types'
+import { NodeListResponse, TagOut } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
@@ -32,12 +32,32 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
+  // Tag filter state
+  const [tagFilterIds, setTagFilterIds] = useState<number[]>([])
+  const [tagMode, setTagMode] = useState<'or' | 'and'>('or')
+  const [tagDropOpen, setTagDropOpen] = useState(false)
+  const tagDropRef = useRef<HTMLDivElement>(null)
+
+  // Bulk tag modal state
+  const [bulkTagOpen, setBulkTagOpen] = useState(false)
+  const [bulkAddIds, setBulkAddIds] = useState<Set<number>>(new Set())
+  const [bulkRemoveIds, setBulkRemoveIds] = useState<Set<number>>(new Set())
+
+  const { data: allTags = [] } = useQuery<TagOut[]>({
+    queryKey: ['tags'],
+    queryFn: () => api.get('/tags').then(r => r.data),
+  })
+
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
   if (search) params.set('search', search)
+  if (tagFilterIds.length > 0) {
+    params.set('tag_ids', tagFilterIds.join(','))
+    params.set('tag_mode', tagMode)
+  }
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search],
+    queryKey: ['nodes', statusFilter, search, tagFilterIds, tagMode],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
@@ -51,6 +71,31 @@ export default function Dashboard() {
       setSelectedIds(new Set())
     },
   })
+
+  const bulkTagMutation = useMutation({
+    mutationFn: ({ node_ids, add_tag_ids, remove_tag_ids }: { node_ids: string[]; add_tag_ids: number[]; remove_tag_ids: number[] }) =>
+      api.post('/dashboard/nodes/bulk-tags', { node_ids, add_tag_ids, remove_tag_ids }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['nodes'] })
+      setBulkTagOpen(false)
+      setBulkAddIds(new Set())
+      setBulkRemoveIds(new Set())
+    },
+  })
+
+  const handleBulkTag = () => {
+    const node_ids = [...selectedIds]
+    const add_tag_ids = [...bulkAddIds]
+    const remove_tag_ids = [...bulkRemoveIds]
+    if (add_tag_ids.length === 0 && remove_tag_ids.length === 0) return
+    bulkTagMutation.mutate({ node_ids, add_tag_ids, remove_tag_ids })
+  }
+
+  const handleTagClick = (tagId: number) => {
+    setTagFilterIds(prev => prev.includes(tagId) ? prev : [...prev, tagId])
+    setStatusFilter(null)
+    setSearch('')
+  }
 
   const handleBulkAction = (action: BulkAction) => {
     const ids = [...selectedIds]
@@ -117,6 +162,7 @@ export default function Dashboard() {
   const handleFilter = (f: string | null) => {
     setStatusFilter(f)
     setSearch('')
+    setTagFilterIds([])
     setSelectedIds(new Set())
   }
 
@@ -124,6 +170,10 @@ export default function Dashboard() {
     setSearch(v)
     setStatusFilter(null)
     setSelectedIds(new Set())
+  }
+
+  const removeTagFilter = (tagId: number) => {
+    setTagFilterIds(prev => prev.filter(id => id !== tagId))
   }
 
   const selectedCount = selectedIds.size
@@ -198,14 +248,101 @@ export default function Dashboard() {
             onChange={e => handleSearch(e.target.value)}
             className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+
+          {/* Tag filter dropdown */}
+          <div ref={tagDropRef} className="relative">
+            <button
+              onClick={() => setTagDropOpen(o => !o)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors ${tagFilterIds.length > 0 ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}
+            >
+              <TagIcon size={14} />
+              Tag{tagFilterIds.length > 0 ? ` (${tagFilterIds.length})` : ''}
+            </button>
+            {tagDropOpen && (
+              <div className="absolute left-0 top-11 z-20 w-56 bg-white border border-gray-200 rounded-xl shadow-lg py-1">
+                {allTags.length === 0 ? (
+                  <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có tag nào.</p>
+                ) : (
+                  <>
+                    {allTags.map(tag => {
+                      const active = tagFilterIds.includes(tag.id)
+                      return (
+                        <button
+                          key={tag.id}
+                          onClick={() => {
+                            setTagFilterIds(prev =>
+                              active ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
+                            )
+                            setStatusFilter(null)
+                            setSearch('')
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-left"
+                        >
+                          <span
+                            className="w-3 h-3 rounded-full flex-shrink-0 border-2"
+                            style={{ backgroundColor: active ? tag.color : 'transparent', borderColor: tag.color }}
+                          />
+                          <span className="text-sm text-gray-700 flex-1">{tag.name}</span>
+                          <span className="text-xs text-gray-400">{tag.node_count}</span>
+                        </button>
+                      )
+                    })}
+                    {tagFilterIds.length >= 2 && (
+                      <div className="border-t border-gray-100 px-3 py-2 flex items-center gap-2">
+                        <span className="text-xs text-gray-500">Chế độ lọc:</span>
+                        <button
+                          onClick={() => setTagMode('or')}
+                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${tagMode === 'or' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-blue-400'}`}
+                        >
+                          OR
+                        </button>
+                        <button
+                          onClick={() => setTagMode('and')}
+                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${tagMode === 'and' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-blue-400'}`}
+                        >
+                          AND
+                        </button>
+                      </div>
+                    )}
+                    {tagFilterIds.length > 0 && (
+                      <div className="border-t border-gray-100 px-3 py-1.5">
+                        <button
+                          onClick={() => setTagFilterIds([])}
+                          className="text-xs text-red-500 hover:text-red-700"
+                        >
+                          Xoá bộ lọc tag
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
           {statusFilter && (
             <button
               onClick={() => setStatusFilter(null)}
-              className="px-3 py-2 text-sm bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+              className="flex items-center gap-1 px-3 py-2 text-sm bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
             >
-              Filter: {statusFilter} ✕
+              {statusFilter} <X size={13} />
             </button>
           )}
+          {tagFilterIds.map(tid => {
+            const tag = allTags.find(t => t.id === tid)
+            if (!tag) return null
+            return (
+              <button
+                key={tid}
+                onClick={() => removeTagFilter(tid)}
+                className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-white rounded-lg"
+                style={{ backgroundColor: tag.color }}
+              >
+                {tag.name} <X size={11} />
+              </button>
+            )
+          })}
+
           <span className="text-sm text-gray-400 whitespace-nowrap">
             {visibleNodes.length} / {data?.total ?? 0} nodes
           </span>
@@ -244,6 +381,12 @@ export default function Dashboard() {
             >
               Xuất CSV ({selectedCount})
             </button>
+            <button
+              onClick={() => { setBulkTagOpen(true); setBulkAddIds(new Set()); setBulkRemoveIds(new Set()) }}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-lg hover:bg-teal-100 transition-colors"
+            >
+              <TagIcon size={14} /> Gắn/Gỡ Tag ({selectedCount})
+            </button>
             {BULK_ACTIONS.map(action => (
               <button
                 key={action.id}
@@ -259,6 +402,65 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Bulk tag modal */}
+        {bulkTagOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+              <h3 className="text-base font-semibold text-gray-800 mb-1">Gắn/Gỡ Tag</h3>
+              <p className="text-sm text-gray-500 mb-4">Áp dụng cho {selectedCount} node đã chọn.</p>
+              {allTags.length === 0 ? (
+                <p className="text-sm text-gray-400 italic mb-4">Chưa có tag nào. Hãy tạo tag trong Cài đặt.</p>
+              ) : (
+                <div className="space-y-1 mb-4 max-h-60 overflow-y-auto">
+                  {allTags.map(tag => {
+                    const adding = bulkAddIds.has(tag.id)
+                    const removing = bulkRemoveIds.has(tag.id)
+                    return (
+                      <div key={tag.id} className="flex items-center gap-2 py-1 px-1 rounded-lg hover:bg-gray-50">
+                        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} />
+                        <span className="flex-1 text-sm text-gray-700">{tag.name}</span>
+                        <button
+                          onClick={() => {
+                            setBulkAddIds(prev => { const n = new Set(prev); adding ? n.delete(tag.id) : n.add(tag.id); return n })
+                            setBulkRemoveIds(prev => { const n = new Set(prev); n.delete(tag.id); return n })
+                          }}
+                          className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${adding ? 'bg-green-500 text-white border-green-500' : 'text-green-600 border-green-400 hover:bg-green-50'}`}
+                        >
+                          + Gắn
+                        </button>
+                        <button
+                          onClick={() => {
+                            setBulkRemoveIds(prev => { const n = new Set(prev); removing ? n.delete(tag.id) : n.add(tag.id); return n })
+                            setBulkAddIds(prev => { const n = new Set(prev); n.delete(tag.id); return n })
+                          }}
+                          className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${removing ? 'bg-red-500 text-white border-red-500' : 'text-red-500 border-red-400 hover:bg-red-50'}`}
+                        >
+                          − Gỡ
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setBulkTagOpen(false)}
+                  className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                >
+                  Huỷ
+                </button>
+                <button
+                  onClick={handleBulkTag}
+                  disabled={bulkTagMutation.isPending || (bulkAddIds.size === 0 && bulkRemoveIds.size === 0)}
+                  className="px-4 py-2 text-sm text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50"
+                >
+                  {bulkTagMutation.isPending ? 'Đang áp dụng...' : 'Áp dụng'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="text-center py-20 text-gray-400">Đang tải danh sách node...</div>
         ) : (
@@ -266,6 +468,7 @@ export default function Dashboard() {
             nodes={visibleNodes}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
+            onTagClick={handleTagClick}
           />
         )}
       </main>
