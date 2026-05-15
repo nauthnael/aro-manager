@@ -15,9 +15,12 @@ from app.database import Base, SessionLocal, engine
 from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
+from app.routers import renew as renew_router
 from app.routers import tags as tags_router
+from app.backup import ensure_backup_dir, scheduled_backup
+from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
-from app.telegram import send_telegram_message
+from app.telegram import enqueue_telegram_message, flush_telegram_queue
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +30,97 @@ def migrate_db():
     ddl_migrations = [
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_min INTEGER DEFAULT 54",
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_max INTEGER DEFAULT 120",
+        "ALTER TABLE app_settings ADD COLUMN daily_report_enabled BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE node ADD COLUMN notes TEXT",
+        """CREATE TABLE IF NOT EXISTS node_renew_log (
+            id SERIAL PRIMARY KEY,
+            node_id VARCHAR(255) REFERENCES nodes(node_id) ON DELETE CASCADE,
+            renewed_at TIMESTAMP DEFAULT NOW(),
+            serial_before VARCHAR(255),
+            serial_after VARCHAR(255),
+            command_id INTEGER,
+            status VARCHAR(20) DEFAULT 'pending',
+            renew_count INTEGER DEFAULT 1,
+            monitored_at TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_node_renew_log_node_ts ON node_renew_log (node_id, renewed_at)",
+        "ALTER TABLE node_renew_log ADD COLUMN serial_after VARCHAR(255)",
+        "ALTER TABLE node_renew_log ADD COLUMN monitored_at TIMESTAMP",
+        "ALTER TABLE nodes ADD COLUMN proxy_user VARCHAR(255)",
+        "ALTER TABLE app_settings ADD COLUMN log_stale_restart_minutes INTEGER DEFAULT 5",
+        "ALTER TABLE nodes ADD COLUMN log_stale_restart_minutes INTEGER",
+        "ALTER TABLE app_settings ADD COLUMN node_tg_bot_token VARCHAR(200) DEFAULT ''",
+        "ALTER TABLE app_settings ADD COLUMN nodes_tg_enabled BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE commands ADD COLUMN payload TEXT",
+        "ALTER TABLE node_renew_log ADD COLUMN account_before VARCHAR(255)",
+        """CREATE TABLE IF NOT EXISTS node_account_history (
+            id SERIAL PRIMARY KEY,
+            node_id VARCHAR(255) REFERENCES nodes(node_id) ON DELETE CASCADE,
+            account VARCHAR(255) NOT NULL,
+            first_seen TIMESTAMP NOT NULL,
+            last_seen TIMESTAMP NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_node_account_history_node_ts ON node_account_history (node_id, first_seen)",
+        """CREATE TABLE IF NOT EXISTS ip_country_cache (
+            ip VARCHAR(50) PRIMARY KEY,
+            country_code VARCHAR(5) NOT NULL,
+            cached_at TIMESTAMP DEFAULT NOW()
+        )""",
+        # Add ON UPDATE CASCADE to all node_id FK constraints so hostname rename cascades automatically
+        "ALTER TABLE node_status DROP CONSTRAINT IF EXISTS node_status_node_id_fkey",
+        "ALTER TABLE node_status ADD CONSTRAINT node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_history DROP CONSTRAINT IF EXISTS node_history_node_id_fkey",
+        "ALTER TABLE node_history ADD CONSTRAINT node_history_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_error_log DROP CONSTRAINT IF EXISTS node_error_log_node_id_fkey",
+        "ALTER TABLE node_error_log ADD CONSTRAINT node_error_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_daily_score DROP CONSTRAINT IF EXISTS node_daily_score_node_id_fkey",
+        "ALTER TABLE node_daily_score ADD CONSTRAINT node_daily_score_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_renew_log DROP CONSTRAINT IF EXISTS node_renew_log_node_id_fkey",
+        "ALTER TABLE node_renew_log ADD CONSTRAINT node_renew_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_restart_log DROP CONSTRAINT IF EXISTS node_restart_log_node_id_fkey",
+        "ALTER TABLE node_restart_log ADD CONSTRAINT node_restart_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_offline_log DROP CONSTRAINT IF EXISTS node_offline_log_node_id_fkey",
+        "ALTER TABLE node_offline_log ADD CONSTRAINT node_offline_log_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE node_account_history DROP CONSTRAINT IF EXISTS node_account_history_node_id_fkey",
+        "ALTER TABLE node_account_history ADD CONSTRAINT node_account_history_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE commands DROP CONSTRAINT IF EXISTS commands_node_id_fkey",
+        "ALTER TABLE commands ADD CONSTRAINT commands_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE app_settings ADD COLUMN backup_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE app_settings ADD COLUMN backup_interval_hours INTEGER DEFAULT 24",
+        "ALTER TABLE app_settings ADD COLUMN backup_retention_count INTEGER DEFAULT 7",
     ]
-    with engine.connect() as conn:
-        for sql in ddl_migrations:
-            try:
+    for sql in ddl_migrations:
+        try:
+            with engine.begin() as conn:
                 conn.execute(text(sql))
-                conn.commit()
-            except Exception:
-                pass  # column already exists → ignore
+        except Exception:
+            pass  # column already exists → ignore
+
+    # Clear invalid "N/A" sentinel values from serial/account fields
+    cleanup_sqls = [
+        "UPDATE node_renew_log SET serial_after = NULL WHERE UPPER(serial_after) = 'N/A'",
+        "UPDATE node_renew_log SET serial_before = NULL WHERE UPPER(serial_before) = 'N/A'",
+        "UPDATE node_renew_log SET account_before = NULL WHERE UPPER(account_before) = 'N/A'",
+        "UPDATE nodes SET serial = NULL WHERE UPPER(serial) = 'N/A'",
+        "UPDATE nodes SET account = NULL WHERE UPPER(account) = 'N/A'",
+        "DELETE FROM node_account_history WHERE UPPER(account) = 'N/A'",
+        # Backfill serial_after: if node serial already changed from serial_before,
+        # set serial_after = current node serial (covers rows where "N/A" was just cleared)
+        """UPDATE node_renew_log nrl
+           SET serial_after = n.serial
+           FROM nodes n
+           WHERE nrl.node_id = n.node_id
+             AND nrl.serial_after IS NULL
+             AND n.serial IS NOT NULL
+             AND nrl.serial_before IS NOT NULL
+             AND n.serial != nrl.serial_before""",
+    ]
+    for sql in cleanup_sqls:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(sql))
+        except Exception:
+            pass
 
     # Migrate existing NodeOfflineLog rows into NodeErrorLog
     migrate_sql = """
@@ -72,6 +158,9 @@ def init_db():
         if not db.query(models.AppSettings).filter(models.AppSettings.id == 1).first():
             db.add(models.AppSettings(id=1))
             db.commit()
+
+        warm_ip_cache(db)
+        ensure_backup_dir()
     finally:
         db.close()
 
@@ -140,7 +229,7 @@ def check_offline_alerts():
                     node = db.query(models.Node).filter(models.Node.node_id == ns.node_id).first()
                     account = node.account if node else ns.node_id
                     minutes = int((now - open_log.offline_at).total_seconds() / 60)
-                    send_telegram_message(
+                    enqueue_telegram_message(
                         cfg.tg_critical,
                         f"🔴 <b>Node Offline</b>\n"
                         f"Host: <code>{ns.node_id}</code>\n"
@@ -206,6 +295,97 @@ def calculate_daily_scores():
         db.close()
 
 
+def check_renew_monitoring():
+    """Runs every 5 min — after 30 min post-renew, check if node recovered and notify via Telegram."""
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        window_start = now - timedelta(minutes=35)
+        window_end = now - timedelta(minutes=25)
+
+        pending_logs = (
+            db.query(models.NodeRenewLog)
+            .filter(
+                models.NodeRenewLog.renewed_at >= window_start,
+                models.NodeRenewLog.renewed_at <= window_end,
+                models.NodeRenewLog.monitored_at.is_(None),
+            )
+            .all()
+        )
+
+        if not pending_logs:
+            return
+
+        cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+
+        for log in pending_logs:
+            status = db.query(models.NodeStatus).filter(models.NodeStatus.node_id == log.node_id).first()
+            node = db.query(models.Node).filter(models.Node.node_id == log.node_id).first()
+
+            is_online = (
+                status is not None
+                and status.aro_status == "Online"
+                and status.last_seen is not None
+                and (now - status.last_seen).total_seconds() < settings.stale_threshold_secs
+            )
+
+            serial_line = ""
+            if log.serial_after and log.serial_after != log.serial_before:
+                serial_line = f"\nSerial: <code>{log.serial_before}</code> → <code>{log.serial_after}</code>"
+            elif log.serial_before:
+                serial_line = f"\nSerial: <code>{log.serial_before}</code> (chưa đổi)"
+
+            icon = "✅" if is_online else "⚠️"
+            status_text = status.aro_status if status else "Unknown"
+            account_text = node.account if node else "—"
+
+            msg = (
+                f"{icon} <b>Kiểm tra sau Renew</b>\n"
+                f"Host: <code>{log.node_id}</code>\n"
+                f"Account: {account_text}\n"
+                f"Trạng thái: <b>{status_text}</b>\n"
+                f"Renew lần #{log.renew_count}"
+                + serial_line
+            )
+
+            if cfg and cfg.tg_info:
+                enqueue_telegram_message(cfg.tg_info, msg)
+
+            log.monitored_at = now
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("check_renew_monitoring error: %s", exc)
+    finally:
+        db.close()
+
+
+def scheduled_backup_task():
+    db = SessionLocal()
+    try:
+        cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+        if not cfg or not cfg.backup_enabled:
+            return
+        scheduled_backup(
+            db,
+            interval_hours=cfg.backup_interval_hours or 24,
+            retention_count=cfg.backup_retention_count or 7,
+        )
+    except Exception as exc:
+        logger.error("scheduled_backup_task error: %s", exc)
+    finally:
+        db.close()
+
+
+def refresh_ip_countries_task():
+    db = SessionLocal()
+    try:
+        refresh_ip_countries(db)
+    finally:
+        db.close()
+
+
 def cleanup_old_data():
     db = SessionLocal()
     try:
@@ -241,7 +421,11 @@ async def lifespan(app: FastAPI):
     init_db()
     scheduler.add_job(cleanup_old_data, "interval", hours=6)
     scheduler.add_job(check_offline_alerts, "interval", minutes=2)
+    scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
+    scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
+    scheduler.add_job(refresh_ip_countries_task, "interval", minutes=10)
+    scheduler.add_job(scheduled_backup_task, "interval", hours=1)
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -262,4 +446,5 @@ app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(commands.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(errors_router.router, prefix="/api/v1")
+app.include_router(renew_router.router, prefix="/api/v1")
 app.include_router(tags_router.router, prefix="/api/v1")

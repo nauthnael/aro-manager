@@ -1,12 +1,16 @@
-import { useRef, useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, Tag as TagIcon, X } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
+import TelegramHealthBanner from '../components/TelegramHealthBanner'
 import { copyToClipboard } from '../utils/clipboard'
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
 
 type BulkAction = 'update_script' | 'install_scrot'
 
@@ -26,41 +30,74 @@ const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n
 ]
 
 export default function Dashboard() {
+  useEffect(() => { document.title = '💲 ARO Dashboard' }, [])
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-
-  // Tag filter state
+  const [noPointsYesterday, setNoPointsYesterday] = useState(false)
+  const [noPointsAvg, setNoPointsAvg] = useState(false)
+  const [excludeNewNodes, setExcludeNewNodes] = useState(false)
+  const [needsRenewFilter, setNeedsRenewFilter] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
   const [tagFilterIds, setTagFilterIds] = useState<number[]>([])
   const [tagMode, setTagMode] = useState<'or' | 'and'>('or')
   const [tagDropOpen, setTagDropOpen] = useState(false)
   const tagDropRef = useRef<HTMLDivElement>(null)
-
-  // Bulk tag modal state
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
-  const [bulkAddIds, setBulkAddIds] = useState<Set<number>>(new Set())
-  const [bulkRemoveIds, setBulkRemoveIds] = useState<Set<number>>(new Set())
+  const [bulkAddIds, setBulkAddIds] = useState<number[]>([])
+  const [bulkRemoveIds, setBulkRemoveIds] = useState<number[]>([])
 
-  const { data: allTags = [] } = useQuery<TagOut[]>({
-    queryKey: ['tags'],
-    queryFn: () => api.get('/tags').then(r => r.data),
-  })
+  const sortBy = sorting[0]?.id ?? 'node_id'
+  const sortDir = sorting[0]?.desc ? 'desc' : 'asc'
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
   if (search) params.set('search', search)
+  if (noPointsYesterday) params.set('no_points_yesterday', 'true')
+  if (noPointsAvg)       params.set('no_points_avg', 'true')
+  if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
+  params.set('page', String(page))
+  params.set('page_size', String(pageSize))
+  params.set('sort_by', sortBy)
+  params.set('sort_dir', sortDir)
   if (tagFilterIds.length > 0) {
     params.set('tag_ids', tagFilterIds.join(','))
     params.set('tag_mode', tagMode)
   }
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search, tagFilterIds, tagMode],
+    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
+
+  const { data: allTags = [] } = useQuery<TagOut[]>({
+    queryKey: ['tags'],
+    queryFn: () => api.get('/tags').then(r => r.data),
+  })
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (tagDropRef.current && !tagDropRef.current.contains(e.target as Node)) setTagDropOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleSortingChange = (s: SortingState) => {
+    setSorting(s)
+    setPage(1)
+  }
+
+  const handlePageSize = (size: number) => {
+    setPageSize(size)
+    setPage(1)
+    setSelectedIds(new Set())
+  }
 
   const bulkSend = useMutation({
     mutationFn: ({ action, node_ids }: { action: string; node_ids: string[] }) =>
@@ -75,26 +112,22 @@ export default function Dashboard() {
   const bulkTagMutation = useMutation({
     mutationFn: ({ node_ids, add_tag_ids, remove_tag_ids }: { node_ids: string[]; add_tag_ids: number[]; remove_tag_ids: number[] }) =>
       api.post('/dashboard/nodes/bulk-tags', { node_ids, add_tag_ids, remove_tag_ids }).then(r => r.data),
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['nodes'] })
       setBulkTagOpen(false)
-      setBulkAddIds(new Set())
-      setBulkRemoveIds(new Set())
+      setBulkAddIds([])
+      setBulkRemoveIds([])
+      alert(`Đã cập nhật tag cho ${result.updated} node.`)
     },
   })
 
   const handleBulkTag = () => {
-    const node_ids = [...selectedIds]
-    const add_tag_ids = [...bulkAddIds]
-    const remove_tag_ids = [...bulkRemoveIds]
-    if (add_tag_ids.length === 0 && remove_tag_ids.length === 0) return
-    bulkTagMutation.mutate({ node_ids, add_tag_ids, remove_tag_ids })
-  }
-
-  const handleTagClick = (tagId: number) => {
-    setTagFilterIds(prev => prev.includes(tagId) ? prev : [...prev, tagId])
-    setStatusFilter(null)
-    setSearch('')
+    const ids = [...selectedIds]
+    if (bulkAddIds.length === 0 && bulkRemoveIds.length === 0) {
+      alert('Chưa chọn tag nào để thêm hoặc gỡ.')
+      return
+    }
+    bulkTagMutation.mutate({ node_ids: ids, add_tag_ids: bulkAddIds, remove_tag_ids: bulkRemoveIds })
   }
 
   const handleBulkAction = (action: BulkAction) => {
@@ -159,32 +192,55 @@ export default function Dashboard() {
     navigate('/login')
   }
 
+  const handleTagClick = (tagId: number) => {
+    setTagFilterIds([tagId])
+    setTagMode('or')
+    setStatusFilter(null)
+    setSearch('')
+    setNoPointsYesterday(false)
+    setNoPointsAvg(false)
+    setNeedsRenewFilter(false)
+    setSelectedIds(new Set())
+    setPage(1)
+  }
+
+  const removeTagFilter = (tagId: number) => {
+    setTagFilterIds(ids => ids.filter(id => id !== tagId))
+    setPage(1)
+  }
+
   const handleFilter = (f: string | null) => {
     setStatusFilter(f)
     setSearch('')
+    setNoPointsYesterday(false)
+    setNoPointsAvg(false)
+    setExcludeNewNodes(false)
+    setNeedsRenewFilter(false)
     setTagFilterIds([])
     setSelectedIds(new Set())
+    setPage(1)
   }
 
   const handleSearch = (v: string) => {
     setSearch(v)
     setStatusFilter(null)
+    setNoPointsYesterday(false)
+    setNoPointsAvg(false)
+    setNeedsRenewFilter(false)
     setSelectedIds(new Set())
-  }
-
-  const removeTagFilter = (tagId: number) => {
-    setTagFilterIds(prev => prev.filter(id => id !== tagId))
+    setPage(1)
   }
 
   const selectedCount = selectedIds.size
-  const visibleNodes = data?.nodes ?? []
+  const allNodes = data?.nodes ?? []
+  const visibleNodes = needsRenewFilter ? allNodes.filter(n => n.needs_renew) : allNodes
 
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold text-gray-800">ARO Dashboard</h1>
+            <h1 className="text-lg font-bold text-gray-800">💲 ARO Dashboard</h1>
             <p className="text-xs text-gray-400">
               {dataUpdatedAt
                 ? `Cập nhật lúc ${new Date(dataUpdatedAt).toLocaleTimeString('vi-VN')} · tự refresh 30s`
@@ -207,6 +263,14 @@ export default function Dashboard() {
             >
               <ShieldAlert size={15} />
               <span className="hidden sm:inline">Chất lượng Node</span>
+            </button>
+            <button
+              onClick={() => navigate('/renew')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-600 hover:text-orange-800 hover:bg-orange-50 rounded-lg transition-colors"
+              title="Renew Node"
+            >
+              <RotateCcw size={15} />
+              <span className="hidden sm:inline">Renew Node</span>
             </button>
             <button
               onClick={() => navigate('/settings')}
@@ -236,6 +300,8 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
+        <TelegramHealthBanner />
+
         {data && (
           <StatsCards stats={data} activeFilter={statusFilter} onFilter={handleFilter} />
         )}
@@ -243,110 +309,231 @@ export default function Dashboard() {
         <div className="flex items-center gap-3 flex-wrap">
           <input
             type="text"
-            placeholder="Tìm theo hostname hoặc account..."
+            placeholder="Tìm theo hostname, account hoặc serial..."
             value={search}
             onChange={e => handleSearch(e.target.value)}
             className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-
-          {/* Tag filter dropdown */}
-          <div ref={tagDropRef} className="relative">
+          {statusFilter && (
             <button
-              onClick={() => setTagDropOpen(o => !o)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors ${tagFilterIds.length > 0 ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}
+              onClick={() => setStatusFilter(null)}
+              className="px-3 py-2 text-sm bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
             >
-              <TagIcon size={14} />
-              Tag{tagFilterIds.length > 0 ? ` (${tagFilterIds.length})` : ''}
+              Filter: {statusFilter} ✕
             </button>
-            {tagDropOpen && (
-              <div className="absolute left-0 top-11 z-20 w-56 bg-white border border-gray-200 rounded-xl shadow-lg py-1">
-                {allTags.length === 0 ? (
-                  <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có tag nào.</p>
-                ) : (
-                  <>
+          )}
+          {allTags.length > 0 && (
+            <div ref={tagDropRef} className="relative">
+              <button
+                onClick={() => setTagDropOpen(o => !o)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg transition-colors ${tagFilterIds.length > 0 ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+              >
+                <TagIcon size={14} />
+                Tags
+                {tagFilterIds.length > 0 && <span className="bg-white text-blue-700 text-xs px-1.5 py-0.5 rounded-full font-bold">{tagFilterIds.length}</span>}
+              </button>
+              {tagDropOpen && (
+                <div className="absolute left-0 top-10 z-20 w-64 bg-white border border-gray-200 rounded-xl shadow-lg py-2">
+                  <div className="flex items-center gap-2 px-3 pb-2 border-b border-gray-100">
+                    <span className="text-xs text-gray-500 flex-1">Chế độ lọc:</span>
+                    <button
+                      onClick={() => setTagMode('or')}
+                      className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${tagMode === 'or' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      Bất kỳ (OR)
+                    </button>
+                    <button
+                      onClick={() => setTagMode('and')}
+                      className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${tagMode === 'and' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      Tất cả (AND)
+                    </button>
+                  </div>
+                  <div className="py-1 max-h-56 overflow-y-auto">
                     {allTags.map(tag => {
                       const active = tagFilterIds.includes(tag.id)
                       return (
                         <button
                           key={tag.id}
                           onClick={() => {
-                            setTagFilterIds(prev =>
-                              active ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
-                            )
-                            setStatusFilter(null)
-                            setSearch('')
+                            setTagFilterIds(ids => active ? ids.filter(id => id !== tag.id) : [...ids, tag.id])
+                            setPage(1)
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-left"
                         >
-                          <span
-                            className="w-3 h-3 rounded-full flex-shrink-0 border-2"
-                            style={{ backgroundColor: active ? tag.color : 'transparent', borderColor: tag.color }}
-                          />
+                          <span className="w-3 h-3 rounded-full flex-shrink-0 border-2 transition-colors"
+                            style={{ backgroundColor: active ? tag.color : 'transparent', borderColor: tag.color }} />
                           <span className="text-sm text-gray-700 flex-1">{tag.name}</span>
                           <span className="text-xs text-gray-400">{tag.node_count}</span>
                         </button>
                       )
                     })}
-                    {tagFilterIds.length >= 2 && (
-                      <div className="border-t border-gray-100 px-3 py-2 flex items-center gap-2">
-                        <span className="text-xs text-gray-500">Chế độ lọc:</span>
-                        <button
-                          onClick={() => setTagMode('or')}
-                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${tagMode === 'or' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-blue-400'}`}
-                        >
-                          OR
-                        </button>
-                        <button
-                          onClick={() => setTagMode('and')}
-                          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${tagMode === 'and' ? 'bg-blue-600 text-white border-blue-600' : 'text-gray-600 border-gray-300 hover:border-blue-400'}`}
-                        >
-                          AND
-                        </button>
-                      </div>
-                    )}
-                    {tagFilterIds.length > 0 && (
-                      <div className="border-t border-gray-100 px-3 py-1.5">
-                        <button
-                          onClick={() => setTagFilterIds([])}
-                          className="text-xs text-red-500 hover:text-red-700"
-                        >
-                          Xoá bộ lọc tag
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {statusFilter && (
-            <button
-              onClick={() => setStatusFilter(null)}
-              className="flex items-center gap-1 px-3 py-2 text-sm bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
-            >
-              {statusFilter} <X size={13} />
-            </button>
+                  </div>
+                  {tagFilterIds.length > 0 && (
+                    <div className="px-3 pt-2 border-t border-gray-100">
+                      <button
+                        onClick={() => { setTagFilterIds([]); setPage(1) }}
+                        className="text-xs text-red-500 hover:text-red-700"
+                      >
+                        Xóa bộ lọc tag
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
-          {tagFilterIds.map(tid => {
-            const tag = allTags.find(t => t.id === tid)
-            if (!tag) return null
-            return (
-              <button
-                key={tid}
-                onClick={() => removeTagFilter(tid)}
-                className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-white rounded-lg"
-                style={{ backgroundColor: tag.color }}
-              >
-                {tag.name} <X size={11} />
-              </button>
-            )
-          })}
-
+          {tagFilterIds.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {tagFilterIds.map(tid => {
+                const tag = allTags.find(t => t.id === tid)
+                if (!tag) return null
+                return (
+                  <span key={tid} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium text-white" style={{ backgroundColor: tag.color }}>
+                    {tag.name}
+                    <button onClick={() => removeTagFilter(tid)} className="opacity-70 hover:opacity-100 ml-0.5"><X size={11} /></button>
+                  </span>
+                )
+              })}
+            </div>
+          )}
           <span className="text-sm text-gray-400 whitespace-nowrap">
-            {visibleNodes.length} / {data?.total ?? 0} nodes
+            {data?.total_filtered ?? 0} / {data?.total ?? 0} nodes
           </span>
         </div>
+
+        {/* Point filters */}
+        <div className="flex items-center gap-4 flex-wrap text-sm text-gray-600">
+          {(data?.needs_renew_count ?? 0) > 0 && (
+            <button
+              onClick={() => {
+                setNeedsRenewFilter(v => !v)
+                setStatusFilter(null)
+                setSearch('')
+                setNoPointsYesterday(false)
+                setNoPointsAvg(false)
+                setSelectedIds(new Set())
+                setPage(1)
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-medium transition-colors ${
+                needsRenewFilter
+                  ? 'bg-orange-500 border-orange-500 text-white'
+                  : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'
+              }`}
+            >
+              <RotateCcw size={13} />
+              Cần renew
+              <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                needsRenewFilter ? 'bg-orange-400 text-white' : 'bg-orange-200 text-orange-800'
+              }`}>
+                {data?.needs_renew_count}
+              </span>
+            </button>
+          )}
+          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
+            ${noPointsYesterday ? 'bg-orange-50 border-orange-300 text-orange-700' : 'border-gray-200 hover:border-gray-300'}`}>
+            <input
+              type="checkbox"
+              checked={noPointsYesterday}
+              onChange={e => {
+                setNoPointsYesterday(e.target.checked)
+                setStatusFilter(null)
+                setSearch('')
+                setNeedsRenewFilter(false)
+                setSelectedIds(new Set())
+                setPage(1)
+              }}
+              className="accent-orange-500"
+            />
+            Không điểm hôm qua
+          </label>
+          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
+            ${noPointsAvg ? 'bg-red-50 border-red-300 text-red-700' : 'border-gray-200 hover:border-gray-300'}`}>
+            <input
+              type="checkbox"
+              checked={noPointsAvg}
+              onChange={e => {
+                setNoPointsAvg(e.target.checked)
+                setStatusFilter(null)
+                setSearch('')
+                setNeedsRenewFilter(false)
+                setSelectedIds(new Set())
+                setPage(1)
+              }}
+              className="accent-red-500"
+            />
+            Trung bình 0 điểm
+          </label>
+          {(noPointsYesterday || noPointsAvg) && (
+            <label className="flex items-center gap-2 cursor-pointer select-none text-gray-500 border-l pl-4 ml-1">
+              <input
+                type="checkbox"
+                checked={excludeNewNodes}
+                onChange={e => { setExcludeNewNodes(e.target.checked); setPage(1) }}
+                className="accent-gray-500"
+              />
+              Chỉ node hoạt động trên 1 ngày
+            </label>
+          )}
+        </div>
+
+        {/* Pagination + Page size */}
+        {data && (
+          <div className="flex items-center gap-3 justify-between flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-2.5 shadow-sm">
+            {/* Page size selector */}
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span>Hiển thị</span>
+              <div className="flex gap-1">
+                {PAGE_SIZE_OPTIONS.map(size => (
+                  <button
+                    key={size}
+                    onClick={() => handlePageSize(size)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      pageSize === size
+                        ? 'bg-blue-600 text-white'
+                        : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+              <span className="text-gray-400">/ trang</span>
+            </div>
+
+            {/* Page info + navigation */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500 whitespace-nowrap">
+                Trang <span className="font-medium text-gray-700">{data.page}</span> / {data.total_pages}
+                <span className="text-gray-400 ml-2">({data.total_filtered.toLocaleString()} nodes)</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page <= 1}
+                  className="px-2 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                  title="Trang đầu"
+                >«</button>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >← Trước</button>
+                <button
+                  onClick={() => setPage(p => Math.min(data.total_pages, p + 1))}
+                  disabled={page >= data.total_pages}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >Tiếp →</button>
+                <button
+                  onClick={() => setPage(data.total_pages)}
+                  disabled={page >= data.total_pages}
+                  className="px-2 py-1.5 text-sm border border-gray-300 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                  title="Trang cuối"
+                >»</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Bulk action bar */}
         {selectedCount > 0 && (
@@ -381,12 +568,15 @@ export default function Dashboard() {
             >
               Xuất CSV ({selectedCount})
             </button>
-            <button
-              onClick={() => { setBulkTagOpen(true); setBulkAddIds(new Set()); setBulkRemoveIds(new Set()) }}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-lg hover:bg-teal-100 transition-colors"
-            >
-              <TagIcon size={14} /> Gắn/Gỡ Tag ({selectedCount})
-            </button>
+            {allTags.length > 0 && (
+              <button
+                onClick={() => setBulkTagOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                <TagIcon size={14} />
+                Gắn/Gỡ Tag ({selectedCount})
+              </button>
+            )}
             {BULK_ACTIONS.map(action => (
               <button
                 key={action.id}
@@ -402,59 +592,66 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Bulk tag modal */}
         {bulkTagOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
-              <h3 className="text-base font-semibold text-gray-800 mb-1">Gắn/Gỡ Tag</h3>
-              <p className="text-sm text-gray-500 mb-4">Áp dụng cho {selectedCount} node đã chọn.</p>
-              {allTags.length === 0 ? (
-                <p className="text-sm text-gray-400 italic mb-4">Chưa có tag nào. Hãy tạo tag trong Cài đặt.</p>
-              ) : (
-                <div className="space-y-1 mb-4 max-h-60 overflow-y-auto">
-                  {allTags.map(tag => {
-                    const adding = bulkAddIds.has(tag.id)
-                    const removing = bulkRemoveIds.has(tag.id)
-                    return (
-                      <div key={tag.id} className="flex items-center gap-2 py-1 px-1 rounded-lg hover:bg-gray-50">
-                        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color }} />
-                        <span className="flex-1 text-sm text-gray-700">{tag.name}</span>
-                        <button
-                          onClick={() => {
-                            setBulkAddIds(prev => { const n = new Set(prev); adding ? n.delete(tag.id) : n.add(tag.id); return n })
-                            setBulkRemoveIds(prev => { const n = new Set(prev); n.delete(tag.id); return n })
-                          }}
-                          className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${adding ? 'bg-green-500 text-white border-green-500' : 'text-green-600 border-green-400 hover:bg-green-50'}`}
-                        >
-                          + Gắn
-                        </button>
-                        <button
-                          onClick={() => {
-                            setBulkRemoveIds(prev => { const n = new Set(prev); removing ? n.delete(tag.id) : n.add(tag.id); return n })
-                            setBulkAddIds(prev => { const n = new Set(prev); n.delete(tag.id); return n })
-                          }}
-                          className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${removing ? 'bg-red-500 text-white border-red-500' : 'text-red-500 border-red-400 hover:bg-red-50'}`}
-                        >
-                          − Gỡ
-                        </button>
-                      </div>
-                    )
-                  })}
+            <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-gray-800">Gắn/Gỡ Tag ({selectedCount} node)</h3>
+                <button onClick={() => { setBulkTagOpen(false); setBulkAddIds([]); setBulkRemoveIds([]) }} className="p-1 text-gray-400 hover:text-gray-600">
+                  <X size={16} />
+                </button>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-2 font-medium">Thêm tag:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {allTags.map(tag => (
+                    <button
+                      key={tag.id}
+                      onClick={() => setBulkAddIds(ids => ids.includes(tag.id) ? ids.filter(id => id !== tag.id) : [...ids, tag.id])}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium transition-opacity border-2"
+                      style={{
+                        backgroundColor: bulkAddIds.includes(tag.id) ? tag.color : 'transparent',
+                        borderColor: tag.color,
+                        color: bulkAddIds.includes(tag.id) ? 'white' : tag.color,
+                      }}
+                    >
+                      {tag.name}
+                    </button>
+                  ))}
                 </div>
-              )}
-              <div className="flex gap-3 justify-end">
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-2 font-medium">Gỡ tag:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {allTags.map(tag => (
+                    <button
+                      key={tag.id}
+                      onClick={() => setBulkRemoveIds(ids => ids.includes(tag.id) ? ids.filter(id => id !== tag.id) : [...ids, tag.id])}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium transition-opacity border-2"
+                      style={{
+                        backgroundColor: bulkRemoveIds.includes(tag.id) ? '#ef4444' : 'transparent',
+                        borderColor: bulkRemoveIds.includes(tag.id) ? '#ef4444' : '#9ca3af',
+                        color: bulkRemoveIds.includes(tag.id) ? 'white' : '#9ca3af',
+                      }}
+                    >
+                      {tag.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end pt-2">
                 <button
-                  onClick={() => setBulkTagOpen(false)}
+                  onClick={() => { setBulkTagOpen(false); setBulkAddIds([]); setBulkRemoveIds([]) }}
                   className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
                 >
                   Huỷ
                 </button>
                 <button
                   onClick={handleBulkTag}
-                  disabled={bulkTagMutation.isPending || (bulkAddIds.size === 0 && bulkRemoveIds.size === 0)}
-                  className="px-4 py-2 text-sm text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50"
+                  disabled={bulkTagMutation.isPending}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {bulkTagMutation.isPending ? 'Đang áp dụng...' : 'Áp dụng'}
+                  {bulkTagMutation.isPending ? 'Đang cập nhật...' : 'Xác nhận'}
                 </button>
               </div>
             </div>
@@ -468,6 +665,8 @@ export default function Dashboard() {
             nodes={visibleNodes}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
             onTagClick={handleTagClick}
           />
         )}

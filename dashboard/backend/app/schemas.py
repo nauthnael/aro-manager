@@ -29,6 +29,7 @@ class NodeReportRequest(BaseModel):
     public_ip: str = ""
     proxy_host: str = ""
     proxy_port: int = 0
+    proxy_user: str = ""
     serial: str = ""
     account: str = ""
     script_version: str = ""
@@ -37,6 +38,7 @@ class NodeReportRequest(BaseModel):
 class PendingCommand(BaseModel):
     id: int
     action: str
+    payload: Optional[str] = None
 
 
 class NodeReportResponse(BaseModel):
@@ -44,6 +46,8 @@ class NodeReportResponse(BaseModel):
     commands: List[PendingCommand] = []
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
+    daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
 
 
 # --- Command complete (node → backend) ---
@@ -107,8 +111,13 @@ class NodeStatusOut(BaseModel):
     serial: Optional[str] = None
     proxy_host: Optional[str] = None
     proxy_port: Optional[int] = None
+    proxy_user: Optional[str] = None
     notes: Optional[str] = None
     tags: List[TagRef] = []
+    first_seen: Optional[datetime] = None
+    renew_count: int = 0
+    needs_renew: bool = False
+    country_code: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -117,11 +126,16 @@ class NodeStatusOut(BaseModel):
 class NodeListResponse(BaseModel):
     nodes: List[NodeStatusOut]
     total: int
+    total_filtered: int
+    page: int
+    page_size: int
+    total_pages: int
     online: int
     offline: int
     no_internet: int
     unbound: int
     stale: int
+    needs_renew_count: int = 0
 
 
 class HistoryPoint(BaseModel):
@@ -146,6 +160,8 @@ class NodeDetailResponse(BaseModel):
     node: NodeStatusOut
     history: List[HistoryPoint]
     restart_events: List[RestartEventOut] = []
+    node_log_stale_restart_minutes: Optional[int] = None
+    global_log_stale_restart_minutes: int = 5
 
 
 class CommandOut(BaseModel):
@@ -172,6 +188,16 @@ class UpdateNotesRequest(BaseModel):
     notes: str
 
 
+class RenameNodeRequest(BaseModel):
+    new_node_id: str
+
+
+class RenameNodeResponse(BaseModel):
+    ok: bool
+    old_node_id: str
+    new_node_id: str
+
+
 class AccountStatsOut(BaseModel):
     account: str
     total: int
@@ -192,6 +218,13 @@ class SettingsOut(BaseModel):
     alert_offline_minutes: int
     periodic_restart_min: int
     periodic_restart_max: int
+    daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
+    node_tg_bot_token: str = ""
+    nodes_tg_enabled: bool = True
+    backup_enabled: bool = False
+    backup_interval_hours: int = 24
+    backup_retention_count: int = 7
 
     class Config:
         from_attributes = True
@@ -205,6 +238,59 @@ class SettingsIn(BaseModel):
     alert_offline_minutes: int = 10
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
+    daily_report_enabled: bool = True
+    log_stale_restart_minutes: int = 5
+    node_tg_bot_token: str = ""
+    backup_enabled: bool = False
+    backup_interval_hours: int = 24
+    backup_retention_count: int = 7
+
+
+class BackupFileInfo(BaseModel):
+    filename: str
+    size: int
+    created_at: datetime
+
+
+class DatabaseStatusOut(BaseModel):
+    db_size: str
+    db_size_bytes: int
+    pg_version: str
+    host: str
+    dbname: str
+    counts: dict
+    table_sizes: List[dict]
+    error: Optional[str] = None
+
+
+class NodeSettingsIn(BaseModel):
+    log_stale_restart_minutes: Optional[int] = None
+
+
+class TeleBroadcastRequest(BaseModel):
+    action: str  # "tele_off" | "tele_on"
+
+
+class TeleBroadcastResponse(BaseModel):
+    sent: int
+    action: str
+    nodes_tg_enabled: bool
+
+
+class BroadcastTgChatIdRequest(BaseModel):
+    tg_chat_id: str  # new chat_id:thread_id value
+
+
+class BroadcastTgTokenRequest(BaseModel):
+    tg_bot_token: str  # new bot token
+
+
+class BroadcastResponse(BaseModel):
+    sent: int
+
+
+class SetProxyRequest(BaseModel):
+    proxy: str  # host:port:user:pass
 
 
 class TestTelegramRequest(BaseModel):
@@ -226,3 +312,84 @@ class BulkCommandRequest(BaseModel):
 class BulkCommandResponse(BaseModel):
     created: int
     skipped: int
+
+
+# --- Renew ---
+
+class RenewCandidateOut(BaseModel):
+    node_id: str
+    account: Optional[str] = None
+    serial: Optional[str] = None
+    aro_status: Optional[str] = None
+    reward_yesterday: Optional[float] = None
+    uptime_ratio: Optional[float] = None
+    last_seen: Optional[datetime] = None
+    is_stale: bool
+    renew_count: int = 0
+    last_renewed_at: Optional[datetime] = None
+    last_renew_status: Optional[str] = None
+    cooldown_until: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RenewCandidatesResponse(BaseModel):
+    nodes: List[RenewCandidateOut]
+    total: int
+
+
+class RenewTriggerRequest(BaseModel):
+    node_id: str
+
+
+class BulkRenewRequest(BaseModel):
+    node_ids: List[str]
+
+
+class RenewTriggerResponse(BaseModel):
+    ok: bool
+    message: str
+    command_id: Optional[int] = None
+
+
+class BulkRenewResponse(BaseModel):
+    triggered: int
+    skipped: int
+    details: List[dict]
+
+
+class RenewLogOut(BaseModel):
+    id: int
+    node_id: str
+    account: Optional[str] = None
+    renewed_at: datetime
+    serial_before: Optional[str] = None
+    serial_after: Optional[str] = None
+    account_before: Optional[str] = None
+    command_id: Optional[int] = None
+    status: str
+    renew_count: int
+    monitored_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RenewHistoryResponse(BaseModel):
+    logs: List[RenewLogOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class NodeAccountHistoryOut(BaseModel):
+    id: int
+    node_id: str
+    account: str
+    first_seen: datetime
+    last_seen: datetime
+
+    class Config:
+        from_attributes = True

@@ -3,13 +3,13 @@ import {
   createColumnHelper,
   flexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
   type SortingState,
 } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
+import { RotateCcw } from 'lucide-react'
 import { NodeStatus } from '../types'
 import StatusBadge from './StatusBadge'
 import api from '../api/client'
@@ -20,10 +20,17 @@ interface UpdateTarget {
   version: string | null
 }
 
+interface EditingNote {
+  node_id: string
+  value: string
+}
+
 interface Props {
   nodes: NodeStatus[]
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void
+  sorting: SortingState
+  onSortingChange: (s: SortingState) => void
   onTagClick?: (tagId: number) => void
 }
 
@@ -31,11 +38,23 @@ const col = createColumnHelper<NodeStatus>()
 
 const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange, onTagClick }: Props) {
+const toFlagEmoji = (cc: string) =>
+  cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
+
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
+  const [editingNote, setEditingNote] = useState<EditingNote | null>(null)
+
+  const saveNote = useMutation({
+    mutationFn: ({ node_id, notes }: { node_id: string; notes: string }) =>
+      api.put(`/dashboard/nodes/${encodeURIComponent(node_id)}/notes`, { notes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['nodes'] })
+      setEditingNote(null)
+    },
+  })
 
   const sendUpdate = useMutation({
     mutationFn: (node_id: string) =>
@@ -92,16 +111,34 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, onTag
           />
         ),
       }),
-      col.accessor('node_id', {
+      col.accessor(row => ({ id: row.node_id, needs_renew: row.needs_renew, country_code: row.country_code }), {
+        id: 'node_id',
         header: 'Hostname',
-        cell: info => (
-          <button
-            onClick={() => navigate(`/nodes/${encodeURIComponent(info.getValue())}`)}
-            className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
-          >
-            {info.getValue()}
-          </button>
-        ),
+        sortingFn: (a, b) => a.original.node_id.localeCompare(b.original.node_id),
+        cell: info => {
+          const { id, needs_renew, country_code } = info.getValue()
+          return (
+            <span className="flex items-center gap-1.5">
+              <a
+                href={`/nodes/${encodeURIComponent(id)}`}
+                onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(id)}`) }}
+                className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
+              >
+                {id}
+              </a>
+              {country_code && (
+                <span title={country_code} className="text-base leading-none shrink-0">
+                  {toFlagEmoji(country_code)}
+                </span>
+              )}
+              {needs_renew && (
+                <span title="Cần renew: reward=0 và uptime=0" className="text-orange-500 shrink-0">
+                  <RotateCcw size={11} />
+                </span>
+              )}
+            </span>
+          )
+        },
       }),
       col.accessor('serial', {
         header: 'Serial',
@@ -131,31 +168,60 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, onTag
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
       col.accessor('tags', {
-        id: 'tags',
         header: 'Tags',
-        enableSorting: false,
         cell: info => {
           const tags = info.getValue() ?? []
           if (tags.length === 0) return <span className="text-gray-300 text-xs">—</span>
           const visible = tags.slice(0, 3)
-          const rest = tags.length - visible.length
+          const overflow = tags.length - visible.length
           return (
             <div className="flex items-center gap-1 flex-wrap">
               {visible.map((t: { id: number; name: string; color: string }) => (
                 <button
                   key={t.id}
                   onClick={e => { e.stopPropagation(); onTagClick?.(t.id) }}
-                  title={`Lọc theo tag "${t.name}"`}
                   className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white hover:opacity-80 transition-opacity"
                   style={{ backgroundColor: t.color }}
                 >
                   {t.name}
                 </button>
               ))}
-              {rest > 0 && (
-                <span className="text-xs text-gray-400">+{rest}</span>
+              {overflow > 0 && (
+                <span className="text-xs text-gray-400">+{overflow}</span>
               )}
             </div>
+          )
+        },
+      }),
+      col.accessor('notes', {
+        header: 'Ghi chú',
+        cell: info => {
+          const node_id = info.row.original.node_id
+          const current = info.getValue()
+          if (editingNote?.node_id === node_id) {
+            return (
+              <input
+                autoFocus
+                value={editingNote.value}
+                onChange={e => setEditingNote({ node_id, value: e.target.value })}
+                onBlur={() => saveNote.mutate({ node_id, notes: editingNote.value })}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveNote.mutate({ node_id, notes: editingNote.value })
+                  if (e.key === 'Escape') setEditingNote(null)
+                }}
+                onClick={e => e.stopPropagation()}
+                className="text-sm border border-blue-400 rounded px-1.5 py-0.5 w-40 outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )
+          }
+          return (
+            <span
+              onClick={e => { e.stopPropagation(); setEditingNote({ node_id, value: current ?? '' }) }}
+              title="Click để chỉnh sửa"
+              className="text-sm text-gray-600 truncate max-w-[160px] block cursor-text hover:bg-gray-100 rounded px-1 -mx-1 min-w-[80px] min-h-[20px]"
+            >
+              {current || <span className="text-gray-300">—</span>}
+            </span>
           )
         },
       }),
@@ -232,19 +298,47 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, onTag
             </button>
           )
         },
+        sortingFn: (a, b) => {
+          const parseVer = (v: string | null) =>
+            (v ?? '').split('.').map(n => parseInt(n, 10) || 0)
+          const pa = parseVer(a.original.script_version)
+          const pb = parseVer(b.original.script_version)
+          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+            if (diff !== 0) return diff
+          }
+          return 0
+        },
+      }),
+      col.accessor('renew_count', {
+        header: 'Renew',
+        cell: info => {
+          const v = info.getValue() ?? 0
+          if (v === 0) return <span className="text-gray-200 text-xs">—</span>
+          return (
+            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${
+              v >= 5 ? 'bg-red-100 text-red-700' :
+              v >= 3 ? 'bg-orange-100 text-orange-700' :
+              'bg-blue-100 text-blue-700'
+            }`}>
+              <RotateCcw size={9} />
+              {v}
+            </span>
+          )
+        },
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, selectedIds, allSelected, someSelected, onTagClick],
+    [navigate, selectedIds, allSelected, someSelected, editingNote, onTagClick],
   )
 
   const table = useReactTable({
     data: nodes,
     columns,
     state: { sorting },
-    onSortingChange: setSorting,
+    onSortingChange: onSortingChange as (updater: unknown) => void,
+    manualSorting: true,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   })
 
   return (

@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, Tag as TagIcon } from 'lucide-react'
-import { formatDistanceToNow, format } from 'date-fns'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon } from 'lucide-react'
+import { formatDistanceToNow, format, parseISO } from 'date-fns'
+import { vi } from 'date-fns/locale'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
-import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, TagOut } from '../types'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory, TagOut } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -58,10 +59,8 @@ function NodeTagsEditor({ nodeId, currentTags }: { nodeId: string; currentTags: 
       <div className="flex items-center gap-2 mb-2">
         <p className="text-xs text-gray-500">Tags</p>
         <div ref={ref} className="relative">
-          <button
-            onClick={() => setOpen(o => !o)}
-            className="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-500 border border-dashed border-gray-300 rounded-full hover:border-blue-400 hover:text-blue-600 transition-colors"
-          >
+          <button onClick={() => setOpen(o => !o)}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-500 border border-dashed border-gray-300 rounded-full hover:border-blue-400 hover:text-blue-600 transition-colors">
             <TagIcon size={11} /> Thêm tag
           </button>
           {open && (
@@ -70,18 +69,10 @@ function NodeTagsEditor({ nodeId, currentTags }: { nodeId: string; currentTags: 
                 <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có tag nào. Tạo tag trong Cài đặt.</p>
               ) : (
                 allTags.map(tag => (
-                  <button
-                    key={tag.id}
-                    onClick={() => toggle(tag.id)}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-left"
-                  >
-                    <span
-                      className="w-3 h-3 rounded-full flex-shrink-0 border-2"
-                      style={{
-                        backgroundColor: currentIds.has(tag.id) ? tag.color : 'transparent',
-                        borderColor: tag.color,
-                      }}
-                    />
+                  <button key={tag.id} onClick={() => toggle(tag.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 text-left">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0 border-2"
+                      style={{ backgroundColor: currentIds.has(tag.id) ? tag.color : 'transparent', borderColor: tag.color }} />
                     <span className="text-sm text-gray-700 flex-1">{tag.name}</span>
                     {currentIds.has(tag.id) && <Check size={12} className="text-blue-500" />}
                   </button>
@@ -96,16 +87,11 @@ function NodeTagsEditor({ nodeId, currentTags }: { nodeId: string; currentTags: 
           <span className="text-xs text-gray-300 italic">Chưa có tag</span>
         ) : (
           currentTags.map(t => (
-            <span
-              key={t.id}
+            <span key={t.id}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white"
-              style={{ backgroundColor: t.color }}
-            >
+              style={{ backgroundColor: t.color }}>
               {t.name}
-              <button
-                onClick={() => toggle(t.id)}
-                className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
-              >
+              <button onClick={() => toggle(t.id)} className="opacity-70 hover:opacity-100 transition-opacity ml-0.5">
                 <X size={11} />
               </button>
             </span>
@@ -132,6 +118,12 @@ export default function NodeDetail() {
 
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
+  const [staleOverride, setStaleOverride] = useState<string>('')
+  const [proxyInput, setProxyInput] = useState('')
+  const [proxyError, setProxyError] = useState<string | null>(null)
+  const [renamingNode, setRenamingNode] = useState(false)
+  const [renameInput, setRenameInput] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<NodeDetailResponse>({
     queryKey: ['node', nodeId],
@@ -154,12 +146,80 @@ export default function NodeDetail() {
     enabled: !!nodeId,
   })
 
+  const { data: renewHistory } = useQuery<RenewHistoryResponse>({
+    queryKey: ['renew-history-node', nodeId],
+    queryFn: () => api.get(`/renew/history?node_id=${encodeURIComponent(nodeId!)}&page_size=5`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
+  const { data: accountHistory } = useQuery<NodeAccountHistory[]>({
+    queryKey: ['account-history', nodeId],
+    queryFn: () => api.get(`/nodes/${encodeURIComponent(nodeId!)}/account-history?limit=20`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
   const saveNotes = useMutation({
     mutationFn: () => api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/notes`, { notes: notesValue }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['node', nodeId] })
       setEditingNotes(false)
     },
+  })
+
+  const saveNodeSettings = useMutation({
+    mutationFn: (val: number | null) =>
+      api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/settings`, { log_stale_restart_minutes: val }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['node', nodeId] }),
+  })
+
+  const setProxy = useMutation({
+    mutationFn: () => api.post(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/set-proxy`, { proxy: proxyInput }),
+    onSuccess: () => {
+      alert(`Đã gửi lệnh đổi proxy đến ${nodeId}.\nNode sẽ áp dụng khi báo cáo lần tiếp theo (~60s).`)
+      setProxyInput('')
+      setProxyError(null)
+    },
+    onError: (err: any) => {
+      setProxyError(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh đổi proxy.')
+    },
+  })
+
+  const renameNode = useMutation({
+    mutationFn: (new_node_id: string) =>
+      api.post(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/rename`, { new_node_id }).then(r => r.data),
+    onSuccess: (data) => {
+      setRenamingNode(false)
+      setRenameError(null)
+      navigate(`/nodes/${encodeURIComponent(data.new_node_id)}`, { replace: true })
+    },
+    onError: (err: any) => {
+      setRenameError(err?.response?.data?.detail ?? 'Lỗi khi đổi hostname.')
+    },
+  })
+
+  const renewNode = useMutation({
+    mutationFn: () => api.post('/renew/trigger', { node_id: nodeId }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['renew-history-node', nodeId] })
+      qc.invalidateQueries({ queryKey: ['node', nodeId] })
+      alert(`Đã gửi lệnh renew đến ${nodeId}.\nNode sẽ thực thi khi báo cáo lần tiếp theo.`)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh renew.')
+    },
+  })
+
+  useEffect(() => {
+    document.title = nodeId ? `💲 ${nodeId} | ARO Dashboard` : '💲 ARO Dashboard'
+    return () => { document.title = '💲 ARO Dashboard' }
+  }, [nodeId])
+
+  const deleteNode = useMutation({
+    mutationFn: () => api.delete(`/dashboard/nodes/${encodeURIComponent(nodeId!)}`).then(r => r.data),
+    onSuccess: () => navigate('/', { replace: true }),
+    onError: (err: any) => alert(err?.response?.data?.detail ?? 'Lỗi khi xoá node.'),
   })
 
   const startEditNotes = () => {
@@ -186,10 +246,79 @@ export default function NodeDetail() {
             <ArrowLeft size={18} />
           </button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-base font-bold font-mono text-gray-800 truncate">{node.node_id}</h1>
+            {renamingNode ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={renameInput}
+                  onChange={e => { setRenameInput(e.target.value); setRenameError(null) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && renameInput.trim()) renameNode.mutate(renameInput.trim())
+                    if (e.key === 'Escape') { setRenamingNode(false); setRenameError(null) }
+                  }}
+                  className="font-mono text-sm font-bold border border-blue-400 rounded px-2 py-0.5 w-48 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder={node.node_id}
+                />
+                <button
+                  onClick={() => { if (renameInput.trim()) renameNode.mutate(renameInput.trim()) }}
+                  disabled={renameNode.isPending || !renameInput.trim()}
+                  className="p-1 text-green-600 hover:text-green-700 disabled:opacity-40"
+                  title="Lưu"
+                >
+                  <Check size={15} />
+                </button>
+                <button
+                  onClick={() => { setRenamingNode(false); setRenameError(null) }}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                  title="Huỷ"
+                >
+                  <X size={15} />
+                </button>
+                {renameError && <span className="text-xs text-red-500">{renameError}</span>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-base font-bold font-mono text-gray-800 truncate">{node.node_id}</h1>
+                <button
+                  onClick={() => { setRenameInput(node.node_id); setRenamingNode(true) }}
+                  className="p-0.5 text-gray-300 hover:text-gray-500 shrink-0"
+                  title="Đổi hostname"
+                >
+                  <Pencil size={13} />
+                </button>
+              </div>
+            )}
             <p className="text-xs text-gray-400 truncate">{node.account ?? '—'}</p>
           </div>
           <StatusBadge status={node.aro_status} isStale={node.is_stale} />
+          <button
+            onClick={() => {
+              if (!confirm(`Xoá node "${node.node_id}"?\n\n⚠️ Toàn bộ lịch sử, điểm số, lệnh và log của node này sẽ bị xoá vĩnh viễn.\n\nBạn có chắc chắn không?`)) return
+              deleteNode.mutate()
+            }}
+            disabled={deleteNode.isPending}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            title="Xoá node"
+          >
+            <Trash2 size={16} />
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm(`Renew node ${node.node_id}?\n\nSerial hiện tại: ${node.serial ?? 'N/A'}\nThao tác này sẽ xóa và cài lại ARO Desktop.`)) return
+              renewNode.mutate()
+            }}
+            disabled={renewNode.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-lg font-medium transition-colors whitespace-nowrap"
+            title="Renew: xóa và cài lại ARO Desktop"
+          >
+            <RotateCcw size={14} className={renewNode.isPending ? 'animate-spin' : ''} />
+            Renew
+            {(node.renew_count ?? 0) > 0 && (
+              <span className="bg-orange-400 text-white text-xs px-1.5 py-0.5 rounded-full font-bold">
+                {node.renew_count}×
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
@@ -236,8 +365,7 @@ export default function NodeDetail() {
             />
           </div>
 
-          {/* Tags */}
-          <NodeTagsEditor nodeId={node.node_id} currentTags={node.tags} />
+          <NodeTagsEditor nodeId={node.node_id} currentTags={node.tags ?? []} />
 
           {/* Notes */}
           <div className="mt-4 pt-4 border-t border-gray-100">
@@ -280,6 +408,109 @@ export default function NodeDetail() {
               </p>
             )}
           </div>
+        </div>
+
+        {/* Node Overrides */}
+        {(() => {
+          const nodeStale = data?.node_log_stale_restart_minutes ?? null
+          const globalStale = data?.global_log_stale_restart_minutes ?? 5
+          const isOverrideActive = nodeStale !== null
+          return (
+            <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-700 flex-1">Node Overrides</h2>
+                <span className="text-xs text-gray-400">Ghi đè cài đặt global cho node này</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="text-sm text-gray-600 whitespace-nowrap w-40">Log stale restart</label>
+                  <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">
+                    Global: {globalStale} phút
+                  </span>
+                  {isOverrideActive && (
+                    <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2 py-1 rounded font-medium">
+                      Override: {nodeStale} phút
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    placeholder={`${globalStale} (global)`}
+                    value={staleOverride}
+                    onChange={e => setStaleOverride(e.target.value)}
+                    className="w-32 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-500">phút</span>
+                  <button
+                    onClick={() => {
+                      const v = parseInt(staleOverride)
+                      if (!isNaN(v) && v >= 1 && v <= 60) {
+                        saveNodeSettings.mutate(v)
+                        setStaleOverride('')
+                      }
+                    }}
+                    disabled={saveNodeSettings.isPending || !staleOverride}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    Lưu
+                  </button>
+                  {isOverrideActive && (
+                    <button
+                      onClick={() => saveNodeSettings.mutate(null)}
+                      disabled={saveNodeSettings.isPending}
+                      className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs rounded-lg hover:bg-gray-200 disabled:opacity-40"
+                    >
+                      Xóa override
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">Để trống = dùng global setting. Giá trị 1–60 phút.</p>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Proxy change */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Đổi Proxy</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Proxy hiện tại: <span className="font-mono text-gray-600">{node.proxy_host ? `${node.proxy_host}:${node.proxy_port}${node.proxy_user ? `:${node.proxy_user}` : ''}` : '—'}</span>
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={proxyInput}
+              onChange={e => { setProxyInput(e.target.value); setProxyError(null) }}
+              placeholder="host:port:user:pass"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              onClick={() => {
+                const parts = proxyInput.trim().split(':')
+                if (parts.length !== 4) {
+                  setProxyError('Định dạng phải là host:port:user:pass')
+                  return
+                }
+                if (confirm(`Đổi proxy của ${node.node_id} thành:\n${proxyInput}\n\nNode sẽ restart redsocks và ARO sẽ tự khởi động lại.`)) {
+                  setProxy.mutate()
+                }
+              }}
+              disabled={setProxy.isPending || !proxyInput.trim()}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors whitespace-nowrap"
+            >
+              {setProxy.isPending ? <RefreshCw size={14} className="animate-spin" /> : null}
+              Đổi proxy
+            </button>
+          </div>
+          {proxyError && <p className="text-xs text-red-600">{proxyError}</p>}
+          <p className="text-xs text-gray-400">
+            Sau khi gửi lệnh: node sẽ kill ARO → đổi proxy → restart redsocks → watchdog tự khởi động lại ARO.
+          </p>
         </div>
 
         {/* Reward chart */}
@@ -443,6 +674,113 @@ export default function NodeDetail() {
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Màn hình VNC</h2>
           <ScreenshotPanel nodeId={node.node_id} />
         </div>
+
+        {/* Renew history */}
+        {renewHistory && renewHistory.total > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <RotateCcw size={15} className="text-orange-500" />
+              <h2 className="text-sm font-semibold text-gray-700">Lịch sử Renew</h2>
+              <span className="ml-auto text-xs text-gray-400">{renewHistory.total} lần</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">Thời gian</th>
+                    <th className="pb-2 pr-4 font-medium">Lần #</th>
+                    <th className="pb-2 pr-4 font-medium">Account trước</th>
+                    <th className="pb-2 pr-4 font-medium">Serial trước → sau</th>
+                    <th className="pb-2 pr-4 font-medium">Trạng thái</th>
+                    <th className="pb-2 font-medium">Theo dõi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renewHistory.logs.map(log => (
+                    <tr key={log.id} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5 pr-4 text-gray-600 font-mono whitespace-nowrap">
+                        {format(parseISO(log.renewed_at + 'Z'), 'dd/MM/yyyy HH:mm')}
+                      </td>
+                      <td className="py-1.5 pr-4 font-bold text-gray-700">#{log.renew_count}</td>
+                      <td className="py-1.5 pr-4 font-mono text-gray-600">
+                        {log.account_before ?? <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="py-1.5 pr-4 font-mono text-gray-600">
+                        {log.serial_before ?? '—'}
+                        {log.serial_after && log.serial_after !== log.serial_before && (
+                          <span className="text-green-600"> → {log.serial_after}</span>
+                        )}
+                        {log.serial_after && log.serial_after === log.serial_before && (
+                          <span className="text-gray-400"> (không đổi)</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {log.status === 'completed'
+                          ? <span className="text-green-600 font-medium">✓ Thành công</span>
+                          : log.status === 'failed'
+                          ? <span className="text-red-500 font-medium">✗ Thất bại</span>
+                          : <span className="text-amber-500 font-medium flex items-center gap-1"><Clock size={10} /> Đang chờ</span>
+                        }
+                      </td>
+                      <td className="py-1.5 text-gray-400">
+                        {log.monitored_at
+                          ? <span className="text-green-600" title={format(parseISO(log.monitored_at + 'Z'), 'HH:mm dd/MM')}>✓ Đã kiểm tra</span>
+                          : <span className="italic">Chờ 30 phút</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {node.needs_renew && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 text-xs text-orange-600">
+                <RotateCcw size={12} />
+                Node này đang có reward = 0 và uptime = 0 — cần renew.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Account History */}
+        {accountHistory && accountHistory.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-base">👤</span>
+              <h2 className="text-sm font-semibold text-gray-700">Lịch sử Account</h2>
+              <span className="ml-auto text-xs text-gray-400">{accountHistory.length} bản ghi</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-400 border-b border-gray-100">
+                    <th className="pb-2 pr-4 font-medium">#</th>
+                    <th className="pb-2 pr-4 font-medium">Account</th>
+                    <th className="pb-2 pr-4 font-medium">Lần đầu gặp</th>
+                    <th className="pb-2 font-medium">Lần cuối gặp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountHistory.map((h, i) => (
+                    <tr key={h.id} className={`border-b border-gray-50 last:border-0 ${i === 0 ? 'font-semibold' : ''}`}>
+                      <td className="py-1.5 pr-4 text-gray-400">{i + 1}</td>
+                      <td className="py-1.5 pr-4 text-gray-800 font-mono">{h.account}</td>
+                      <td className="py-1.5 pr-4 text-gray-500 whitespace-nowrap">
+                        {format(parseISO(h.first_seen + 'Z'), 'dd/MM/yyyy HH:mm')}
+                      </td>
+                      <td className="py-1.5 text-gray-500 whitespace-nowrap">
+                        {i === 0
+                          ? <span className="text-green-600 font-medium">Hiện tại ({format(parseISO(h.last_seen + 'Z'), 'dd/MM HH:mm')})</span>
+                          : format(parseISO(h.last_seen + 'Z'), 'dd/MM/yyyy HH:mm')
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Control */}
         <div className="bg-white rounded-xl shadow-sm p-5">

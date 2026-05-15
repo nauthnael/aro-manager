@@ -28,18 +28,28 @@ export interface NodeStatus {
   serial: string | null
   proxy_host: string | null
   proxy_port: number | null
+  proxy_user: string | null
   notes: string | null
   tags: TagRef[]
+  first_seen: string | null
+  renew_count: number
+  needs_renew: boolean
+  country_code: string | null
 }
 
 export interface NodeListResponse {
   nodes: NodeStatus[]
   total: number
+  total_filtered: number
+  page: number
+  page_size: number
+  total_pages: number
   online: number
   offline: number
   no_internet: number
   unbound: number
   stale: number
+  needs_renew_count: number
 }
 
 export interface HistoryPoint {
@@ -61,6 +71,8 @@ export interface NodeDetailResponse {
   node: NodeStatus
   history: HistoryPoint[]
   restart_events: RestartEvent[]
+  node_log_stale_restart_minutes: number | null
+  global_log_stale_restart_minutes: number
 }
 
 export interface AccountStats {
@@ -92,7 +104,7 @@ export type ErrorType = 'vps_offline' | 'aro_offline' | 'no_internet' | 'unbound
 export const ERROR_LABELS: Record<ErrorType, string> = {
   vps_offline: 'VPS Offline',
   aro_offline:  'ARO Offline',
-  no_internet:  'No Internet',
+  no_internet:  'ARO No Internet',
   unbound:      'Unbound',
   proxy_fail:   'Proxy Fail',
 }
@@ -140,4 +152,89 @@ export interface NodeErrorStats {
 export interface ErrorStatsResponse {
   nodes: NodeErrorStats[]
   score_base: number
+}
+
+export interface RecentErrorEvent {
+  id: number
+  node_id: string
+  error_type: ErrorType
+  started_at: string
+  ended_at: string | null
+  duration_minutes: number
+  ongoing: boolean
+  proxy_host: string | null
+  proxy_port: number | null
+  proxy_user: string | null
+}
+
+export interface RecentEventsResponse {
+  events: RecentErrorEvent[]
+}
+
+export interface ProxyStat {
+  proxy_key: string
+  proxy_display: string
+  proxy_host: string | null
+  proxy_user: string | null
+  node_count: number
+  node_ids: string[]
+  total_errors: number
+  proxy_down_count: number
+  errors_by_type: Partial<Record<ErrorType, number>>
+  total_score: number
+}
+
+export interface ProxyStatsResponse {
+  proxies: ProxyStat[]
+  days: number
+}
+
+export interface RenewCandidate {
+  node_id: string
+  account: string | null
+  serial: string | null
+  aro_status: string | null
+  reward_yesterday: number | null
+  uptime_ratio: number | null
+  last_seen: string | null
+  is_stale: boolean
+  renew_count: number
+  last_renewed_at: string | null
+  last_renew_status: string | null
+  cooldown_until: string | null
+}
+
+export interface RenewCandidatesResponse {
+  nodes: RenewCandidate[]
+  total: number
+}
+
+export interface RenewLog {
+  id: number
+  node_id: string
+  account: string | null
+  renewed_at: string
+  serial_before: string | null
+  serial_after: string | null
+  account_before: string | null
+  command_id: number | null
+  status: string
+  renew_count: number
+  monitored_at: string | null
+}
+
+export interface RenewHistoryResponse {
+  logs: RenewLog[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export interface NodeAccountHistory {
+  id: number
+  node_id: string
+  account: string
+  first_seen: string
+  last_seen: string
 }
