@@ -1,10 +1,19 @@
-from fastapi import APIRouter, Depends
+import base64
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.auth import get_current_user
+from app.backup import (
+    BACKUP_DIR,
+    create_backup,
+    delete_backup,
+    get_db_status,
+    list_backups,
+)
 from app.database import get_db
-import base64
 
 from app.telegram import (
     get_node_telegram_health,
@@ -47,6 +56,9 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     row.daily_report_enabled = body.daily_report_enabled
     row.log_stale_restart_minutes = max(1, min(body.log_stale_restart_minutes, 60))
     row.node_tg_bot_token = body.node_tg_bot_token.strip()
+    row.backup_enabled = body.backup_enabled
+    row.backup_interval_hours = max(1, min(body.backup_interval_hours, 720))
+    row.backup_retention_count = max(1, min(body.backup_retention_count, 30))
     db.commit()
     db.refresh(row)
     return row
@@ -201,3 +213,44 @@ def test_telegram(body: schemas.TestTelegramRequest, db: Session = Depends(get_d
 
     ok, err = send_telegram_message(chat_config, f"✅ Test từ ARO Dashboard — topic: <b>{body.topic}</b>")
     return {"ok": ok, "error": None if ok else err}
+
+
+# --- Database status & backup ---
+
+@router.get("/settings/database/status", response_model=schemas.DatabaseStatusOut)
+def database_status(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return get_db_status(db)
+
+
+@router.get("/settings/database/backups")
+def list_backups_endpoint(_=Depends(get_current_user)):
+    return list_backups()
+
+
+@router.post("/settings/database/backup")
+def create_backup_endpoint(_=Depends(get_current_user)):
+    try:
+        return create_backup()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/settings/database/backups/{filename}/download")
+def download_backup(filename: str, _=Depends(get_current_user)):
+    if not filename.startswith("aro_backup_") or not filename.endswith(".sql"):
+        raise HTTPException(status_code=400, detail="Tên file không hợp lệ.")
+    filepath = BACKUP_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File backup không tồn tại.")
+    return FileResponse(
+        path=str(filepath),
+        media_type="application/octet-stream",
+        filename=filename,
+    )
+
+
+@router.delete("/settings/database/backups/{filename}")
+def delete_backup_endpoint(filename: str, _=Depends(get_current_user)):
+    if not delete_backup(filename):
+        raise HTTPException(status_code=404, detail="File backup không tồn tại.")
+    return {"ok": True}

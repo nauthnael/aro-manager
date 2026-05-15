@@ -186,6 +186,9 @@ class SettingsOut(BaseModel):
     log_stale_restart_minutes: int = 5
     node_tg_bot_token: str = ""
     nodes_tg_enabled: bool = True
+    backup_enabled: bool = False
+    backup_interval_hours: int = 24
+    backup_retention_count: int = 7
 
     class Config:
         from_attributes = True
@@ -202,6 +205,26 @@ class SettingsIn(BaseModel):
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
     node_tg_bot_token: str = ""
+    backup_enabled: bool = False
+    backup_interval_hours: int = 24
+    backup_retention_count: int = 7
+
+
+class BackupFileInfo(BaseModel):
+    filename: str
+    size: int
+    created_at: datetime
+
+
+class DatabaseStatusOut(BaseModel):
+    db_size: str
+    db_size_bytes: int
+    pg_version: str
+    host: str
+    dbname: str
+    counts: dict
+    table_sizes: List[dict]
+    error: Optional[str] = None
 
 
 class NodeSettingsIn(BaseModel):

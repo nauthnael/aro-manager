@@ -16,6 +16,7 @@ from app.routers import commands, dashboard, nodes
 from app.routers import settings as settings_router
 from app.routers import errors as errors_router
 from app.routers import renew as renew_router
+from app.backup import ensure_backup_dir, scheduled_backup
 from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
 from app.telegram import enqueue_telegram_message, flush_telegram_queue
@@ -83,6 +84,9 @@ def migrate_db():
         "ALTER TABLE node_account_history ADD CONSTRAINT node_account_history_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
         "ALTER TABLE commands DROP CONSTRAINT IF EXISTS commands_node_id_fkey",
         "ALTER TABLE commands ADD CONSTRAINT commands_node_id_fkey FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE ON UPDATE CASCADE",
+        "ALTER TABLE app_settings ADD COLUMN backup_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE app_settings ADD COLUMN backup_interval_hours INTEGER DEFAULT 24",
+        "ALTER TABLE app_settings ADD COLUMN backup_retention_count INTEGER DEFAULT 7",
     ]
     for sql in ddl_migrations:
         try:
@@ -155,6 +159,7 @@ def init_db():
             db.commit()
 
         warm_ip_cache(db)
+        ensure_backup_dir()
     finally:
         db.close()
 
@@ -355,6 +360,23 @@ def check_renew_monitoring():
         db.close()
 
 
+def scheduled_backup_task():
+    db = SessionLocal()
+    try:
+        cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+        if not cfg or not cfg.backup_enabled:
+            return
+        scheduled_backup(
+            db,
+            interval_hours=cfg.backup_interval_hours or 24,
+            retention_count=cfg.backup_retention_count or 7,
+        )
+    except Exception as exc:
+        logger.error("scheduled_backup_task error: %s", exc)
+    finally:
+        db.close()
+
+
 def refresh_ip_countries_task():
     db = SessionLocal()
     try:
@@ -402,6 +424,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
     scheduler.add_job(refresh_ip_countries_task, "interval", minutes=10)
+    scheduler.add_job(scheduled_backup_task, "interval", hours=1)
     scheduler.start()
     yield
     scheduler.shutdown()

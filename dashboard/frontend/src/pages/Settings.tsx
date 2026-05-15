@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Send, Radio } from 'lucide-react'
+import { ArrowLeft, Send, Radio, Database, Download, Trash2, RefreshCw } from 'lucide-react'
 import api from '../api/client'
 
 interface SettingsData {
@@ -15,6 +15,37 @@ interface SettingsData {
   daily_report_enabled: boolean
   log_stale_restart_minutes: number
   node_tg_bot_token: string
+  backup_enabled: boolean
+  backup_interval_hours: number
+  backup_retention_count: number
+}
+
+interface BackupFile {
+  filename: string
+  size: number
+  created_at: string
+}
+
+interface DbStatus {
+  db_size: string
+  db_size_bytes: number
+  pg_version: string
+  host: string
+  dbname: string
+  counts: Record<string, number>
+  table_sizes: { table: string; size: string }[]
+  error?: string
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function fmtDate(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 const TOPIC_LABELS: { key: keyof SettingsData; label: string; color: string }[] = [
@@ -82,6 +113,9 @@ export default function SettingsPage() {
     daily_report_enabled: true,
     log_stale_restart_minutes: 5,
     node_tg_bot_token: '',
+    backup_enabled: false,
+    backup_interval_hours: 24,
+    backup_retention_count: 7,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -117,6 +151,43 @@ export default function SettingsPage() {
       setTestResults(prev => ({ ...prev, [topic]: { ok: false, error: 'Request thất bại' } }))
     } finally {
       setTestingTopic(null)
+    }
+  }
+
+  const { data: dbStatus, refetch: refetchDbStatus } = useQuery<DbStatus>({
+    queryKey: ['db-status'],
+    queryFn: () => api.get('/settings/database/status').then(r => r.data),
+    staleTime: 30_000,
+  })
+
+  const { data: backupFiles = [], refetch: refetchBackups } = useQuery<BackupFile[]>({
+    queryKey: ['backups'],
+    queryFn: () => api.get('/settings/database/backups').then(r => r.data),
+    staleTime: 10_000,
+  })
+
+  const createBackupMut = useMutation({
+    mutationFn: () => api.post('/settings/database/backup').then(r => r.data),
+    onSuccess: () => refetchBackups(),
+    onError: (err: any) => alert(err?.response?.data?.detail ?? 'Lỗi khi tạo backup.'),
+  })
+
+  const deleteBackupMut = useMutation({
+    mutationFn: (filename: string) => api.delete(`/settings/database/backups/${encodeURIComponent(filename)}`),
+    onSuccess: () => refetchBackups(),
+  })
+
+  const downloadBackup = async (filename: string) => {
+    try {
+      const resp = await api.get(`/settings/database/backups/${encodeURIComponent(filename)}/download`, { responseType: 'blob' })
+      const url = URL.createObjectURL(resp.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert('Lỗi khi tải file backup.')
     }
   }
 
@@ -362,6 +433,146 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Database status */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+              <Database size={14} />
+              Trạng thái Database
+            </h2>
+            <button onClick={() => refetchDbStatus()} className="p-1 text-gray-400 hover:text-gray-600" title="Làm mới">
+              <RefreshCw size={14} />
+            </button>
+          </div>
+          {dbStatus?.error ? (
+            <p className="text-xs text-red-500">{dbStatus.error}</p>
+          ) : dbStatus ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[
+                  { label: 'Kích thước DB', value: dbStatus.db_size },
+                  { label: 'PostgreSQL', value: dbStatus.pg_version },
+                  { label: 'Host', value: dbStatus.host },
+                  { label: 'Database', value: dbStatus.dbname },
+                  { label: 'Nodes', value: `${dbStatus.counts.nodes ?? 0}` },
+                  { label: 'History records', value: `${(dbStatus.counts.node_history ?? 0).toLocaleString()}` },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <p className="text-xs text-gray-400">{label}</p>
+                    <p className="text-sm font-medium text-gray-700 font-mono">{value}</p>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-1.5">Dung lượng theo bảng</p>
+                <div className="space-y-1">
+                  {dbStatus.table_sizes.map(t => (
+                    <div key={t.table} className="flex justify-between text-xs">
+                      <span className="text-gray-600 font-mono">{t.table}</span>
+                      <span className="text-gray-500">{t.size}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">Đang tải...</p>
+          )}
+        </div>
+
+        {/* Backup */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Backup Database</h2>
+              <p className="text-xs text-gray-400 mt-0.5">File SQL lưu tại <code className="font-mono bg-gray-100 px-1 rounded">/app/backups/</code> trên server.</p>
+            </div>
+            <button
+              onClick={() => createBackupMut.mutate()}
+              disabled={createBackupMut.isPending}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              <Database size={14} className={createBackupMut.isPending ? 'animate-pulse' : ''} />
+              {createBackupMut.isPending ? 'Đang tạo...' : 'Tạo backup ngay'}
+            </button>
+          </div>
+
+          {backupFiles.length === 0 ? (
+            <p className="text-xs text-gray-400">Chưa có file backup nào.</p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {backupFiles.map(f => (
+                <div key={f.filename} className="flex items-center justify-between py-2 gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-mono text-gray-700 truncate">{f.filename}</p>
+                    <p className="text-xs text-gray-400">{fmtDate(f.created_at)} · {fmtBytes(f.size)}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => downloadBackup(f.filename)}
+                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      title="Tải xuống"
+                    >
+                      <Download size={14} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Xoá backup "${f.filename}"?`)) deleteBackupMut.mutate(f.filename)
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Xoá"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Scheduled backup config */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Backup định kỳ</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Tự động tạo backup theo lịch. Kiểm tra mỗi giờ.</p>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">Bật backup tự động</span>
+            <button
+              type="button"
+              onClick={() => setForm(f => ({ ...f, backup_enabled: !f.backup_enabled }))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${form.backup_enabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${form.backup_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          {form.backup_enabled && (
+            <div className="space-y-3 pt-1">
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">Mỗi</label>
+                <input
+                  type="number" min={1} max={720}
+                  value={form.backup_interval_hours}
+                  onChange={e => setForm(f => ({ ...f, backup_interval_hours: Math.max(1, parseInt(e.target.value) || 24) }))}
+                  className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <label className="text-sm text-gray-600 whitespace-nowrap">giờ</label>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">Giữ lại</label>
+                <input
+                  type="number" min={1} max={30}
+                  value={form.backup_retention_count}
+                  onChange={e => setForm(f => ({ ...f, backup_retention_count: Math.max(1, parseInt(e.target.value) || 7) }))}
+                  className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <label className="text-sm text-gray-600 whitespace-nowrap">bản gần nhất (tự xoá cũ hơn)</label>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Save */}
