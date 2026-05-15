@@ -444,6 +444,20 @@ def rename_node(
     return schemas.RenameNodeResponse(ok=True, old_node_id=node_id, new_node_id=new_id)
 
 
+@router.delete("/dashboard/nodes/{node_id}")
+def delete_node(
+    node_id: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node không tồn tại.")
+    db.delete(node)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/dashboard/accounts", response_model=List[schemas.AccountStatsOut])
 def account_stats(
     db: Session = Depends(get_db),

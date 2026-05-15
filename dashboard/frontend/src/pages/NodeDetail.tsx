@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock } from 'lucide-react'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2 } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
@@ -135,6 +135,12 @@ export default function NodeDetail() {
     return () => { document.title = '💲 ARO Dashboard' }
   }, [nodeId])
 
+  const deleteNode = useMutation({
+    mutationFn: () => api.delete(`/dashboard/nodes/${encodeURIComponent(nodeId!)}`).then(r => r.data),
+    onSuccess: () => navigate('/', { replace: true }),
+    onError: (err: any) => alert(err?.response?.data?.detail ?? 'Lỗi khi xoá node.'),
+  })
+
   const startEditNotes = () => {
     setNotesValue(data?.node.notes ?? '')
     setEditingNotes(true)
@@ -204,6 +210,17 @@ export default function NodeDetail() {
             <p className="text-xs text-gray-400 truncate">{node.account ?? '—'}</p>
           </div>
           <StatusBadge status={node.aro_status} isStale={node.is_stale} />
+          <button
+            onClick={() => {
+              if (!confirm(`Xoá node "${node.node_id}"?\n\n⚠️ Toàn bộ lịch sử, điểm số, lệnh và log của node này sẽ bị xoá vĩnh viễn.\n\nBạn có chắc chắn không?`)) return
+              deleteNode.mutate()
+            }}
+            disabled={deleteNode.isPending}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            title="Xoá node"
+          >
+            <Trash2 size={16} />
+          </button>
           <button
             onClick={() => {
               if (!confirm(`Renew node ${node.node_id}?\n\nSerial hiện tại: ${node.serial ?? 'N/A'}\nThao tác này sẽ xóa và cài lại ARO Desktop.`)) return
