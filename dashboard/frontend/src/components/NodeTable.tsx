@@ -8,8 +8,21 @@ import {
 } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { formatDistanceToNow } from 'date-fns'
 import { RotateCcw } from 'lucide-react'
+
+function shortAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr + 'Z').getTime()
+  const s = Math.floor(diff / 1000)
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d ago`
+  const mo = Math.floor(d / 30)
+  return `${mo}mo ago`
+}
 import { NodeStatus } from '../types'
 import StatusBadge from './StatusBadge'
 import api from '../api/client'
@@ -239,7 +252,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         },
       }),
       col.accessor('reward_yesterday', {
-        header: 'Điểm hôm qua',
+        header: () => <span className="leading-tight normal-case tracking-normal">Điểm<br />hôm qua</span>,
         cell: info => {
           const v = info.getValue()
           return <span className="text-sm font-mono">{v != null ? v.toLocaleString() : '—'}</span>
@@ -275,8 +288,8 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
           const v = info.getValue()
           if (!v) return <span className="text-gray-300 text-sm">Never</span>
           return (
-            <span className="text-sm text-gray-500">
-              {formatDistanceToNow(new Date(v + 'Z'), { addSuffix: true })}
+            <span className="text-sm text-gray-500 font-mono" title={new Date(v + 'Z').toLocaleString('vi-VN')}>
+              {shortAgo(v)}
             </span>
           )
         },
@@ -375,14 +388,14 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
 
       <div className="overflow-x-auto rounded-lg shadow">
         <table className="min-w-full bg-white divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 sticky top-14 z-10">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
                 {hg.headers.map(h => (
                   <th
                     key={h.id}
                     onClick={h.id === 'select' ? undefined : h.column.getToggleSortingHandler()}
-                    className={`px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap ${h.id !== 'select' ? 'cursor-pointer select-none' : ''}`}
+                    className={`px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${h.id === 'reward_yesterday' ? 'whitespace-normal' : 'whitespace-nowrap'} ${h.id !== 'select' ? 'cursor-pointer select-none' : ''}`}
                   >
                     {flexRender(h.column.columnDef.header, h.getContext())}
                     {h.id !== 'select' && ({ asc: ' ↑', desc: ' ↓' }[h.column.getIsSorted() as string] ?? '')}

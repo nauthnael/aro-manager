@@ -131,6 +131,8 @@ def _sort_key(sort_by: str):
             parts = (n.script_version or '').split('.')
             return [int(x) if x.isdigit() else 0 for x in parts] or [0]
         return _semver
+    if sort_by == 'renew_count':
+        return lambda n: n.renew_count or 0
     return None
 
 
