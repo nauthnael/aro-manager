@@ -529,9 +529,9 @@ export default function NodeDetail() {
           {!restart_events || restart_events.length === 0 ? (
             <p className="text-xs text-gray-400 italic">Chưa có lần tự khởi động nào.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-[165px]">
               <table className="w-full text-xs">
-                <thead>
+                <thead className="sticky top-0 bg-white">
                   <tr className="text-left text-gray-400 border-b border-gray-100">
                     <th className="pb-2 pr-4 font-medium">Thời gian</th>
                     <th className="pb-2 pr-4 font-medium">Kết quả</th>
@@ -539,7 +539,7 @@ export default function NodeDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {restart_events.map((ev: RestartEvent) => (
+                  {restart_events.slice(0, 5).map((ev: RestartEvent) => (
                     <tr key={ev.id} className="border-b border-gray-50 last:border-0">
                       <td className="py-1.5 pr-4 text-gray-600 font-mono whitespace-nowrap">
                         {format(new Date(ev.timestamp + 'Z'), 'dd/MM HH:mm:ss')}
