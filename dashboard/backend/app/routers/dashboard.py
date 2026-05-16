@@ -47,6 +47,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         serial=node.serial,
         proxy_host=node.proxy_host,
         proxy_port=node.proxy_port,
+        proxy_user=node.proxy_user,
         notes=node.notes,
         first_seen=node.created_at,
         renew_count=renew_count,

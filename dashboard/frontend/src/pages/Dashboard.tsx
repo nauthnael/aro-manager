@@ -217,6 +217,7 @@ export default function Dashboard() {
     setTagFilterIds([])
     setSelectedIds(new Set())
     setPage(1)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleSearch = (v: string) => {
@@ -227,6 +228,7 @@ export default function Dashboard() {
     setNeedsRenewFilter(false)
     setSelectedIds(new Set())
     setPage(1)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const selectedCount = selectedIds.size
