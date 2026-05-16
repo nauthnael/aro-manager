@@ -287,20 +287,25 @@ def get_renew_history(
     logs = q.offset((page - 1) * page_size).limit(page_size).all()
 
     node_accounts = {}
+    node_last_seen = {}
     node_reward_yesterday = {}
     node_ids = list({log.node_id for log in logs})
     if node_ids:
         for n in db.query(models.Node).filter(models.Node.node_id.in_(node_ids)).all():
             node_accounts[n.node_id] = n.account
+            node_last_seen[n.node_id] = n.last_seen
         for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(node_ids)).all():
             node_reward_yesterday[s.node_id] = s.reward_yesterday
 
     result = []
     for log in logs:
+        last_seen = node_last_seen.get(log.node_id)
+        reconnected = last_seen is not None and log.renewed_at is not None and last_seen > log.renewed_at
+        account = node_accounts.get(log.node_id) if reconnected else None
         result.append(schemas.RenewLogOut(
             id=log.id,
             node_id=log.node_id,
-            account=node_accounts.get(log.node_id),
+            account=account,
             renewed_at=log.renewed_at,
             serial_before=log.serial_before,
             serial_after=log.serial_after,
