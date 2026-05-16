@@ -180,63 +180,6 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
-      col.accessor('tags', {
-        id: 'tags',
-        header: 'Tags',
-        enableSorting: false,
-        cell: info => {
-          const tags = info.getValue() ?? []
-          if (tags.length === 0) return <span className="text-gray-300 text-xs">—</span>
-          const visible = tags.slice(0, 3)
-          const rest = tags.length - visible.length
-          return (
-            <div className="flex items-center gap-1 flex-wrap">
-              {visible.map((t: { id: number; name: string; color: string }) => (
-                <button key={t.id}
-                  onClick={e => { e.stopPropagation(); onTagClick?.(t.id) }}
-                  title={`Lọc theo tag "${t.name}"`}
-                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white hover:opacity-80 transition-opacity"
-                  style={{ backgroundColor: t.color }}>
-                  {t.name}
-                </button>
-              ))}
-              {rest > 0 && <span className="text-xs text-gray-400">+{rest}</span>}
-            </div>
-          )
-        },
-      }),
-      col.accessor('notes', {
-        header: 'Ghi chú',
-        cell: info => {
-          const node_id = info.row.original.node_id
-          const current = info.getValue()
-          if (editingNote?.node_id === node_id) {
-            return (
-              <input
-                autoFocus
-                value={editingNote.value}
-                onChange={e => setEditingNote({ node_id, value: e.target.value })}
-                onBlur={() => saveNote.mutate({ node_id, notes: editingNote.value })}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') saveNote.mutate({ node_id, notes: editingNote.value })
-                  if (e.key === 'Escape') setEditingNote(null)
-                }}
-                onClick={e => e.stopPropagation()}
-                className="text-sm border border-blue-400 rounded px-1.5 py-0.5 w-40 outline-none focus:ring-1 focus:ring-blue-400"
-              />
-            )
-          }
-          return (
-            <span
-              onClick={e => { e.stopPropagation(); setEditingNote({ node_id, value: current ?? '' }) }}
-              title="Click để chỉnh sửa"
-              className="text-sm text-gray-600 truncate max-w-[160px] block cursor-text hover:bg-gray-100 rounded px-1 -mx-1 min-w-[80px] min-h-[20px]"
-            >
-              {current || <span className="text-gray-300">—</span>}
-            </span>
-          )
-        },
-      }),
       col.accessor('total_score', {
         header: 'Tổng điểm',
         cell: info => {
@@ -335,6 +278,59 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
             }`}>
               <RotateCcw size={9} />
               {v}
+            </span>
+          )
+        },
+      }),
+      col.accessor('tags', {
+        id: 'tags',
+        header: 'Tags',
+        enableSorting: false,
+        cell: info => {
+          const tags = info.getValue() ?? []
+          if (tags.length === 0) return <span className="text-gray-300 text-xs">—</span>
+          const visible = tags.slice(0, 3)
+          const rest = tags.length - visible.length
+          return (
+            <div className="flex items-center gap-1 flex-wrap">
+              {visible.map((t: { id: number; name: string; color: string }) => (
+                <button key={t.id}
+                  onClick={e => { e.stopPropagation(); onTagClick?.(t.id) }}
+                  title={`Lọc theo tag "${t.name}"`}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium text-white hover:opacity-80 transition-opacity"
+                  style={{ backgroundColor: t.color }}>
+                  {t.name}
+                </button>
+              ))}
+              {rest > 0 && <span className="text-xs text-gray-400">+{rest}</span>}
+            </div>
+          )
+        },
+      }),
+      col.accessor('notes', {
+        header: 'Ghi chú',
+        cell: info => {
+          const node_id = info.row.original.node_id
+          const current = info.getValue()
+          if (editingNote?.node_id === node_id) {
+            return (
+              <input autoFocus value={editingNote.value}
+                onChange={e => setEditingNote({ node_id, value: e.target.value })}
+                onBlur={() => saveNote.mutate({ node_id, notes: editingNote.value })}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveNote.mutate({ node_id, notes: editingNote.value })
+                  if (e.key === 'Escape') setEditingNote(null)
+                }}
+                onClick={e => e.stopPropagation()}
+                className="text-sm border border-blue-400 rounded px-1.5 py-0.5 w-40 outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            )
+          }
+          return (
+            <span onClick={e => { e.stopPropagation(); setEditingNote({ node_id, value: current ?? '' }) }}
+              title="Click để chỉnh sửa"
+              className="text-sm text-gray-600 truncate max-w-[160px] block cursor-text hover:bg-gray-100 rounded px-1 -mx-1 min-w-[80px] min-h-[20px]">
+              {current || <span className="text-gray-300">—</span>}
             </span>
           )
         },
