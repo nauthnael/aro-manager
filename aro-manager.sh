@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.1"
+SCRIPT_VERSION="3.8.2"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -850,21 +850,33 @@ verify_wrapper_script() {
         return 1
     fi
     
-    # 3. Các thành phần bắt buộc có mặt
-    local checks=("redsocks-aro" "ss -tlnp" "REDSOCKS_PORT" "REAL_ARO" 'exec "$REAL_ARO"')
-    for check in "${checks[@]}"; do
-        if ! grep -q "$check" "$wrapper" 2>/dev/null; then
-            log_error "Wrapper missing required component: $check"
-            return 1
-        fi
-    done
-    
-    # 4. Bash syntax check
+    # 3. Bash syntax check
     if ! bash -n "$wrapper" 2>/dev/null; then
         log_error "Wrapper has syntax errors"
         return 1
     fi
-    
+
+    # 4. Các thành phần bắt buộc — phân biệt no-proxy vs proxy wrapper
+    if ! grep -q "redsocks-aro" "$wrapper" 2>/dev/null; then
+        # No-proxy wrapper: chỉ kiểm tra pattern tối thiểu
+        local noproxy_checks=("REAL_ARO" 'exec "$REAL_ARO"')
+        for check in "${noproxy_checks[@]}"; do
+            if ! grep -q "$check" "$wrapper" 2>/dev/null; then
+                log_error "No-proxy wrapper missing required component: $check"
+                return 1
+            fi
+        done
+    else
+        # Proxy wrapper: kiểm tra đầy đủ
+        local checks=("redsocks-aro" "ss -tlnp" "REDSOCKS_PORT" "REAL_ARO" 'exec "$REAL_ARO"')
+        for check in "${checks[@]}"; do
+            if ! grep -q "$check" "$wrapper" 2>/dev/null; then
+                log_error "Wrapper missing required component: $check"
+                return 1
+            fi
+        done
+    fi
+
     return 0
 }
 
@@ -2038,7 +2050,9 @@ report_to_dashboard() {
         tray_state=$(get_aro_tray_state)
     fi
     local proxy_status="false"
-    if check_proxy_health > /dev/null 2>&1; then
+    if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+        proxy_status="true"   # no-proxy mode: không cần redsocks
+    elif check_proxy_health > /dev/null 2>&1; then
         # Also require real proxy check (SOCKS5+credentials) to have passed recently
         local real_ok; real_ok=$(state_get "real_proxy_ok" "true")
         [[ "$real_ok" == "true" ]] && proxy_status="true"
@@ -5278,7 +5292,9 @@ do_update() {
         echo "  ✗ Watchdog: $wd_status"
     fi
 
-    if grep -q "ss -tlnp" "$WRAPPER_SCRIPT" 2>/dev/null; then
+    if [[ "${USE_PROXY:-1}" -eq 0 ]]; then
+        echo "  ✓ Wrapper: No-proxy mode (direct launch)"
+    elif grep -q "ss -tlnp" "$WRAPPER_SCRIPT" 2>/dev/null; then
         echo "  ✓ Wrapper: Updated (ss check)"
     else
         echo "  ⚠ Wrapper: Still using nc check (check script logic)"
