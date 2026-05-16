@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.0"
+SCRIPT_VERSION="3.8.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2024,13 +2024,19 @@ print(json.dumps({'result': sys.argv[1], 'success': sys.argv[2] == 'true'}))
 }
 
 report_to_dashboard() {
+    local override_status="${1:-}"   # Optional: pass e.g. "proxy_expired" to bypass tray_state
     [[ "${DASHBOARD_ENABLED:-false}" != "true" ]] && return 0
     [[ -z "$DASHBOARD_URL" ]] || [[ -z "$DASHBOARD_API_KEY" ]] && return 0
 
     LATEST_LOG_FILE=$(get_latest_aro_log)
     parse_node_info
 
-    local tray_state; tray_state=$(get_aro_tray_state)
+    local tray_state
+    if [[ -n "$override_status" ]]; then
+        tray_state="$override_status"
+    else
+        tray_state=$(get_aro_tray_state)
+    fi
     local proxy_status="false"
     if check_proxy_health > /dev/null 2>&1; then
         # Also require real proxy check (SOCKS5+credentials) to have passed recently
@@ -2771,6 +2777,7 @@ watchdog_loop() {
                         # Tiếp tục vòng lặp bình thường (ARO sẽ được start lại ở dưới)
                     else
                         last_proxy_check_epoch=$(date +%s)
+                        report_to_dashboard "proxy_expired" &
                         sleep "$CHECK_INTERVAL"
                         continue
                     fi
@@ -2778,6 +2785,7 @@ watchdog_loop() {
                     local dead_since; dead_since=$(state_get "proxy_dead_since" "0")
                     local dead_mins=$(( (now - dead_since) / 60 ))
                     watchdog_log "Proxy dead for ${dead_mins}m — waiting for recovery (next check in $(( PROXY_CHECK_INTERVAL - (now - last_proxy_check_epoch) ))s)"
+                    report_to_dashboard "proxy_expired" &
                     sleep "$CHECK_INTERVAL"
                     continue
                 fi
@@ -2789,6 +2797,7 @@ watchdog_loop() {
                     kill_aro
                     send_notify_proxy_down "Upstream SOCKS5 server unreachable — ARO killed, waiting for proxy recovery" || true
                     last_proxy_check_epoch=$(date +%s)
+                    report_to_dashboard "proxy_expired" &
                     sleep "$CHECK_INTERVAL"
                     continue
                 fi
@@ -2800,6 +2809,7 @@ watchdog_loop() {
         if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
             if ! check_proxy_health; then
                 watchdog_log "Proxy unhealthy, skipping ARO checks this cycle"
+                report_to_dashboard "proxy_expired" &
                 sleep "$CHECK_INTERVAL"
                 continue
             fi
