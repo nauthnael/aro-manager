@@ -84,13 +84,14 @@ const FEED_FILTERS = ['all', ...ERROR_TYPES, 'ongoing'] as const
 type FeedFilter = typeof FEED_FILTERS[number]
 
 const FEED_FILTER_LABELS: Record<FeedFilter, string> = {
-  all:         'Tất cả',
-  vps_offline: 'VPS Offline',
-  aro_offline: 'ARO Offline',
-  no_internet: 'No Internet',
-  unbound:     'Unbound',
-  proxy_fail:  'Proxy Down',
-  ongoing:     'Đang xảy ra',
+  all:            'Tất cả',
+  vps_offline:    'VPS Offline',
+  aro_offline:    'ARO Offline',
+  no_internet:    'No Internet',
+  unbound:        'Unbound',
+  proxy_fail:     'Proxy Down',
+  proxy_expired:  'Proxy Expired',
+  ongoing:        'Đang xảy ra',
 }
 
 function proxyLabel(e: RecentErrorEvent) {
