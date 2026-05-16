@@ -422,6 +422,7 @@ export default function Dashboard() {
               checked={noPointsYesterday}
               onChange={e => {
                 setNoPointsYesterday(e.target.checked)
+                if (!e.target.checked) setExcludeNewNodes(false)
                 setStatusFilter(null)
                 setSearch('')
                 setNeedsRenewFilter(false)
@@ -439,6 +440,7 @@ export default function Dashboard() {
               checked={noPointsAvg}
               onChange={e => {
                 setNoPointsAvg(e.target.checked)
+                if (!e.target.checked) setExcludeNewNodes(false)
                 setStatusFilter(null)
                 setSearch('')
                 setNeedsRenewFilter(false)
