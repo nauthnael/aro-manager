@@ -542,13 +542,16 @@ export default function RenewNodes() {
                           </td>
                           <td className="px-3 py-2.5 text-xs">
                             {log.account ? (
-                              log.account !== log.account_before ? (
-                                <span className="text-green-600 font-medium">{log.account}</span>
-                              ) : (
-                                <span className="text-gray-400">{log.account}</span>
-                              )
+                              <span className="text-green-600 font-medium">
+                                {log.account}
+                                {log.account === log.account_before ? (
+                                  <span className="ml-1 text-green-500 font-normal opacity-70">(giữ nguyên)</span>
+                                ) : (
+                                  <span className="ml-1 text-green-500 font-normal opacity-70">(mới)</span>
+                                )}
+                              </span>
                             ) : (
-                              <span className="text-red-400 italic">N/A</span>
+                              <span className="text-red-400 italic">Chưa bind</span>
                             )}
                           </td>
                           <td className="px-3 py-2.5 font-mono text-xs">
