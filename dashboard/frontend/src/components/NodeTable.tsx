@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { RotateCcw } from 'lucide-react'
+import { Copy, RotateCcw } from 'lucide-react'
 
 function shortAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr + 'Z').getTime()
@@ -131,7 +131,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         cell: info => {
           const { id, needs_renew, country_code } = info.getValue()
           return (
-            <span className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 group/host">
               <a
                 href={`/nodes/${encodeURIComponent(id)}`}
                 onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(id)}`) }}
@@ -149,6 +149,13 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
                   <RotateCcw size={11} />
                 </span>
               )}
+              <button
+                onClick={e => { e.stopPropagation(); copyToClipboard(id) }}
+                title="Copy hostname"
+                className="opacity-0 group-hover/host:opacity-100 transition-opacity text-gray-400 hover:text-blue-500 shrink-0"
+              >
+                <Copy size={12} />
+              </button>
             </span>
           )
         },
@@ -159,13 +166,16 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
           const v = info.getValue()
           if (!v) return <span className="text-sm text-gray-400">—</span>
           return (
-            <button
-              onClick={() => copyToClipboard(v)}
-              title="Click to copy"
-              className="font-mono text-sm text-gray-700 hover:text-blue-600 hover:underline cursor-copy"
-            >
-              {v}
-            </button>
+            <span className="flex items-center gap-1 group/serial">
+              <span className="font-mono text-sm text-gray-700">{v}</span>
+              <button
+                onClick={e => { e.stopPropagation(); copyToClipboard(v) }}
+                title="Copy serial"
+                className="opacity-0 group-hover/serial:opacity-100 transition-opacity text-gray-400 hover:text-blue-500 shrink-0"
+              >
+                <Copy size={12} />
+              </button>
+            </span>
           )
         },
       }),
