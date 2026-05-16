@@ -293,9 +293,9 @@ def get_renew_history(
     if node_ids:
         for n in db.query(models.Node).filter(models.Node.node_id.in_(node_ids)).all():
             node_accounts[n.node_id] = n.account
-            node_last_seen[n.node_id] = n.last_seen
         for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(node_ids)).all():
             node_reward_yesterday[s.node_id] = s.reward_yesterday
+            node_last_seen[s.node_id] = s.last_seen
 
     result = []
     for log in logs:
