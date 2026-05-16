@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.2"
+SCRIPT_VERSION="3.8.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -3955,6 +3955,11 @@ deploy_phase6_finish() {
     fi
     echo ""
 
+    if [[ "${DASHBOARD_ENABLED:-false}" == "true" ]]; then
+        echo "  Dashboard: ✅ ${DASHBOARD_URL}"
+    fi
+    echo ""
+
     if [[ -n "$TG_BOT_TOKEN" ]] && [[ -n "$TG_CHAT_ID" ]]; then
         _send_deploy_report "$machine_ip"
     fi
@@ -5408,8 +5413,10 @@ USAGE:
 
 MAIN COMMANDS:
   deploy <proxy> --ssh-key KEY [--vnc-pass PASS] [--crd] [--no-proxy] [--no-telegram]
+                      [dashboard --enable=1 --url=URL --db-api=KEY]
                       --no-proxy:     deploy without SOCKS5 proxy (direct connection)
                       --no-telegram:  tắt Telegram notifications (bảo vệ bot token)
+                      dashboard:      kích hoạt dashboard ngay khi deploy xong
 
   full-install [<proxy>] [--no-proxy] [--token TOKEN] [--chatid ID] [--no-telegram]
                       --no-proxy:     install without proxy (proxy string optional)
@@ -5560,6 +5567,16 @@ main() {
                     --chatid)       TG_CHAT_ID="$2";                     shift 2 ;;
                     --no-proxy)     USE_PROXY=0;                         shift   ;;
                     --no-telegram)  TG_ENABLED=0;                        shift   ;;
+                    dashboard)                                            shift   ;;
+                    --enable=*)     local _db_en="${1#--enable=}"
+                                    if [[ "$_db_en" == "1" ]] || [[ "$_db_en" == "true" ]]; then
+                                        DASHBOARD_ENABLED="true"
+                                    else
+                                        DASHBOARD_ENABLED="false"
+                                    fi
+                                                                         shift   ;;
+                    --url=*)        DASHBOARD_URL="${1#--url=}";         shift   ;;
+                    --db-api=*)     DASHBOARD_API_KEY="${1#--db-api=}";  shift   ;;
                     *) shift ;;
                 esac
             done
