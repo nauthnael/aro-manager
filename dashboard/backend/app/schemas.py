@@ -134,6 +134,7 @@ class NodeListResponse(BaseModel):
     offline: int
     no_internet: int
     unbound: int
+    proxy_expired: int = 0
     stale: int
     needs_renew_count: int = 0
 
@@ -205,6 +206,7 @@ class AccountStatsOut(BaseModel):
     offline: int
     no_internet: int
     unbound: int
+    proxy_expired: int = 0
     vps_offline: int
     total_points: float
     avg_uptime: Optional[float] = None

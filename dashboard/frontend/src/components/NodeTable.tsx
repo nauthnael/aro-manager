@@ -49,7 +49,7 @@ interface Props {
 
 const col = createColumnHelper<NodeStatus>()
 
-const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'Offline', null]
+const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'proxy_expired', 'Offline', null]
 
 const toFlagEmoji = (cc: string) =>
   cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))

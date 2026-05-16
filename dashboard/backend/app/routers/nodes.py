@@ -14,9 +14,10 @@ router = APIRouter()
 
 # Maps aro_status values that represent an error condition → error_type name
 _ARO_ERROR_MAP = {
-    "Offline":     "aro_offline",
-    "NoInternet":  "no_internet",
-    "Unbound":     "unbound",
+    "Offline":        "aro_offline",
+    "NoInternet":     "no_internet",
+    "Unbound":        "unbound",
+    "proxy_expired":  "proxy_fail",
 }
 
 

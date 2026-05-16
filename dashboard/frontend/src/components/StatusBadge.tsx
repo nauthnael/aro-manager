@@ -4,10 +4,11 @@ interface Props {
 }
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
-  Online:     { label: 'Online',      cls: 'bg-green-100 text-green-800' },
-  Offline:    { label: 'Offline',     cls: 'bg-red-100 text-red-800' },
-  NoInternet: { label: 'No Internet', cls: 'bg-yellow-100 text-yellow-800' },
-  Unbound:    { label: 'Unbound',     cls: 'bg-purple-100 text-purple-800' },
+  Online:         { label: 'Online',          cls: 'bg-green-100 text-green-800' },
+  Offline:        { label: 'Offline',         cls: 'bg-red-100 text-red-800' },
+  NoInternet:     { label: 'No Internet',     cls: 'bg-yellow-100 text-yellow-800' },
+  Unbound:        { label: 'Unbound',         cls: 'bg-purple-100 text-purple-800' },
+  proxy_expired:  { label: 'Proxy Expired',   cls: 'bg-orange-100 text-orange-800' },
 }
 
 export default function StatusBadge({ status, isStale }: Props) {

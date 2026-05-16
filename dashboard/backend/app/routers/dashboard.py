@@ -103,7 +103,7 @@ def me(current_user: models.User = Depends(get_current_user)):
     return {"username": current_user.username}
 
 
-_STATUS_SORT = {'Online': 0, 'NoInternet': 1, 'Unbound': 2, 'Offline': 3}
+_STATUS_SORT = {'Online': 0, 'NoInternet': 1, 'Unbound': 2, 'proxy_expired': 3, 'Offline': 4}
 
 
 def _sort_key(sort_by: str):
@@ -179,6 +179,7 @@ def list_nodes(
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
     no_internet = sum(1 for n in all_out if not n.is_stale and n.aro_status == "NoInternet")
     unbound = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Unbound")
+    proxy_expired = sum(1 for n in all_out if not n.is_stale and n.aro_status == "proxy_expired")
     stale = sum(1 for n in all_out if n.is_stale)
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
 
@@ -256,6 +257,7 @@ def list_nodes(
         offline=offline,
         no_internet=no_internet,
         unbound=unbound,
+        proxy_expired=proxy_expired,
         stale=stale,
         needs_renew_count=needs_renew_count,
     )
@@ -514,7 +516,7 @@ def account_stats(
         if key not in buckets:
             buckets[key] = dict(
                 account=key, total=0, online=0, offline=0,
-                no_internet=0, unbound=0, vps_offline=0,
+                no_internet=0, unbound=0, proxy_expired=0, vps_offline=0,
                 total_points=0.0, uptime_sum=0.0, uptime_count=0,
             )
         b = buckets[key]
@@ -523,11 +525,12 @@ def account_stats(
         status = statuses.get(node.node_id)
         if status and status.last_seen and (now - status.last_seen).total_seconds() <= STALE_SECS:
             aro = status.aro_status
-            if aro == "Online":        b["online"] += 1
-            elif aro == "Offline":     b["offline"] += 1
-            elif aro == "NoInternet":  b["no_internet"] += 1
-            elif aro == "Unbound":     b["unbound"] += 1
-            else:                      b["vps_offline"] += 1
+            if aro == "Online":             b["online"] += 1
+            elif aro == "Offline":          b["offline"] += 1
+            elif aro == "NoInternet":       b["no_internet"] += 1
+            elif aro == "Unbound":          b["unbound"] += 1
+            elif aro == "proxy_expired":    b["proxy_expired"] += 1
+            else:                           b["vps_offline"] += 1
 
             if status.reward_yesterday:
                 b["total_points"] += status.reward_yesterday
@@ -544,7 +547,7 @@ def account_stats(
             account=b["account"], total=b["total"],
             online=b["online"], offline=b["offline"],
             no_internet=b["no_internet"], unbound=b["unbound"],
-            vps_offline=b["vps_offline"],
+            proxy_expired=b["proxy_expired"], vps_offline=b["vps_offline"],
             total_points=round(b["total_points"], 2),
             avg_uptime=round(avg, 1) if avg is not None else None,
         ))

@@ -41,6 +41,7 @@ export default function AccountStatsPage() {
     offline: data.reduce((s, r) => s + r.offline, 0),
     no_internet: data.reduce((s, r) => s + r.no_internet, 0),
     unbound: data.reduce((s, r) => s + r.unbound, 0),
+    proxy_expired: data.reduce((s, r) => s + (r.proxy_expired ?? 0), 0),
     vps_offline: data.reduce((s, r) => s + r.vps_offline, 0),
     total_points: data.reduce((s, r) => s + r.total_points, 0),
   }), [data])
@@ -56,10 +57,11 @@ export default function AccountStatsPage() {
     }),
     col.accessor('total',       { header: 'Tổng', cell: info => <span className="text-sm font-mono font-semibold">{info.getValue()}</span> }),
     col.accessor('online',      { header: 'Online',      cell: info => <Pill value={info.getValue()} cls="bg-green-100 text-green-800" /> }),
-    col.accessor('offline',     { header: 'Offline',     cell: info => <Pill value={info.getValue()} cls="bg-red-100 text-red-800" /> }),
-    col.accessor('no_internet', { header: 'No Internet', cell: info => <Pill value={info.getValue()} cls="bg-yellow-100 text-yellow-800" /> }),
-    col.accessor('unbound',     { header: 'Unbound',     cell: info => <Pill value={info.getValue()} cls="bg-purple-100 text-purple-800" /> }),
-    col.accessor('vps_offline', { header: 'VPS Offline', cell: info => <Pill value={info.getValue()} cls="bg-gray-200 text-gray-600" /> }),
+    col.accessor('offline',        { header: 'Offline',        cell: info => <Pill value={info.getValue()} cls="bg-red-100 text-red-800" /> }),
+    col.accessor('no_internet',    { header: 'No Internet',    cell: info => <Pill value={info.getValue()} cls="bg-yellow-100 text-yellow-800" /> }),
+    col.accessor('proxy_expired',  { header: 'Proxy Expired',  cell: info => <Pill value={info.getValue() ?? 0} cls="bg-orange-100 text-orange-800" /> }),
+    col.accessor('unbound',        { header: 'Unbound',        cell: info => <Pill value={info.getValue()} cls="bg-purple-100 text-purple-800" /> }),
+    col.accessor('vps_offline',    { header: 'VPS Offline',    cell: info => <Pill value={info.getValue()} cls="bg-gray-200 text-gray-600" /> }),
     col.accessor('total_points', {
       header: 'Tổng điểm',
       cell: info => (
@@ -112,15 +114,16 @@ export default function AccountStatsPage() {
 
       <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-4">
         {/* Summary cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           {[
-            { label: 'Accounts',    value: data.length,          border: 'border-blue-400' },
-            { label: 'Tổng node',   value: totals.total,         border: 'border-gray-400' },
-            { label: 'Online',      value: totals.online,        border: 'border-green-500' },
-            { label: 'Offline',     value: totals.offline,       border: 'border-red-500' },
-            { label: 'No Internet', value: totals.no_internet,   border: 'border-yellow-500' },
-            { label: 'Unbound',     value: totals.unbound,       border: 'border-purple-500' },
-            { label: 'VPS Offline', value: totals.vps_offline,   border: 'border-gray-400' },
+            { label: 'Accounts',       value: data.length,              border: 'border-blue-400' },
+            { label: 'Tổng node',      value: totals.total,             border: 'border-gray-400' },
+            { label: 'Online',         value: totals.online,            border: 'border-green-500' },
+            { label: 'Offline',        value: totals.offline,           border: 'border-red-500' },
+            { label: 'No Internet',    value: totals.no_internet,       border: 'border-yellow-500' },
+            { label: 'Proxy Expired',  value: totals.proxy_expired,     border: 'border-orange-500' },
+            { label: 'Unbound',        value: totals.unbound,           border: 'border-purple-500' },
+            { label: 'VPS Offline',    value: totals.vps_offline,       border: 'border-gray-400' },
           ].map(c => (
             <div key={c.label} className={`bg-white rounded-lg shadow p-3 border-l-4 ${c.border}`}>
               <p className="text-xs text-gray-500 uppercase tracking-wide">{c.label}</p>

@@ -48,6 +48,7 @@ export interface NodeListResponse {
   offline: number
   no_internet: number
   unbound: number
+  proxy_expired: number
   stale: number
   needs_renew_count: number
 }
@@ -82,6 +83,7 @@ export interface AccountStats {
   offline: number
   no_internet: number
   unbound: number
+  proxy_expired: number
   vps_offline: number
   total_points: number
   avg_uptime: number | null
@@ -99,22 +101,24 @@ export interface Command {
   created_by: string | null
 }
 
-export type ErrorType = 'vps_offline' | 'aro_offline' | 'no_internet' | 'unbound' | 'proxy_fail'
+export type ErrorType = 'vps_offline' | 'aro_offline' | 'no_internet' | 'unbound' | 'proxy_fail' | 'proxy_expired'
 
 export const ERROR_LABELS: Record<ErrorType, string> = {
-  vps_offline: 'VPS Offline',
-  aro_offline:  'ARO Offline',
-  no_internet:  'ARO No Internet',
-  unbound:      'Unbound',
-  proxy_fail:   'Proxy Fail',
+  vps_offline:    'VPS Offline',
+  aro_offline:    'ARO Offline',
+  no_internet:    'ARO No Internet',
+  unbound:        'Unbound',
+  proxy_fail:     'Proxy Fail',
+  proxy_expired:  'Proxy Expired',
 }
 
 export const ERROR_COLORS: Record<ErrorType, string> = {
-  vps_offline: '#ef4444',   // red
-  aro_offline:  '#f97316',  // orange
-  no_internet:  '#eab308',  // yellow
-  unbound:      '#8b5cf6',  // violet
-  proxy_fail:   '#64748b',  // slate
+  vps_offline:    '#ef4444',  // red
+  aro_offline:    '#f97316',  // orange
+  no_internet:    '#eab308',  // yellow
+  unbound:        '#8b5cf6',  // violet
+  proxy_fail:     '#64748b',  // slate
+  proxy_expired:  '#f97316',  // orange (same as aro_offline — proxy issue)
 }
 
 export interface ErrorEvent {
