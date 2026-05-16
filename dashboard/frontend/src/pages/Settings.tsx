@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Check, Pencil, Plus, Send, Radio, Database, Download, Trash2, RefreshCw, X } from 'lucide-react'
 import api from '../api/client'
 import { TagOut } from '../types'
+import TelegramHealthBanner from '../components/TelegramHealthBanner'
 
 interface SettingsData {
   tg_critical: string
@@ -338,6 +339,8 @@ export default function SettingsPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        <TelegramHealthBanner />
+
         {/* Node bot token */}
         <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
           <div>
