@@ -214,7 +214,7 @@ def list_nodes(
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
     if no_exit_ip:
-        filtered = [n for n in filtered if not n.public_ip]
+        filtered = [n for n in filtered if not n.public_ip or n.public_ip.upper() == 'N/A']
 
     # Filter by tags (AND/OR)
     if tag_ids:
