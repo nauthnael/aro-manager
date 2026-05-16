@@ -45,6 +45,8 @@ interface Props {
   sorting: SortingState
   onSortingChange: (s: SortingState) => void
   onTagClick?: (tagId: number) => void
+  page?: number
+  pageSize?: number
 }
 
 const col = createColumnHelper<NodeStatus>()
@@ -54,7 +56,7 @@ const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'proxy_expired', 'Offli
 const toFlagEmoji = (cc: string) =>
   cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick, page = 1, pageSize = 50 }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
@@ -103,6 +105,15 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
 
   const columns = useMemo(
     () => [
+      col.display({
+        id: 'row_number',
+        header: '#',
+        cell: info => (
+          <span className="text-xs text-gray-400 font-mono select-none">
+            {(page - 1) * pageSize + info.row.index + 1}
+          </span>
+        ),
+      }),
       col.display({
         id: 'select',
         header: () => (
@@ -347,7 +358,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
       }),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, selectedIds, allSelected, someSelected, editingNote, onTagClick],
+    [navigate, selectedIds, allSelected, someSelected, editingNote, onTagClick, page, pageSize],
   )
 
   const table = useReactTable({

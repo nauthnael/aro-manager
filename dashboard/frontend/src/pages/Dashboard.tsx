@@ -597,6 +597,8 @@ export default function Dashboard() {
             sorting={sorting}
             onSortingChange={handleSortingChange}
             onTagClick={handleTagClick}
+            page={page}
+            pageSize={pageSize}
           />
         )}
 
