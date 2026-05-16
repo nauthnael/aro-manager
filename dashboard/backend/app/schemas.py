@@ -136,6 +136,7 @@ class NodeListResponse(BaseModel):
     unbound: int
     proxy_expired: int = 0
     stale: int
+    no_exit_ip_count: int = 0
     needs_renew_count: int = 0
 
 

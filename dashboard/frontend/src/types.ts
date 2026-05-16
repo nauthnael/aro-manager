@@ -50,6 +50,7 @@ export interface NodeListResponse {
   unbound: number
   proxy_expired: number
   stale: number
+  no_exit_ip_count: number
   needs_renew_count: number
 }
 

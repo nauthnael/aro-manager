@@ -6,6 +6,7 @@ interface Stats {
   unbound: number
   proxy_expired?: number
   stale: number
+  no_exit_ip_count?: number
 }
 
 function Card({
@@ -46,6 +47,7 @@ export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
     { key: 'Offline',        label: 'Offline',        value: stats.offline,        border: 'border-red-500' },
     { key: 'NoInternet',     label: 'No Internet',    value: stats.no_internet,    border: 'border-yellow-500' },
     { key: 'proxy_expired',  label: 'Proxy Expired',  value: stats.proxy_expired ?? 0,  border: 'border-orange-500' },
+    { key: 'no_exit_ip',     label: 'Cần Active',     value: stats.no_exit_ip_count ?? 0, border: 'border-red-500' },
     { key: 'Unbound',        label: 'Unbound',        value: stats.unbound,        border: 'border-purple-500' },
     { key: 'stale',          label: 'VPS Offline',    value: stats.stale,          border: 'border-gray-400' },
   ]

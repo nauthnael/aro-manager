@@ -153,7 +153,6 @@ def list_nodes(
     no_points_yesterday: bool = Query(False),
     no_points_avg: bool = Query(False),
     exclude_new_nodes: bool = Query(False),
-    no_exit_ip: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     sort_by: Optional[str] = Query(None),
@@ -192,6 +191,7 @@ def list_nodes(
     unbound = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Unbound")
     proxy_expired = sum(1 for n in all_out if not n.is_stale and n.aro_status == "proxy_expired")
     stale = sum(1 for n in all_out if n.is_stale)
+    no_exit_ip_count = sum(1 for n in all_out if not n.public_ip or n.public_ip.upper() == 'N/A')
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
 
     # --- Filtering (applied to ALL nodes) ---
@@ -201,6 +201,8 @@ def list_nodes(
         filtered = [n for n in filtered if q in (n.node_id or "").lower() or q in (n.account or "").lower() or q in (n.serial or "").lower()]
     if status_filter == "stale":
         filtered = [n for n in filtered if n.is_stale]
+    elif status_filter == "no_exit_ip":
+        filtered = [n for n in filtered if not n.public_ip or n.public_ip.upper() == 'N/A']
     elif status_filter:
         filtered = [n for n in filtered if not n.is_stale and n.aro_status == status_filter]
     if exclude_new_nodes:
@@ -213,8 +215,6 @@ def list_nodes(
             n for n in filtered
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
-    if no_exit_ip:
-        filtered = [n for n in filtered if not n.public_ip or n.public_ip.upper() == 'N/A']
 
     # Filter by tags (AND/OR)
     if tag_ids:
@@ -272,6 +272,7 @@ def list_nodes(
         unbound=unbound,
         proxy_expired=proxy_expired,
         stale=stale,
+        no_exit_ip_count=no_exit_ip_count,
         needs_renew_count=needs_renew_count,
     )
 
