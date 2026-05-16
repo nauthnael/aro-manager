@@ -221,6 +221,7 @@ export interface RenewLog {
   status: string
   renew_count: number
   monitored_at: string | null
+  reward_yesterday: number | null
 }
 
 export interface RenewHistoryResponse {

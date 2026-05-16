@@ -495,7 +495,7 @@ export default function RenewNodes() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+            <div className="bg-white rounded-xl shadow-sm overflow-auto max-h-[calc(100vh-220px)]">
               {histLoading ? (
                 <div className="text-center py-12 text-gray-400">Đang tải...</div>
               ) : !history || history.logs.length === 0 ? (
@@ -505,13 +505,14 @@ export default function RenewNodes() {
               ) : (
                 <>
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-100">
+                    <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
                       <tr>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Thời gian</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account trước renew</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account hiện tại</th>
                         <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Serial trước → sau</th>
+                        <th className="text-right px-3 py-2.5 font-semibold text-gray-600">Điểm hôm qua</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Lần #</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
                         <th className="text-center px-3 py-2.5 font-semibold text-gray-600">Theo dõi</th>
@@ -560,6 +561,15 @@ export default function RenewNodes() {
                             )}
                             {log.serial_after && log.serial_after === log.serial_before && (
                               <span className="text-gray-400 text-xs"> (không đổi)</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            {log.reward_yesterday != null ? (
+                              <span className={`text-xs font-medium ${log.reward_yesterday > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                {log.reward_yesterday}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 text-xs">—</span>
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-center">

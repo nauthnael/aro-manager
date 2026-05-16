@@ -371,6 +371,7 @@ class RenewLogOut(BaseModel):
     status: str
     renew_count: int
     monitored_at: Optional[datetime] = None
+    reward_yesterday: Optional[float] = None
 
     class Config:
         from_attributes = True

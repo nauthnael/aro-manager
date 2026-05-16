@@ -287,10 +287,13 @@ def get_renew_history(
     logs = q.offset((page - 1) * page_size).limit(page_size).all()
 
     node_accounts = {}
+    node_reward_yesterday = {}
     node_ids = list({log.node_id for log in logs})
     if node_ids:
         for n in db.query(models.Node).filter(models.Node.node_id.in_(node_ids)).all():
             node_accounts[n.node_id] = n.account
+        for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(node_ids)).all():
+            node_reward_yesterday[s.node_id] = s.reward_yesterday
 
     result = []
     for log in logs:
@@ -306,6 +309,7 @@ def get_renew_history(
             status=log.status,
             renew_count=log.renew_count,
             monitored_at=log.monitored_at,
+            reward_yesterday=node_reward_yesterday.get(log.node_id),
         ))
 
     return schemas.RenewHistoryResponse(
