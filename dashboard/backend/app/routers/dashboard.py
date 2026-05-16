@@ -133,6 +133,16 @@ def _sort_key(sort_by: str):
         return _semver
     if sort_by == 'renew_count':
         return lambda n: n.renew_count or 0
+    if sort_by == 'public_ip':
+        def _ip_key(n):
+            ip = n.public_ip
+            if not ip:
+                return (999, 0, 0, 0)
+            try:
+                return tuple(int(p) for p in ip.split('.'))
+            except Exception:
+                return (998, 0, 0, 0)
+        return _ip_key
     return None
 
 
@@ -143,6 +153,7 @@ def list_nodes(
     no_points_yesterday: bool = Query(False),
     no_points_avg: bool = Query(False),
     exclude_new_nodes: bool = Query(False),
+    no_exit_ip: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     sort_by: Optional[str] = Query(None),
@@ -202,6 +213,8 @@ def list_nodes(
             n for n in filtered
             if n.reward_yesterday is not None and n.reward_yesterday == 0
         ]
+    if no_exit_ip:
+        filtered = [n for n in filtered if not n.public_ip]
 
     # Filter by tags (AND/OR)
     if tag_ids:

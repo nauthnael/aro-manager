@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [noPointsYesterday, setNoPointsYesterday] = useState(false)
   const [noPointsAvg, setNoPointsAvg] = useState(false)
   const [excludeNewNodes, setExcludeNewNodes] = useState(false)
+  const [noExitIp, setNoExitIp] = useState(false)
   const [needsRenewFilter, setNeedsRenewFilter] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
@@ -69,6 +70,7 @@ export default function Dashboard() {
   if (noPointsYesterday) params.set('no_points_yesterday', 'true')
   if (noPointsAvg)       params.set('no_points_avg', 'true')
   if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
+  if (noExitIp)          params.set('no_exit_ip', 'true')
   params.set('page', String(page))
   params.set('page_size', String(pageSize))
   params.set('sort_by', sortBy)
@@ -79,7 +81,7 @@ export default function Dashboard() {
   }
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
+    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, noExitIp, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
   })
@@ -202,6 +204,7 @@ export default function Dashboard() {
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
     setExcludeNewNodes(false)
+    setNoExitIp(false)
     setNeedsRenewFilter(false)
     setTagFilterIds([])
     setSelectedIds(new Set())
@@ -213,6 +216,7 @@ export default function Dashboard() {
     setStatusFilter(null)
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
+    setNoExitIp(false)
     setNeedsRenewFilter(false)
     setSelectedIds(new Set())
     setPage(1)
@@ -462,6 +466,23 @@ export default function Dashboard() {
               Chỉ node hoạt động trên 1 ngày
             </label>
           )}
+          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
+            ${noExitIp ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 hover:border-gray-300'}`}>
+            <input
+              type="checkbox"
+              checked={noExitIp}
+              onChange={e => {
+                setNoExitIp(e.target.checked)
+                setStatusFilter(null)
+                setSearch('')
+                setNeedsRenewFilter(false)
+                setSelectedIds(new Set())
+                setPage(1)
+              }}
+              className="accent-blue-500"
+            />
+            Chưa có Exit IP
+          </label>
         </div>
 
         {/* Pagination + Page size */}

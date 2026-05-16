@@ -223,7 +223,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
       }),
       col.accessor('public_ip', {
         header: 'Exit IP',
-        cell: info => <span className="text-xs font-mono text-gray-500">{info.getValue() ?? '—'}</span>,
+        cell: info => <span className="text-xs font-mono text-gray-500">{info.getValue() ?? 'N/A'}</span>,
       }),
       col.accessor('last_seen', {
         header: 'Last Seen',
