@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.3"
+SCRIPT_VERSION="3.8.4"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2764,6 +2764,7 @@ watchdog_loop() {
                 else
                     local remaining=$(( GIVE_UP_RETRY_MINS - elapsed_mins ))
                     watchdog_log "Give-up flag active — auto-retry in ${remaining}m (run 'start' to reset now)"
+                    report_to_dashboard "proxy_expired" &
                     sleep "$CHECK_INTERVAL"
                     continue
                 fi
