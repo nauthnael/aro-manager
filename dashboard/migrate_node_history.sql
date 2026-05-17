@@ -47,3 +47,48 @@ FROM node_history;
 -- If the numbers look correct (avg ~1 record/node/day, latest_date = yesterday), run:
 COMMIT;
 -- Otherwise run: ROLLBACK;
+
+
+-- =============================================================================
+-- CLEANUP SCRIPT (run AFTER the main migration above if any nodes still show
+-- "today's date" bar on the chart)
+--
+-- Root cause: if the old code was still running briefly after the migration,
+-- it may have created new records with timestamp=TODAY before the backend
+-- restarted with the fixed code.
+--
+-- This script removes any records dated today (UTC) or in the future,
+-- then re-deduplicates to ensure 1 record per (node_id, date).
+-- =============================================================================
+
+-- cleanup_post_migration.sql  (run separately if needed, also in a transaction)
+
+BEGIN;
+
+-- Remove any records with timestamp >= today UTC (should not exist with fixed code)
+DELETE FROM node_history
+WHERE DATE(timestamp) >= CURRENT_DATE;
+
+-- Re-deduplicate in case duplicates remain from the transition period
+DELETE FROM node_history
+WHERE id NOT IN (
+    SELECT DISTINCT ON (node_id, DATE(timestamp)) id
+    FROM node_history
+    ORDER BY node_id, DATE(timestamp), reward_today DESC NULLS LAST, id ASC
+);
+
+-- Remove zero/null rewards
+DELETE FROM node_history
+WHERE reward_today IS NULL OR reward_today = 0;
+
+-- Verify: latest_date should be yesterday (CURRENT_DATE - 1)
+SELECT
+    COUNT(*)                         AS total_records,
+    COUNT(DISTINCT node_id)          AS total_nodes,
+    MIN(DATE(timestamp))             AS earliest_date,
+    MAX(DATE(timestamp))             AS latest_date
+FROM node_history;
+
+COMMIT;
+-- If latest_date = yesterday and numbers look right → done.
+-- Otherwise run: ROLLBACK;
