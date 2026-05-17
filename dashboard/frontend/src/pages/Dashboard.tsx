@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Tag as TagIcon, X } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
@@ -49,10 +49,6 @@ export default function Dashboard() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [noPointsYesterday, setNoPointsYesterday] = useState(false)
-  const [noPointsAvg, setNoPointsAvg] = useState(false)
-  const [excludeNewNodes, setExcludeNewNodes] = useState(false)
-  const [needsRenewFilter, setNeedsRenewFilter] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [sorting, setSorting] = useState<SortingState>([{ id: 'node_id', desc: false }])
@@ -77,11 +73,10 @@ export default function Dashboard() {
   const sortDir = sorting[0]?.desc ? 'desc' : 'asc'
 
   const params = new URLSearchParams()
-  if (statusFilter) params.set('status_filter', statusFilter)
+  if (statusFilter === 'noPointsYesterday') params.set('no_points_yesterday', 'true')
+  else if (statusFilter === 'noPointsAvg') params.set('no_points_avg', 'true')
+  else if (statusFilter) params.set('status_filter', statusFilter)
   if (debouncedSearch) params.set('search', debouncedSearch)
-  if (noPointsYesterday) params.set('no_points_yesterday', 'true')
-  if (noPointsAvg)       params.set('no_points_avg', 'true')
-  if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
   params.set('page', String(page))
   params.set('page_size', String(pageSize))
   params.set('sort_by', sortBy)
@@ -92,7 +87,7 @@ export default function Dashboard() {
   }
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, debouncedSearch, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
+    queryKey: ['nodes', statusFilter, debouncedSearch, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
     staleTime: 25_000,
@@ -215,10 +210,6 @@ export default function Dashboard() {
     setStatusFilter(f)
     setSearch('')
     setDebouncedSearch('')
-    setNoPointsYesterday(false)
-    setNoPointsAvg(false)
-    setExcludeNewNodes(false)
-    setNeedsRenewFilter(false)
     setTagFilterIds([])
     setSelectedIds(new Set())
     setPage(1)
@@ -231,9 +222,6 @@ export default function Dashboard() {
     searchTimerRef.current = setTimeout(() => {
       setDebouncedSearch(v)
       setStatusFilter(null)
-      setNoPointsYesterday(false)
-      setNoPointsAvg(false)
-      setNeedsRenewFilter(false)
       setSelectedIds(new Set())
       setPage(1)
       window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -241,8 +229,7 @@ export default function Dashboard() {
   }
 
   const selectedCount = selectedIds.size
-  const allNodes = data?.nodes ?? []
-  const visibleNodes = needsRenewFilter ? allNodes.filter(n => n.needs_renew) : allNodes
+  const visibleNodes = data?.nodes ?? []
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -414,83 +401,6 @@ export default function Dashboard() {
           <span className="text-sm text-gray-400 whitespace-nowrap">
             {data?.total_filtered ?? 0} / {data?.total ?? 0} nodes
           </span>
-        </div>
-
-        {/* Point filters */}
-        <div className="flex items-center gap-4 flex-wrap text-sm text-gray-600">
-          {(data?.needs_renew_count ?? 0) > 0 && (
-            <button
-              onClick={() => {
-                setNeedsRenewFilter(v => !v)
-                setStatusFilter(null)
-                setSearch('')
-                setNoPointsYesterday(false)
-                setNoPointsAvg(false)
-                setSelectedIds(new Set())
-                setPage(1)
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-medium transition-colors ${
-                needsRenewFilter
-                  ? 'bg-orange-500 border-orange-500 text-white'
-                  : 'bg-orange-50 border-orange-300 text-orange-700 hover:bg-orange-100'
-              }`}
-            >
-              <RotateCcw size={13} />
-              Cần renew
-              <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
-                needsRenewFilter ? 'bg-orange-400 text-white' : 'bg-orange-200 text-orange-800'
-              }`}>
-                {data?.needs_renew_count}
-              </span>
-            </button>
-          )}
-          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
-            ${noPointsYesterday ? 'bg-orange-50 border-orange-300 text-orange-700' : 'border-gray-200 hover:border-gray-300'}`}>
-            <input
-              type="checkbox"
-              checked={noPointsYesterday}
-              onChange={e => {
-                setNoPointsYesterday(e.target.checked)
-                if (!e.target.checked) setExcludeNewNodes(false)
-                setStatusFilter(null)
-                setSearch('')
-                setNeedsRenewFilter(false)
-                setSelectedIds(new Set())
-                setPage(1)
-              }}
-              className="accent-orange-500"
-            />
-            Không điểm hôm qua
-          </label>
-          <label className={`flex items-center gap-2 cursor-pointer select-none px-3 py-1.5 rounded-lg border transition-colors
-            ${noPointsAvg ? 'bg-red-50 border-red-300 text-red-700' : 'border-gray-200 hover:border-gray-300'}`}>
-            <input
-              type="checkbox"
-              checked={noPointsAvg}
-              onChange={e => {
-                setNoPointsAvg(e.target.checked)
-                if (!e.target.checked) setExcludeNewNodes(false)
-                setStatusFilter(null)
-                setSearch('')
-                setNeedsRenewFilter(false)
-                setSelectedIds(new Set())
-                setPage(1)
-              }}
-              className="accent-red-500"
-            />
-            Trung bình 0 điểm
-          </label>
-          {(noPointsYesterday || noPointsAvg) && (
-            <label className="flex items-center gap-2 cursor-pointer select-none text-gray-500 border-l pl-4 ml-1">
-              <input
-                type="checkbox"
-                checked={excludeNewNodes}
-                onChange={e => { setExcludeNewNodes(e.target.checked); setPage(1) }}
-                className="accent-gray-500"
-              />
-              Chỉ node hoạt động trên 1 ngày
-            </label>
-          )}
         </div>
 
         {/* Pagination + Page size */}

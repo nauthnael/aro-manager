@@ -52,6 +52,8 @@ export interface NodeListResponse {
   stale: number
   no_exit_ip_count: number
   needs_renew_count: number
+  no_points_yesterday_count: number
+  no_points_avg_count: number
 }
 
 export interface HistoryPoint {

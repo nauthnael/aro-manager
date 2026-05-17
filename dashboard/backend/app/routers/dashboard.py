@@ -194,6 +194,25 @@ def list_nodes(
     stale = sum(1 for n in all_out if n.is_stale)
     no_exit_ip_count = sum(1 for n in all_out if not n.public_ip or n.public_ip.upper() == 'N/A')
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
+    no_points_yesterday_count = sum(1 for n in all_out if n.reward_yesterday is not None and n.reward_yesterday == 0)
+
+    # Count nodes with avg daily score == 0 via a single aggregated query
+    _avg_sq = (
+        db.query(
+            models.NodeHistory.node_id.label('node_id'),
+            func.date(models.NodeHistory.timestamp).label('day'),
+            func.max(models.NodeHistory.reward_today).label('daily_max'),
+        )
+        .group_by(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp))
+        .subquery()
+    )
+    _avg_rows = (
+        db.query(_avg_sq.c.node_id)
+        .group_by(_avg_sq.c.node_id)
+        .having(func.sum(_avg_sq.c.daily_max) == 0)
+        .all()
+    )
+    no_points_avg_count = len(_avg_rows)
 
     # --- Filtering (applied to ALL nodes) ---
     filtered = all_out
@@ -275,6 +294,8 @@ def list_nodes(
         stale=stale,
         no_exit_ip_count=no_exit_ip_count,
         needs_renew_count=needs_renew_count,
+        no_points_yesterday_count=no_points_yesterday_count,
+        no_points_avg_count=no_points_avg_count,
     )
 
 

@@ -1,12 +1,12 @@
 interface Stats {
   total: number
   online: number
-  offline: number
-  no_internet: number
   unbound: number
   proxy_expired?: number
   stale: number
   no_exit_ip_count?: number
+  no_points_yesterday_count?: number
+  no_points_avg_count?: number
 }
 
 function Card({
@@ -42,14 +42,14 @@ interface Props {
 
 export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
   const cards = [
-    { key: null,             label: 'Total',         value: stats.total,               border: 'border-gray-400' },
-    { key: 'Online',         label: 'Online',        value: stats.online,              border: 'border-green-500' },
-    { key: 'Offline',        label: 'Offline',       value: stats.offline,             border: 'border-red-500' },
-    { key: 'NoInternet',     label: 'No Internet',   value: stats.no_internet,         border: 'border-yellow-500' },
-    { key: 'proxy_expired',  label: 'Proxy Expired', value: stats.proxy_expired ?? 0,  border: 'border-orange-500' },
-    { key: 'no_exit_ip',     label: 'Cần Active',    value: stats.no_exit_ip_count ?? 0, border: 'border-red-500' },
-    { key: 'Unbound',        label: 'Unbound',       value: stats.unbound,             border: 'border-purple-500' },
-    { key: 'stale',          label: 'VPS Offline',   value: stats.stale,               border: 'border-gray-400' },
+    { key: null,                  label: 'Total',              value: stats.total,                        border: 'border-gray-400' },
+    { key: 'Online',              label: 'Online',             value: stats.online,                       border: 'border-green-500' },
+    { key: 'proxy_expired',       label: 'Proxy Expired',      value: stats.proxy_expired ?? 0,           border: 'border-orange-500' },
+    { key: 'no_exit_ip',          label: 'Cần Active',         value: stats.no_exit_ip_count ?? 0,        border: 'border-red-500' },
+    { key: 'Unbound',             label: 'Unbound',            value: stats.unbound,                      border: 'border-purple-500' },
+    { key: 'stale',               label: 'VPS Offline',        value: stats.stale,                        border: 'border-gray-400' },
+    { key: 'noPointsYesterday',   label: 'Không điểm hôm qua', value: stats.no_points_yesterday_count ?? 0, border: 'border-yellow-500' },
+    { key: 'noPointsAvg',         label: 'TB 0 điểm',          value: stats.no_points_avg_count ?? 0,     border: 'border-red-400' },
   ]
 
   return (

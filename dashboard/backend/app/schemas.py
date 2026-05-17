@@ -138,6 +138,8 @@ class NodeListResponse(BaseModel):
     stale: int
     no_exit_ip_count: int = 0
     needs_renew_count: int = 0
+    no_points_yesterday_count: int = 0
+    no_points_avg_count: int = 0
 
 
 class HistoryPoint(BaseModel):
