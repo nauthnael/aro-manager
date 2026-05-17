@@ -70,18 +70,17 @@ export default function Dashboard() {
   const [bulkAddIds, setBulkAddIds] = useState<Set<number>>(new Set())
   const [bulkRemoveIds, setBulkRemoveIds] = useState<Set<number>>(new Set())
 
-  const bulkBarRef = useRef<HTMLDivElement>(null)
-  const [bulkBarHeight, setBulkBarHeight] = useState(0)
+  const headerRef = useRef<HTMLElement>(null)
+  const [headerHeight, setHeaderHeight] = useState(56)
 
   useEffect(() => {
-    const el = bulkBarRef.current
-    if (!el) { setBulkBarHeight(0); return }
-    setBulkBarHeight(el.getBoundingClientRect().height)
-    const ro = new ResizeObserver(() => setBulkBarHeight(el.getBoundingClientRect().height))
+    const el = headerRef.current
+    if (!el) return
+    setHeaderHeight(el.getBoundingClientRect().height)
+    const ro = new ResizeObserver(() => setHeaderHeight(el.getBoundingClientRect().height))
     ro.observe(el)
     return () => ro.disconnect()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds.size > 0])
+  }, [])
 
   const { data: allTags = [] } = useQuery<TagOut[]>({
     queryKey: ['tags'],
@@ -273,7 +272,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header ref={headerRef} className="bg-white border-b border-gray-200 sticky top-0 z-20">
         <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-800">💲 ARO Dashboard</h1>
@@ -333,6 +332,67 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+
+        {/* Bulk action bar — inside header so sticky header covers rows scrolling behind it */}
+        {selectedCount > 0 && (
+          <div className="max-w-screen-2xl mx-auto px-4 pb-3 flex items-center gap-3 flex-wrap border-t border-blue-100">
+            <span className="text-sm font-medium text-blue-700">
+              {selectedCount} node đã chọn
+            </span>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              Bỏ chọn
+            </button>
+            {selectedCount < visibleNodes.length && (
+              <button
+                onClick={selectAll}
+                className="text-xs text-blue-500 hover:text-blue-700 underline"
+              >
+                Chọn tất cả {visibleNodes.length} node
+              </button>
+            )}
+            <div className="flex-1" />
+            <button
+              onClick={handleCopySerials}
+              className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Copy Serials ({selectedCount})
+            </button>
+            <button
+              onClick={handleExportCsv}
+              className="px-4 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Xuất CSV ({selectedCount})
+            </button>
+            <button
+              onClick={() => { setBulkTagOpen(true); setBulkAddIds(new Set()); setBulkRemoveIds(new Set()) }}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-lg hover:bg-teal-100 transition-colors"
+            >
+              <TagIcon size={14} /> Gắn/Gỡ Tag ({selectedCount})
+            </button>
+            {BULK_ACTIONS.map(action => (
+              <button
+                key={action.id}
+                onClick={() => handleBulkAction(action.id)}
+                disabled={bulkSend.isPending}
+                className={`px-4 py-1.5 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${action.cls}`}
+              >
+                {bulkSend.isPending && bulkSend.variables?.action === action.id
+                  ? 'Đang gửi...'
+                  : `${action.label} (${selectedCount})`}
+              </button>
+            ))}
+            <button
+              onClick={handleBulkRenew}
+              disabled={bulkRenew.isPending}
+              className="px-4 py-1.5 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {bulkRenew.isPending ? 'Đang renew...' : `Bulk Renew (${selectedCount})`}
+            </button>
+          </div>
+        )}
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
@@ -501,67 +561,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Bulk action bar */}
-        {selectedCount > 0 && (
-          <div ref={bulkBarRef} className="flex items-center gap-3 flex-wrap bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-md sticky top-14 z-20">
-            <span className="text-sm font-medium text-blue-700">
-              {selectedCount} node đã chọn
-            </span>
-            <button
-              onClick={() => setSelectedIds(new Set())}
-              className="text-xs text-gray-400 hover:text-gray-600 underline"
-            >
-              Bỏ chọn
-            </button>
-            {selectedCount < visibleNodes.length && (
-              <button
-                onClick={selectAll}
-                className="text-xs text-blue-500 hover:text-blue-700 underline"
-              >
-                Chọn tất cả {visibleNodes.length} node
-              </button>
-            )}
-            <div className="flex-1" />
-            <button
-              onClick={handleCopySerials}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              Copy Serials ({selectedCount})
-            </button>
-            <button
-              onClick={handleExportCsv}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              Xuất CSV ({selectedCount})
-            </button>
-            <button
-              onClick={() => { setBulkTagOpen(true); setBulkAddIds(new Set()); setBulkRemoveIds(new Set()) }}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-lg hover:bg-teal-100 transition-colors"
-            >
-              <TagIcon size={14} /> Gắn/Gỡ Tag ({selectedCount})
-            </button>
-            {BULK_ACTIONS.map(action => (
-              <button
-                key={action.id}
-                onClick={() => handleBulkAction(action.id)}
-                disabled={bulkSend.isPending}
-                className={`px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 ${action.cls}`}
-              >
-                {bulkSend.isPending && bulkSend.variables?.action === action.id
-                  ? 'Đang gửi...'
-                  : `${action.label} (${selectedCount})`}
-              </button>
-            ))}
-            <button
-              onClick={handleBulkRenew}
-              disabled={bulkRenew.isPending}
-              className="px-4 py-2 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {bulkRenew.isPending ? 'Đang renew...' : `Bulk Renew (${selectedCount})`}
-            </button>
-          </div>
-        )}
-
         {isLoading ? (
           <div className="text-center py-20 text-gray-400">Đang tải danh sách node...</div>
         ) : (
@@ -574,7 +573,7 @@ export default function Dashboard() {
             onTagClick={handleTagClick}
             page={page}
             pageSize={pageSize}
-            theadTop={56 + bulkBarHeight}
+            theadTop={headerHeight}
           />
         )}
 
