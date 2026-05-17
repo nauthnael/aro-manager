@@ -195,24 +195,23 @@ def list_nodes(
     no_exit_ip_count = sum(1 for n in all_out if not n.public_ip or n.public_ip.upper() == 'N/A')
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
 
-    # Compute yesterday's reward from NodeHistory (more reliable than self-reported NodeStatus.reward_yesterday).
-    # NodeHistory stores report.reward_yesterday in the reward_today column, so records taken TODAY
-    # contain each node's actual reward from YESTERDAY.
-    today_utc = now.date()
-    today_start = datetime(today_utc.year, today_utc.month, today_utc.day)
-    tomorrow_start = today_start + timedelta(days=1)
-    _hist_today = (
+    # Compute yesterday's reward from NodeHistory.
+    # After the storage fix, records are stored under yesterday's date with the correct reward value.
+    yesterday_utc = now.date() - timedelta(days=1)
+    yesterday_start = datetime(yesterday_utc.year, yesterday_utc.month, yesterday_utc.day)
+    yesterday_end = yesterday_start + timedelta(days=1)
+    _hist_yesterday = (
         db.query(models.NodeHistory.node_id, func.max(models.NodeHistory.reward_today).label('max_rwd'))
         .filter(
-            models.NodeHistory.timestamp >= today_start,
-            models.NodeHistory.timestamp < tomorrow_start,
+            models.NodeHistory.timestamp >= yesterday_start,
+            models.NodeHistory.timestamp < yesterday_end,
             models.NodeHistory.reward_today.isnot(None),
         )
         .group_by(models.NodeHistory.node_id)
         .all()
     )
-    # Nodes confirmed to have points yesterday (via NodeHistory snapshot taken today)
-    _nodes_with_yesterday_points = {r.node_id for r in _hist_today if r.max_rwd and r.max_rwd > 0}
+    # Nodes confirmed to have points yesterday (via NodeHistory record dated yesterday)
+    _nodes_with_yesterday_points = {r.node_id for r in _hist_yesterday if r.max_rwd and r.max_rwd > 0}
 
     def _no_points_yesterday(n: schemas.NodeStatusOut) -> bool:
         if n.node_id in _nodes_with_yesterday_points:

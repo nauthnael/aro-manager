@@ -22,16 +22,35 @@ _ARO_ERROR_MAP = {
 
 
 def _maybe_save_history(db: Session, status: models.NodeStatus, report: schemas.NodeReportRequest):
+    reward = report.reward_yesterday
+    if not reward:
+        # Skip reward=0 or None — post-restart noise before ARO fetches the correct value
+        return
+
     now = datetime.utcnow()
-    if status.last_snapshot_at is None or (now - status.last_snapshot_at) >= timedelta(hours=1):
+    yesterday = now.date() - timedelta(days=1)
+    day_start = datetime(yesterday.year, yesterday.month, yesterday.day)
+    day_end = day_start + timedelta(days=1)
+
+    existing = db.query(models.NodeHistory).filter(
+        models.NodeHistory.node_id == report.node_id,
+        models.NodeHistory.timestamp >= day_start,
+        models.NodeHistory.timestamp < day_end,
+    ).first()
+
+    if existing:
+        if existing.reward_today is None or reward > existing.reward_today:
+            existing.reward_today = reward
+    else:
         db.add(models.NodeHistory(
             node_id=report.node_id,
-            timestamp=now,
+            timestamp=day_start + timedelta(hours=12),
             aro_status=report.aro_status,
-            reward_today=report.reward_yesterday,
+            reward_today=reward,
             uptime_ratio=report.uptime_ratio,
         ))
-        status.last_snapshot_at = now
+
+    status.last_snapshot_at = now
 
 
 def _open_error(db: Session, node_id: str, error_type: str, now: datetime):
