@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.5"
+SCRIPT_VERSION="3.8.6"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2023,6 +2023,10 @@ print(json.dumps({'result': d, 'success': True}))
                     fi
                 fi
             fi
+            ;;
+        proxy_test)
+            watchdog_log "Dashboard: running proxy test"
+            result=$(do_proxy_test 2>&1 | head -100 | tr '"' "'" | tr '\n' '|')
             ;;
         *)
             result="Unknown action: ${action}"
