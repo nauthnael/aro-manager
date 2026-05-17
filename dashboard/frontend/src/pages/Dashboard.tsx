@@ -11,7 +11,7 @@ import { copyToClipboard } from '../utils/clipboard'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
 
-type BulkAction = 'update_script' | 'install_scrot' | 'restart_aro' | 'restart_watchdog'
+type BulkAction = 'update_script' | 'install_scrot' | 'restart_aro' | 'restart_watchdog' | 'reboot_vps'
 
 const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n: number) => string }[] = [
   {
@@ -37,6 +37,12 @@ const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n
     label: 'Cài scrot',
     cls: 'bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300',
     confirmMsg: n => `Gửi lệnh cài scrot đến ${n} node?`,
+  },
+  {
+    id: 'reboot_vps',
+    label: 'Reboot VPS',
+    cls: 'bg-red-700 hover:bg-red-800 disabled:bg-red-400',
+    confirmMsg: n => `Reboot VPS của ${n} node? Hành động này sẽ khởi động lại máy chủ!`,
   },
 ]
 
