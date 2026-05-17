@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, Tag as TagIcon, X } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
