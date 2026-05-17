@@ -211,8 +211,14 @@ def list_nodes(
         .group_by(models.NodeHistory.node_id)
         .all()
     )
-    # Nodes confirmed to have points yesterday (via NodeHistory record dated yesterday)
-    _nodes_with_yesterday_points = {r.node_id for r in _hist_yesterday if r.max_rwd and r.max_rwd > 0}
+    # NodeHistory D-1 is the source of truth: not affected by post-restart zeroing.
+    # Falls back to NodeStatus.reward_yesterday (already in all_out) if no record exists.
+    _hist_yesterday_map = {r.node_id: r.max_rwd for r in _hist_yesterday if r.max_rwd and r.max_rwd > 0}
+    _nodes_with_yesterday_points = set(_hist_yesterday_map.keys())
+
+    for n in all_out:
+        if n.node_id in _hist_yesterday_map:
+            n.reward_yesterday = _hist_yesterday_map[n.node_id]
 
     def _no_points_yesterday(n: schemas.NodeStatusOut) -> bool:
         if n.node_id in _nodes_with_yesterday_points:
@@ -395,8 +401,13 @@ def get_node(
     app_settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
 
+    node_out = _node_out(node, status, now, total_score, avg_score, tags=tags)
+    hist_yesterday = daily_maxes.get(now.date() - timedelta(days=1))
+    if hist_yesterday:
+        node_out.reward_yesterday = hist_yesterday
+
     return schemas.NodeDetailResponse(
-        node=_node_out(node, status, now, total_score, avg_score, tags=tags),
+        node=node_out,
         history=[
             schemas.HistoryPoint(
                 timestamp=h.timestamp,
