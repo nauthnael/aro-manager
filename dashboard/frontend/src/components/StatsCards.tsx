@@ -55,7 +55,7 @@ export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
   const filterCards = [
     { key: 'noPointsYesterday', label: 'Không điểm hôm qua', value: stats.no_points_yesterday_count ?? 0, border: 'border-yellow-500' },
     { key: 'noPointsAvg',       label: 'TB 0 điểm',          value: stats.no_points_avg_count ?? 0,       border: 'border-red-400' },
-    { key: 'noPoints2Days',     label: '0 điểm 2 ngày',      value: stats.no_points_2days_count ?? 0,     border: 'border-red-600' },
+    { key: 'noPoints2Days',     label: 'Mất điểm 2 ngày',    value: stats.no_points_2days_count ?? 0,     border: 'border-red-600' },
     { key: 'renew0pts',         label: 'Renew 0 điểm',       value: stats.renew_0points_count ?? 0,       border: 'border-violet-600' },
   ]
 

@@ -245,8 +245,20 @@ def list_nodes(
     )
     _nodes_with_dby_points = {r.node_id for r in _hist_dby if r.max_rwd and r.max_rwd > 0}
 
+    # Nodes that have ever earned positive points (to filter out nodes that never had points)
+    _nodes_with_any_points = {
+        r.node_id for r in db.query(models.NodeHistory.node_id)
+        .filter(models.NodeHistory.reward_today > 0)
+        .distinct()
+        .all()
+    }
+
     def _no_points_2days(n: schemas.NodeStatusOut) -> bool:
-        return _no_points_yesterday(n) and n.node_id not in _nodes_with_dby_points
+        return (
+            n.node_id in _nodes_with_any_points
+            and _no_points_yesterday(n)
+            and n.node_id not in _nodes_with_dby_points
+        )
 
     no_points_2days_count = sum(1 for n in all_out if _no_points_2days(n))
 
