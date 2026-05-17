@@ -287,7 +287,7 @@ def get_renew_history(
     logs = q.offset((page - 1) * page_size).limit(page_size).all()
 
     node_accounts = {}
-    node_last_seen = {}
+    node_last_account_seen = {}
     node_reward_yesterday = {}
     node_ids = list({log.node_id for log in logs})
     if node_ids:
@@ -295,12 +295,23 @@ def get_renew_history(
             node_accounts[n.node_id] = n.account
         for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(node_ids)).all():
             node_reward_yesterday[s.node_id] = s.reward_yesterday
-            node_last_seen[s.node_id] = s.last_seen
+        # Use NodeAccountHistory.last_seen (only updated when node reports a valid account)
+        # instead of NodeStatus.last_seen (updated on every heartbeat regardless of account)
+        for row in (
+            db.query(
+                models.NodeAccountHistory.node_id,
+                func.max(models.NodeAccountHistory.last_seen).label("last_account_seen"),
+            )
+            .filter(models.NodeAccountHistory.node_id.in_(node_ids))
+            .group_by(models.NodeAccountHistory.node_id)
+            .all()
+        ):
+            node_last_account_seen[row.node_id] = row.last_account_seen
 
     result = []
     for log in logs:
-        last_seen = node_last_seen.get(log.node_id)
-        reconnected = last_seen is not None and log.renewed_at is not None and last_seen > log.renewed_at
+        last_account_seen = node_last_account_seen.get(log.node_id)
+        reconnected = last_account_seen is not None and log.renewed_at is not None and last_account_seen > log.renewed_at
         account = node_accounts.get(log.node_id) if reconnected else None
         result.append(schemas.RenewLogOut(
             id=log.id,
