@@ -54,6 +54,7 @@ export interface NodeListResponse {
   needs_renew_count: number
   no_points_yesterday_count: number
   no_points_avg_count: number
+  no_points_2days_count: number
 }
 
 export interface HistoryPoint {

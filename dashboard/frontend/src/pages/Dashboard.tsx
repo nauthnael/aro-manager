@@ -81,6 +81,7 @@ export default function Dashboard() {
   const params = new URLSearchParams()
   if (statusFilter === 'noPointsYesterday') params.set('no_points_yesterday', 'true')
   else if (statusFilter === 'noPointsAvg') params.set('no_points_avg', 'true')
+  else if (statusFilter === 'noPoints2Days') params.set('no_points_2days', 'true')
   else if (statusFilter) params.set('status_filter', statusFilter)
   if (debouncedSearch) params.set('search', debouncedSearch)
   params.set('page', String(page))

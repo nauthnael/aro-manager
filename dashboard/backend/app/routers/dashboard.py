@@ -153,6 +153,7 @@ def list_nodes(
     search: Optional[str] = Query(None),
     no_points_yesterday: bool = Query(False),
     no_points_avg: bool = Query(False),
+    no_points_2days: bool = Query(False),
     exclude_new_nodes: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
@@ -222,6 +223,27 @@ def list_nodes(
 
     no_points_yesterday_count = sum(1 for n in all_out if _no_points_yesterday(n))
 
+    # Nodes with no points for both yesterday AND day before yesterday (2 consecutive days)
+    day_before_yesterday_utc = now.date() - timedelta(days=2)
+    dby_start = datetime(day_before_yesterday_utc.year, day_before_yesterday_utc.month, day_before_yesterday_utc.day)
+    dby_end = dby_start + timedelta(days=1)
+    _hist_dby = (
+        db.query(models.NodeHistory.node_id, func.max(models.NodeHistory.reward_today).label('max_rwd'))
+        .filter(
+            models.NodeHistory.timestamp >= dby_start,
+            models.NodeHistory.timestamp < dby_end,
+            models.NodeHistory.reward_today.isnot(None),
+        )
+        .group_by(models.NodeHistory.node_id)
+        .all()
+    )
+    _nodes_with_dby_points = {r.node_id for r in _hist_dby if r.max_rwd and r.max_rwd > 0}
+
+    def _no_points_2days(n: schemas.NodeStatusOut) -> bool:
+        return _no_points_yesterday(n) and n.node_id not in _nodes_with_dby_points
+
+    no_points_2days_count = sum(1 for n in all_out if _no_points_2days(n))
+
     # Count nodes with avg daily score == 0 via a single aggregated query
     _avg_sq = (
         db.query(
@@ -258,6 +280,8 @@ def list_nodes(
         ]
     if no_points_yesterday:
         filtered = [n for n in filtered if _no_points_yesterday(n)]
+    if no_points_2days:
+        filtered = [n for n in filtered if _no_points_2days(n)]
 
     # Filter by tags (AND/OR)
     if tag_ids:
@@ -319,6 +343,7 @@ def list_nodes(
         needs_renew_count=needs_renew_count,
         no_points_yesterday_count=no_points_yesterday_count,
         no_points_avg_count=no_points_avg_count,
+        no_points_2days_count=no_points_2days_count,
     )
 
 

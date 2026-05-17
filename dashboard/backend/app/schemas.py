@@ -141,6 +141,7 @@ class NodeListResponse(BaseModel):
     needs_renew_count: int = 0
     no_points_yesterday_count: int = 0
     no_points_avg_count: int = 0
+    no_points_2days_count: int = 0
 
 
 class HistoryPoint(BaseModel):
