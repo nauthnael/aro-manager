@@ -47,7 +47,6 @@ interface Props {
   onTagClick?: (tagId: number) => void
   page?: number
   pageSize?: number
-  theadTop?: number
 }
 
 const col = createColumnHelper<NodeStatus>()
@@ -57,7 +56,7 @@ const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'proxy_expired', 'Offli
 const toFlagEmoji = (cc: string) =>
   cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick, page = 1, pageSize = 50, theadTop = 56 }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick, page = 1, pageSize = 50 }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
@@ -406,7 +405,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
 
       <div className="overflow-x-auto rounded-lg shadow">
         <table className="min-w-full bg-white divide-y divide-gray-200">
-          <thead className="bg-gray-50 sticky z-10" style={{ top: theadTop }}>
+          <thead className="bg-gray-50 sticky top-14 z-10">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
                 {hg.headers.map(h => (
