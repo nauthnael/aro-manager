@@ -70,6 +70,19 @@ export default function Dashboard() {
   const [bulkAddIds, setBulkAddIds] = useState<Set<number>>(new Set())
   const [bulkRemoveIds, setBulkRemoveIds] = useState<Set<number>>(new Set())
 
+  const bulkBarRef = useRef<HTMLDivElement>(null)
+  const [bulkBarHeight, setBulkBarHeight] = useState(0)
+
+  useEffect(() => {
+    const el = bulkBarRef.current
+    if (!el) { setBulkBarHeight(0); return }
+    setBulkBarHeight(el.getBoundingClientRect().height)
+    const ro = new ResizeObserver(() => setBulkBarHeight(el.getBoundingClientRect().height))
+    ro.observe(el)
+    return () => ro.disconnect()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds.size > 0])
+
   const { data: allTags = [] } = useQuery<TagOut[]>({
     queryKey: ['tags'],
     queryFn: () => api.get('/tags').then(r => r.data),
@@ -490,7 +503,7 @@ export default function Dashboard() {
 
         {/* Bulk action bar */}
         {selectedCount > 0 && (
-          <div className="flex items-center gap-3 flex-wrap bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-sm">
+          <div ref={bulkBarRef} className="flex items-center gap-3 flex-wrap bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-md sticky top-14 z-20">
             <span className="text-sm font-medium text-blue-700">
               {selectedCount} node đã chọn
             </span>
@@ -561,6 +574,7 @@ export default function Dashboard() {
             onTagClick={handleTagClick}
             page={page}
             pageSize={pageSize}
+            theadTop={56 + bulkBarHeight}
           />
         )}
 
