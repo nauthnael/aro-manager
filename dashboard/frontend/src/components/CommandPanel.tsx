@@ -5,6 +5,7 @@ import { Command } from '../types'
 import api from '../api/client'
 
 const ACTIONS = [
+  { id: 'proxy_test',       label: 'Test Proxy',       cls: 'bg-teal-600 hover:bg-teal-700',     confirm: false },
   { id: 'restart_aro',      label: 'Restart ARO',      cls: 'bg-blue-600 hover:bg-blue-700',     confirm: true  },
   { id: 'restart_watchdog', label: 'Restart Watchdog', cls: 'bg-orange-600 hover:bg-orange-700', confirm: true  },
   { id: 'debug_aro',        label: 'Debug ARO',        cls: 'bg-gray-600 hover:bg-gray-700',     confirm: false },
