@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -46,6 +46,8 @@ export default function Dashboard() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [noPointsYesterday, setNoPointsYesterday] = useState(false)
   const [noPointsAvg, setNoPointsAvg] = useState(false)
@@ -76,7 +78,7 @@ export default function Dashboard() {
 
   const params = new URLSearchParams()
   if (statusFilter) params.set('status_filter', statusFilter)
-  if (search) params.set('search', search)
+  if (debouncedSearch) params.set('search', debouncedSearch)
   if (noPointsYesterday) params.set('no_points_yesterday', 'true')
   if (noPointsAvg)       params.set('no_points_avg', 'true')
   if (excludeNewNodes)   params.set('exclude_new_nodes', 'true')
@@ -90,15 +92,16 @@ export default function Dashboard() {
   }
 
   const { data, isLoading, refetch, dataUpdatedAt, isFetching } = useQuery<NodeListResponse>({
-    queryKey: ['nodes', statusFilter, search, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
+    queryKey: ['nodes', statusFilter, debouncedSearch, noPointsYesterday, noPointsAvg, excludeNewNodes, page, pageSize, sortBy, sortDir, tagFilterIds, tagMode],
     queryFn: () => api.get(`/dashboard/nodes?${params}`).then(r => r.data),
     refetchInterval: 30_000,
+    staleTime: 25_000,
   })
 
-  const handleSortingChange = (s: SortingState) => {
+  const handleSortingChange = useCallback((s: SortingState) => {
     setSorting(s)
     setPage(1)
-  }
+  }, [])
 
   const handlePageSize = (size: number) => {
     setPageSize(size)
@@ -135,15 +138,16 @@ export default function Dashboard() {
     bulkTagMutation.mutate({ node_ids, add_tag_ids, remove_tag_ids })
   }
 
-  const handleTagClick = (tagId: number) => {
+  const handleTagClick = useCallback((tagId: number) => {
     setTagFilterIds(prev => prev.includes(tagId) ? prev : [...prev, tagId])
     setStatusFilter(null)
     setSearch('')
-  }
+    setDebouncedSearch('')
+  }, [])
 
-  const removeTagFilter = (tagId: number) => {
+  const removeTagFilter = useCallback((tagId: number) => {
     setTagFilterIds(prev => prev.filter(id => id !== tagId))
-  }
+  }, [])
 
   const handleBulkAction = (action: BulkAction) => {
     const ids = [...selectedIds]
@@ -207,9 +211,10 @@ export default function Dashboard() {
     navigate('/login')
   }
 
-  const handleFilter = (f: string | null) => {
+  const handleFilter = useCallback((f: string | null) => {
     setStatusFilter(f)
     setSearch('')
+    setDebouncedSearch('')
     setNoPointsYesterday(false)
     setNoPointsAvg(false)
     setExcludeNewNodes(false)
@@ -218,17 +223,21 @@ export default function Dashboard() {
     setSelectedIds(new Set())
     setPage(1)
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
+  }, [])
 
   const handleSearch = (v: string) => {
     setSearch(v)
-    setStatusFilter(null)
-    setNoPointsYesterday(false)
-    setNoPointsAvg(false)
-    setNeedsRenewFilter(false)
-    setSelectedIds(new Set())
-    setPage(1)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      setDebouncedSearch(v)
+      setStatusFilter(null)
+      setNoPointsYesterday(false)
+      setNoPointsAvg(false)
+      setNeedsRenewFilter(false)
+      setSelectedIds(new Set())
+      setPage(1)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }, 400)
   }
 
   const selectedCount = selectedIds.size
@@ -300,9 +309,18 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
-        {data && (
+        {isLoading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-lg shadow px-3 py-3 border-l-4 border-gray-200 animate-pulse">
+                <div className="h-2 bg-gray-200 rounded w-16 mb-3" />
+                <div className="h-6 bg-gray-200 rounded w-10" />
+              </div>
+            ))}
+          </div>
+        ) : data ? (
           <StatsCards stats={data} activeFilter={statusFilter} onFilter={handleFilter} />
-        )}
+        ) : null}
 
         <div className="flex items-center gap-3 flex-wrap">
           <input
