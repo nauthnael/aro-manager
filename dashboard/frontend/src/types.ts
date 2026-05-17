@@ -55,6 +55,27 @@ export interface NodeListResponse {
   no_points_yesterday_count: number
   no_points_avg_count: number
   no_points_2days_count: number
+  renew_0points_count: number
+}
+
+export interface RenewStatsNode {
+  node_id: string
+  account: string | null
+  serial: string | null
+  renewed_at: string
+  days_0pts: number
+  aro_status: string | null
+  last_seen: string | null
+  is_stale: boolean
+  proxy_ok: boolean | null
+}
+
+export interface RenewStatsResponse {
+  nodes: RenewStatsNode[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
 }
 
 export interface HistoryPoint {

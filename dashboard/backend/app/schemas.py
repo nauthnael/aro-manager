@@ -142,6 +142,30 @@ class NodeListResponse(BaseModel):
     no_points_yesterday_count: int = 0
     no_points_avg_count: int = 0
     no_points_2days_count: int = 0
+    renew_0points_count: int = 0
+
+
+class RenewStatsNodeOut(BaseModel):
+    node_id: str
+    account: Optional[str] = None
+    serial: Optional[str] = None
+    renewed_at: datetime
+    days_0pts: int
+    aro_status: Optional[str] = None
+    last_seen: Optional[datetime] = None
+    is_stale: bool
+    proxy_ok: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RenewStatsResponse(BaseModel):
+    nodes: List[RenewStatsNodeOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class HistoryPoint(BaseModel):

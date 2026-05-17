@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, RotateCcw, History, AlertTriangle, Clock, Download } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, RefreshCw, RotateCcw, History, AlertTriangle, Clock, Download, BarChart2, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import api from '../api/client'
-import { RenewCandidatesResponse, RenewHistoryResponse, RenewCandidate, RenewLog } from '../types'
+import { RenewCandidatesResponse, RenewHistoryResponse, RenewCandidate, RenewLog, RenewStatsResponse, RenewStatsNode } from '../types'
 
-type Tab = 'candidates' | 'history'
+type Tab = 'candidates' | 'history' | 'stats'
 
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) return <span className="text-gray-400">—</span>
@@ -52,17 +52,70 @@ function formatTime(iso: string | null) {
   }
 }
 
+function SortIcon({ col, sortBy, sortDir }: { col: string; sortBy: string; sortDir: string }) {
+  if (sortBy !== col) return <span className="text-gray-300 ml-0.5">↕</span>
+  return sortDir === 'desc'
+    ? <ChevronDown size={12} className="inline ml-0.5 text-orange-500" />
+    : <ChevronUp size={12} className="inline ml-0.5 text-orange-500" />
+}
+
+function ActionMenu({ node, onAction }: { node: RenewStatsNode; onAction: (nodeId: string, action: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const actions = [
+    { key: 'restart_aro',      label: 'Restart ARO',       color: 'text-blue-600' },
+    { key: 'restart_watchdog', label: 'Restart Watchdog',  color: 'text-blue-600' },
+    { key: 'renew_node',       label: 'Renew Node',        color: 'text-orange-600' },
+    { key: 'update_script',    label: 'Update Script',     color: 'text-indigo-600' },
+    { key: 'reboot_vps',       label: 'Reboot VPS',        color: 'text-red-600' },
+  ]
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded font-medium text-gray-700 whitespace-nowrap"
+      >
+        Thao tác ▾
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 min-w-36">
+            {actions.map(a => (
+              <button
+                key={a.key}
+                onClick={() => { onAction(node.node_id, a.key); setOpen(false) }}
+                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 ${a.color}`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function RenewNodes() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const qc = useQueryClient()
   useEffect(() => { document.title = '💲 Renew Node | ARO Dashboard' }, [])
-  const [tab, setTab] = useState<Tab>('candidates')
+
+  const initialTab = (searchParams.get('tab') as Tab | null) ?? 'candidates'
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [minHistoryDays, setMinHistoryDays] = useState(0)
   const [filterAvgScore, setFilterAvgScore] = useState(true)
   const [filterUptime, setFilterUptime] = useState(false)
   const [historyPage, setHistoryPage] = useState(1)
   const [historyNodeFilter, setHistoryNodeFilter] = useState('')
+
+  // Stats tab state
+  const [statsDate, setStatsDate] = useState('')
+  const [statsSortBy, setStatsSortBy] = useState('days_0pts')
+  const [statsSortDir, setStatsSortDir] = useState<'asc' | 'desc'>('desc')
+  const [statsPage, setStatsPage] = useState(1)
 
   const candidateParams = new URLSearchParams()
   if (minHistoryDays > 0) candidateParams.set('min_history_days', String(minHistoryDays))
@@ -84,6 +137,19 @@ export default function RenewNodes() {
     queryKey: ['renew-history', historyPage, historyNodeFilter],
     queryFn: () => api.get(`/renew/history?${historyParams}`).then(r => r.data),
     enabled: tab === 'history',
+  })
+
+  const statsParams = new URLSearchParams()
+  if (statsDate) statsParams.set('date', statsDate)
+  statsParams.set('sort_by', statsSortBy)
+  statsParams.set('sort_dir', statsSortDir)
+  statsParams.set('page', String(statsPage))
+  statsParams.set('page_size', '50')
+
+  const { data: statsData, isLoading: statsLoading, refetch: statsRefetch, isFetching: statsFetching } = useQuery<RenewStatsResponse>({
+    queryKey: ['renew-stats', statsDate, statsSortBy, statsSortDir, statsPage],
+    queryFn: () => api.get(`/dashboard/renew-stats?${statsParams}`).then(r => r.data),
+    enabled: tab === 'stats',
   })
 
   const renewOne = useMutation({
@@ -134,6 +200,47 @@ export default function RenewNodes() {
       alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh bulk cập nhật script.')
     },
   })
+
+  const statsAction = useMutation({
+    mutationFn: ({ node_id, action }: { node_id: string; action: string }) => {
+      if (action === 'renew_node') {
+        return api.post('/renew/trigger', { node_id }).then(r => r.data)
+      }
+      return api.post('/dashboard/commands', { node_id, action }).then(r => r.data)
+    },
+    onSuccess: (_, { node_id, action }) => {
+      if (action === 'renew_node') {
+        qc.invalidateQueries({ queryKey: ['renew-history'] })
+      }
+      qc.invalidateQueries({ queryKey: ['renew-stats'] })
+      alert(`Đã gửi lệnh đến ${node_id}.`)
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh.')
+    },
+  })
+
+  const handleStatsAction = (nodeId: string, action: string) => {
+    const labels: Record<string, string> = {
+      restart_aro: 'Restart ARO',
+      restart_watchdog: 'Restart Watchdog',
+      renew_node: 'Renew Node',
+      update_script: 'Update Script',
+      reboot_vps: 'Reboot VPS',
+    }
+    if (!confirm(`${labels[action] ?? action} node ${nodeId}?`)) return
+    statsAction.mutate({ node_id: nodeId, action })
+  }
+
+  const handleStatsSort = (col: string) => {
+    if (statsSortBy === col) {
+      setStatsSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setStatsSortBy(col)
+      setStatsSortDir('desc')
+    }
+    setStatsPage(1)
+  }
 
   const handleBulkUpdate = () => {
     const ids = [...selectedIds]
@@ -210,11 +317,11 @@ export default function RenewNodes() {
             </div>
           </div>
           <button
-            onClick={() => refetch()}
-            disabled={isFetching}
+            onClick={() => tab === 'stats' ? statsRefetch() : refetch()}
+            disabled={isFetching || statsFetching}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
           >
-            <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={(isFetching || statsFetching) ? 'animate-spin' : ''} />
             Làm mới
           </button>
         </div>
@@ -254,14 +361,30 @@ export default function RenewNodes() {
               Lịch sử Renew
             </span>
           </button>
+          <button
+            onClick={() => setTab('stats')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              tab === 'stats'
+                ? 'border-violet-600 text-violet-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              <BarChart2 size={14} />
+              Thống kê
+              {statsData && (
+                <span className="ml-1 bg-violet-100 text-violet-700 text-xs px-1.5 py-0.5 rounded-full font-semibold">
+                  {statsData.total}
+                </span>
+              )}
+            </span>
+          </button>
         </div>
 
         {/* Candidates Tab */}
         {tab === 'candidates' && (
           <div className="space-y-3">
-            {/* Toolbar */}
             <div className="flex items-center gap-3 flex-wrap">
-              {/* Condition checkboxes */}
               <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
                 <span className="text-xs text-gray-500 font-medium whitespace-nowrap">Điều kiện:</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -286,7 +409,6 @@ export default function RenewNodes() {
 
               <div className="h-4 w-px bg-gray-200" />
 
-              {/* History days filter */}
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-gray-500 whitespace-nowrap">Bỏ qua node có lịch sử &lt;</span>
                 <select
@@ -328,10 +450,8 @@ export default function RenewNodes() {
                   </button>
                 </>
               )}
-
             </div>
 
-            {/* Table */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               {isLoading ? (
                 <div className="text-center py-12 text-gray-400">Đang tải...</div>
@@ -460,7 +580,6 @@ export default function RenewNodes() {
               )}
             </div>
 
-            {/* Info box */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Lưu ý:</p>
               <ul className="list-disc list-inside space-y-0.5">
@@ -477,7 +596,6 @@ export default function RenewNodes() {
         {/* History Tab */}
         {tab === 'history' && (
           <div className="space-y-3">
-            {/* Filter */}
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -594,7 +712,6 @@ export default function RenewNodes() {
                     </tbody>
                   </table>
 
-                  {/* Pagination */}
                   {history.total_pages > 1 && (
                     <div className="flex items-center justify-between px-3 py-2.5 border-t border-gray-100 text-xs text-gray-500">
                       <span>Tổng: {history.total} bản ghi</span>
@@ -610,6 +727,132 @@ export default function RenewNodes() {
                         <button
                           onClick={() => setHistoryPage(p => Math.min(history.total_pages, p + 1))}
                           disabled={historyPage === history.total_pages}
+                          className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                        >
+                          ›
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Stats Tab */}
+        {tab === 'stats' && (
+          <div className="space-y-3">
+            {/* Filters */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 whitespace-nowrap">Ngày renew:</span>
+                <input
+                  type="date"
+                  value={statsDate}
+                  onChange={e => { setStatsDate(e.target.value); setStatsPage(1) }}
+                  className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+                />
+                {statsDate && (
+                  <button
+                    onClick={() => { setStatsDate(''); setStatsPage(1) }}
+                    className="text-xs text-gray-400 hover:text-gray-600"
+                  >
+                    Xóa
+                  </button>
+                )}
+              </div>
+              {statsData && (
+                <span className="text-xs text-gray-500">
+                  {statsDate ? `${statsData.total} node renew ngày ${statsDate} chưa có điểm` : `${statsData.total} node renew chưa có điểm`}
+                </span>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              {statsLoading ? (
+                <div className="text-center py-12 text-gray-400">Đang tải...</div>
+              ) : !statsData || statsData.nodes.length === 0 ? (
+                <div className="text-center py-16">
+                  <div className="text-4xl mb-2">✅</div>
+                  <p className="text-gray-500 font-medium">
+                    {statsDate ? `Không có node renew ngày ${statsDate} nào đang 0 điểm` : 'Không có node nào đang 0 điểm sau renew'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b border-gray-100">
+                        <tr>
+                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
+                          <th
+                            className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
+                            onClick={() => handleStatsSort('renewed_at')}
+                          >
+                            Ngày renew <SortIcon col="renewed_at" sortBy={statsSortBy} sortDir={statsSortDir} />
+                          </th>
+                          <th
+                            className="text-right px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
+                            onClick={() => handleStatsSort('days_0pts')}
+                          >
+                            Số ngày 0 điểm <SortIcon col="days_0pts" sortBy={statsSortBy} sortDir={statsSortDir} />
+                          </th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Last seen</th>
+                          <th className="px-3 py-2.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {statsData.nodes.map(node => (
+                          <tr key={node.node_id} className={`hover:bg-gray-50 transition-colors ${node.is_stale ? 'opacity-60' : ''}`}>
+                            <td className="px-3 py-2.5">
+                              <button
+                                onClick={() => navigate(`/nodes/${encodeURIComponent(node.node_id)}`)}
+                                className="font-mono text-xs text-blue-600 hover:underline"
+                              >
+                                {node.node_id}
+                              </button>
+                              {node.is_stale && <span className="ml-1 text-xs text-gray-400">(stale)</span>}
+                            </td>
+                            <td className="px-3 py-2.5 text-gray-600 text-xs">{node.account ?? '—'}</td>
+                            <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                              {new Date(node.renewed_at + 'Z').toLocaleDateString('vi-VN')}
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <span className={`text-xs font-bold ${node.days_0pts >= 3 ? 'text-red-600' : node.days_0pts >= 2 ? 'text-orange-600' : 'text-yellow-600'}`}>
+                                {node.days_0pts} ngày
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5"><StatusBadge status={node.aro_status} /></td>
+                            <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">
+                              {formatTime(node.last_seen)}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <ActionMenu node={node} onAction={handleStatsAction} />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {statsData.total_pages > 1 && (
+                    <div className="flex items-center justify-between px-3 py-2.5 border-t border-gray-100 text-xs text-gray-500">
+                      <span>Tổng: {statsData.total} node</span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setStatsPage(p => Math.max(1, p - 1))}
+                          disabled={statsPage === 1}
+                          className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                        >
+                          ‹
+                        </button>
+                        <span>{statsPage}/{statsData.total_pages}</span>
+                        <button
+                          onClick={() => setStatsPage(p => Math.min(statsData.total_pages, p + 1))}
+                          disabled={statsPage === statsData.total_pages}
                           className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
                         >
                           ›

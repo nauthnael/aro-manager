@@ -214,6 +214,10 @@ export default function Dashboard() {
   }
 
   const handleFilter = useCallback((f: string | null) => {
+    if (f === 'renew0pts') {
+      navigate('/renew?tab=stats')
+      return
+    }
     setStatusFilter(f)
     setSearch('')
     setDebouncedSearch('')
@@ -221,7 +225,7 @@ export default function Dashboard() {
     setSelectedIds(new Set())
     setPage(1)
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
+  }, [navigate])
 
   const handleSearch = (v: string) => {
     setSearch(v)

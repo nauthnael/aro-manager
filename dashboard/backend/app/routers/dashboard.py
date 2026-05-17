@@ -250,6 +250,38 @@ def list_nodes(
 
     no_points_2days_count = sum(1 for n in all_out if _no_points_2days(n))
 
+    # Count nodes: most recent renewal <= yesterday, no positive NodeHistory since renewal date
+    _rl_rows = (
+        db.query(models.NodeRenewLog.node_id, func.max(models.NodeRenewLog.renewed_at).label('max_renewed'))
+        .group_by(models.NodeRenewLog.node_id)
+        .all()
+    )
+    _renewed_map_c = {
+        r.node_id: r.max_renewed.date()
+        for r in _rl_rows
+        if r.max_renewed and r.max_renewed.date() <= yesterday_utc
+    }
+    if _renewed_map_c:
+        _earliest_c = min(_renewed_map_c.values())
+        _hist_after_renew = (
+            db.query(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp).label('day'))
+            .filter(
+                models.NodeHistory.node_id.in_(list(_renewed_map_c.keys())),
+                func.date(models.NodeHistory.timestamp) >= _earliest_c,
+                func.date(models.NodeHistory.timestamp) <= yesterday_utc,
+                models.NodeHistory.reward_today > 0,
+            )
+            .distinct()
+            .all()
+        )
+        _with_reward_c = {
+            r.node_id for r in _hist_after_renew
+            if r.day >= _renewed_map_c.get(r.node_id, yesterday_utc)
+        }
+        renew_0points_count = len(_renewed_map_c) - len(_with_reward_c)
+    else:
+        renew_0points_count = 0
+
     # Count nodes with avg daily score == 0 via a single aggregated query
     _avg_sq = (
         db.query(
@@ -350,6 +382,7 @@ def list_nodes(
         no_points_yesterday_count=no_points_yesterday_count,
         no_points_avg_count=no_points_avg_count,
         no_points_2days_count=no_points_2days_count,
+        renew_0points_count=renew_0points_count,
     )
 
 
@@ -429,6 +462,107 @@ def get_node(
         ],
         node_log_stale_restart_minutes=node.log_stale_restart_minutes,
         global_log_stale_restart_minutes=global_stale,
+    )
+
+
+@router.get("/dashboard/renew-stats", response_model=schemas.RenewStatsResponse)
+def get_renew_stats(
+    date: Optional[str] = Query(None),
+    sort_by: str = Query('days_0pts'),
+    sort_dir: str = Query('desc'),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    now = datetime.utcnow()
+    yesterday = now.date() - timedelta(days=1)
+
+    _rl_rows = (
+        db.query(models.NodeRenewLog.node_id, func.max(models.NodeRenewLog.renewed_at).label('max_renewed'))
+        .group_by(models.NodeRenewLog.node_id)
+        .all()
+    )
+    _renewed_map = {
+        r.node_id: r.max_renewed
+        for r in _rl_rows
+        if r.max_renewed and r.max_renewed.date() <= yesterday
+    }
+
+    if date:
+        try:
+            filter_date = datetime.strptime(date, '%Y-%m-%d').date()
+            _renewed_map = {k: v for k, v in _renewed_map.items() if v.date() == filter_date}
+        except ValueError:
+            pass
+
+    if not _renewed_map:
+        return schemas.RenewStatsResponse(nodes=[], total=0, page=page, page_size=page_size, total_pages=1)
+
+    node_ids = list(_renewed_map.keys())
+    earliest = min(v.date() for v in _renewed_map.values())
+
+    _hist_rows = (
+        db.query(models.NodeHistory.node_id, func.date(models.NodeHistory.timestamp).label('day'))
+        .filter(
+            models.NodeHistory.node_id.in_(node_ids),
+            func.date(models.NodeHistory.timestamp) >= earliest,
+            func.date(models.NodeHistory.timestamp) <= yesterday,
+            models.NodeHistory.reward_today > 0,
+        )
+        .distinct()
+        .all()
+    )
+    _with_reward = {
+        r.node_id for r in _hist_rows
+        if r.day >= _renewed_map[r.node_id].date()
+    }
+
+    qualifying_ids = [nid for nid in node_ids if nid not in _with_reward]
+    if not qualifying_ids:
+        return schemas.RenewStatsResponse(nodes=[], total=0, page=page, page_size=page_size, total_pages=1)
+
+    nodes_map = {n.node_id: n for n in db.query(models.Node).filter(models.Node.node_id.in_(qualifying_ids)).all()}
+    statuses_map = {s.node_id: s for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(qualifying_ids)).all()}
+
+    result = []
+    for nid in qualifying_ids:
+        node = nodes_map.get(nid)
+        status = statuses_map.get(nid)
+        renewed_at = _renewed_map[nid]
+        days_0pts = max(0, (yesterday - renewed_at.date()).days + 1)
+        is_stale = True
+        if status and status.last_seen:
+            is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
+        result.append(schemas.RenewStatsNodeOut(
+            node_id=nid,
+            account=node.account if node else None,
+            serial=node.serial if node else None,
+            renewed_at=renewed_at,
+            days_0pts=days_0pts,
+            aro_status=status.aro_status if status else None,
+            last_seen=status.last_seen if status else None,
+            is_stale=is_stale,
+            proxy_ok=status.proxy_ok if status else None,
+        ))
+
+    if sort_by == 'days_0pts':
+        result.sort(key=lambda x: x.days_0pts, reverse=(sort_dir == 'desc'))
+    elif sort_by == 'renewed_at':
+        result.sort(key=lambda x: x.renewed_at, reverse=(sort_dir == 'desc'))
+    elif sort_by == 'node_id':
+        result.sort(key=lambda x: x.node_id.lower(), reverse=(sort_dir == 'desc'))
+
+    total = len(result)
+    total_pages = math.ceil(total / page_size) if total > 0 else 1
+    start = (page - 1) * page_size
+
+    return schemas.RenewStatsResponse(
+        nodes=result[start:start + page_size],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
     )
 
 
