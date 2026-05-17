@@ -11,7 +11,7 @@ import { copyToClipboard } from '../utils/clipboard'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
 
-type BulkAction = 'update_script' | 'install_scrot' | 'restart_aro' | 'restart_watchdog' | 'reboot_vps'
+type BulkAction = 'update_script' | 'install_scrot' | 'restart_aro' | 'restart_watchdog' | 'reboot_vps' | 'proxy_test'
 
 const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n: number) => string }[] = [
   {
@@ -31,6 +31,12 @@ const BULK_ACTIONS: { id: BulkAction; label: string; cls: string; confirmMsg: (n
     label: 'Restart Watchdog',
     cls: 'bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300',
     confirmMsg: n => `Gửi lệnh restart Watchdog đến ${n} node?`,
+  },
+  {
+    id: 'proxy_test',
+    label: 'Test Proxy',
+    cls: 'bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-300',
+    confirmMsg: n => `Gửi lệnh test proxy đến ${n} node?`,
   },
   {
     id: 'install_scrot',
