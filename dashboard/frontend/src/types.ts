@@ -64,6 +64,7 @@ export interface RenewStatsNode {
   serial: string | null
   renewed_at: string
   days_0pts: number
+  renew_count: number
   aro_status: string | null
   last_seen: string | null
   is_stale: boolean

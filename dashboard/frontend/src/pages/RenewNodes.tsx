@@ -799,6 +799,7 @@ export default function RenewNodes() {
                           >
                             Số ngày 0 điểm <SortIcon col="days_0pts" sortBy={statsSortBy} sortDir={statsSortDir} />
                           </th>
+                          <th className="text-center px-3 py-2.5 font-semibold text-gray-600 whitespace-nowrap">Số lần renew</th>
                           <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
                           <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Last seen</th>
                           <th className="px-3 py-2.5"></th>
@@ -824,6 +825,19 @@ export default function RenewNodes() {
                               <span className={`text-xs font-bold ${node.days_0pts >= 3 ? 'text-red-600' : node.days_0pts >= 2 ? 'text-orange-600' : 'text-yellow-600'}`}>
                                 {node.days_0pts} ngày
                               </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-center">
+                              {node.renew_count > 0 ? (
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                  node.renew_count >= 3 ? 'bg-red-100 text-red-700' :
+                                  node.renew_count >= 2 ? 'bg-orange-100 text-orange-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {node.renew_count}×
+                                </span>
+                              ) : (
+                                <span className="text-gray-300 text-xs">—</span>
+                              )}
                             </td>
                             <td className="px-3 py-2.5"><StatusBadge status={node.aro_status} /></td>
                             <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">

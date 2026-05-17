@@ -524,6 +524,13 @@ def get_renew_stats(
 
     nodes_map = {n.node_id: n for n in db.query(models.Node).filter(models.Node.node_id.in_(qualifying_ids)).all()}
     statuses_map = {s.node_id: s for s in db.query(models.NodeStatus).filter(models.NodeStatus.node_id.in_(qualifying_ids)).all()}
+    renew_counts_map = {
+        r.node_id: r.cnt
+        for r in db.query(models.NodeRenewLog.node_id, func.count(models.NodeRenewLog.id).label('cnt'))
+        .filter(models.NodeRenewLog.node_id.in_(qualifying_ids))
+        .group_by(models.NodeRenewLog.node_id)
+        .all()
+    }
 
     result = []
     for nid in qualifying_ids:
@@ -540,6 +547,7 @@ def get_renew_stats(
             serial=node.serial if node else None,
             renewed_at=renewed_at,
             days_0pts=days_0pts,
+            renew_count=renew_counts_map.get(nid, 0),
             aro_status=status.aro_status if status else None,
             last_seen=status.last_seen if status else None,
             is_stale=is_stale,

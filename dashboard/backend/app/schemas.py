@@ -151,6 +151,7 @@ class RenewStatsNodeOut(BaseModel):
     serial: Optional[str] = None
     renewed_at: datetime
     days_0pts: int
+    renew_count: int = 0
     aro_status: Optional[str] = None
     last_seen: Optional[datetime] = None
     is_stale: bool
