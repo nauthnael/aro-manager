@@ -121,6 +121,16 @@ export default function Dashboard() {
     },
   })
 
+  const bulkRenew = useMutation({
+    mutationFn: (node_ids: string[]) =>
+      api.post('/renew/bulk', { node_ids }).then(r => r.data),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['nodes'] })
+      alert(`Đã kích hoạt renew cho ${result.triggered} node${result.skipped ? ` (bỏ qua ${result.skipped})` : ''}.`)
+      setSelectedIds(new Set())
+    },
+  })
+
   const bulkTagMutation = useMutation({
     mutationFn: ({ node_ids, add_tag_ids, remove_tag_ids }: { node_ids: string[]; add_tag_ids: number[]; remove_tag_ids: number[] }) =>
       api.post('/dashboard/nodes/bulk-tags', { node_ids, add_tag_ids, remove_tag_ids }).then(r => r.data),
@@ -156,6 +166,12 @@ export default function Dashboard() {
     const def = BULK_ACTIONS.find(a => a.id === action)!
     if (!confirm(def.confirmMsg(ids.length))) return
     bulkSend.mutate({ action, node_ids: ids })
+  }
+
+  const handleBulkRenew = () => {
+    const ids = [...selectedIds]
+    if (!confirm(`Renew ${ids.length} node đã chọn? Các node đang trong cooldown sẽ bị bỏ qua.`)) return
+    bulkRenew.mutate(ids)
   }
 
   const handleCopySerials = () => {
@@ -519,6 +535,13 @@ export default function Dashboard() {
                   : `${action.label} (${selectedCount})`}
               </button>
             ))}
+            <button
+              onClick={handleBulkRenew}
+              disabled={bulkRenew.isPending}
+              className="px-4 py-2 text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {bulkRenew.isPending ? 'Đang renew...' : `Bulk Renew (${selectedCount})`}
+            </button>
           </div>
         )}
 
