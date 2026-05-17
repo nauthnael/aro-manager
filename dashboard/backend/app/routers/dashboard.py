@@ -194,7 +194,34 @@ def list_nodes(
     stale = sum(1 for n in all_out if n.is_stale)
     no_exit_ip_count = sum(1 for n in all_out if not n.public_ip or n.public_ip.upper() == 'N/A')
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
-    no_points_yesterday_count = sum(1 for n in all_out if n.reward_yesterday is not None and n.reward_yesterday == 0)
+
+    # Compute yesterday's reward from NodeHistory (more reliable than self-reported NodeStatus.reward_yesterday).
+    # NodeHistory stores report.reward_yesterday in the reward_today column, so records taken TODAY
+    # contain each node's actual reward from YESTERDAY.
+    today_utc = now.date()
+    today_start = datetime(today_utc.year, today_utc.month, today_utc.day)
+    tomorrow_start = today_start + timedelta(days=1)
+    _hist_today = (
+        db.query(models.NodeHistory.node_id, func.max(models.NodeHistory.reward_today).label('max_rwd'))
+        .filter(
+            models.NodeHistory.timestamp >= today_start,
+            models.NodeHistory.timestamp < tomorrow_start,
+            models.NodeHistory.reward_today.isnot(None),
+        )
+        .group_by(models.NodeHistory.node_id)
+        .all()
+    )
+    # Nodes confirmed to have points yesterday (via NodeHistory snapshot taken today)
+    _nodes_with_yesterday_points = {r.node_id for r in _hist_today if r.max_rwd and r.max_rwd > 0}
+
+    def _no_points_yesterday(n: schemas.NodeStatusOut) -> bool:
+        if n.node_id in _nodes_with_yesterday_points:
+            return False
+        if n.reward_yesterday is not None and n.reward_yesterday > 0:
+            return False
+        return True
+
+    no_points_yesterday_count = sum(1 for n in all_out if _no_points_yesterday(n))
 
     # Count nodes with avg daily score == 0 via a single aggregated query
     _avg_sq = (
@@ -231,10 +258,7 @@ def list_nodes(
             if n.first_seen is None or (now - n.first_seen).total_seconds() >= 86400
         ]
     if no_points_yesterday:
-        filtered = [
-            n for n in filtered
-            if n.reward_yesterday is not None and n.reward_yesterday == 0
-        ]
+        filtered = [n for n in filtered if _no_points_yesterday(n)]
 
     # Filter by tags (AND/OR)
     if tag_ids:
