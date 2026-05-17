@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.4"
+SCRIPT_VERSION="3.8.5"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1018,6 +1018,7 @@ start_redsocks_service() {
 # Global node info variables (populated by parse_node_info)
 SERIAL="N/A"
 EMAIL="N/A"
+BIND_STATUS="unknown"
 CONNECT_STATUS="N/A"
 REWARD_TODAY="0"
 REWARD_YESTERDAY="0"
@@ -1121,7 +1122,7 @@ format_time_ago() {
 # when grep finds no match (exit 1).
 
 parse_node_info() {
-    SERIAL="N/A"; EMAIL="N/A"; CONNECT_STATUS="N/A"
+    SERIAL="N/A"; EMAIL="N/A"; BIND_STATUS="unknown"; CONNECT_STATUS="N/A"
     REWARD_TODAY="0"; REWARD_YESTERDAY="0"; UPTIME_RATIO="0"; PUBLIC_IP="N/A"
 
     LATEST_LOG_FILE=$(get_latest_aro_log)
@@ -1140,6 +1141,13 @@ parse_node_info() {
 
     val=$(echo "$lines" | grep -oP '(?<="email":")[^"]+' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && EMAIL="$val"
+
+    val=$(echo "$lines" | grep -oP '(?<="bind":)(true|false)' 2>/dev/null | tail -1 || true)
+    if [[ -n "$val" ]]; then
+        BIND_STATUS="$val"
+        # If ARO explicitly reports unbound, discard any email found in the same log window
+        [[ "$BIND_STATUS" == "false" ]] && EMAIL="N/A"
+    fi
 
     val=$(echo "$lines" | grep -oP '(?<="connect":")(connected|disconnected)' 2>/dev/null | tail -1 || true)
     [[ -n "$val" ]] && CONNECT_STATUS="$val"
@@ -2079,13 +2087,15 @@ d = {
     'serial':           sys.argv[12],
     'account':          sys.argv[13],
     'script_version':   sys.argv[14],
+    'bind_status':      sys.argv[15],
 }
 print(json.dumps(d))
 " "$node_id" "$DASHBOARD_API_KEY" \
   "${tray_state:-unknown}" "$proxy_status" \
   "${REWARD_TODAY:-0}" "${REWARD_YESTERDAY:-0}" "${UPTIME_RATIO:-0}" \
   "${PUBLIC_IP:-}" "${PROXY_HOST:-}" "${PROXY_PORT:-0}" \
-  "${PROXY_USER:-}" "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" 2>/dev/null) || {
+  "${PROXY_USER:-}" "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" \
+  "${BIND_STATUS:-unknown}" 2>/dev/null) || {
         watchdog_log "Dashboard: failed to build payload"
         return 0
     }

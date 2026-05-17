@@ -127,7 +127,9 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     if not node:
         node = models.Node(node_id=node_id)
         db.add(node)
-    if _valid(body.account):
+    if body.bind_status == "false":
+        node.account = None
+    elif _valid(body.account):
         node.account = body.account
     old_serial = node.serial
     if _valid(body.serial):
@@ -159,7 +161,8 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
 
     _maybe_save_history(db, status, body)
     _track_status_errors(db, node_id, old_aro, old_proxy_ok, body.aro_status, body.proxy_ok, now)
-    _track_account_history(db, node_id, body.account, now)
+    if body.bind_status != "false":
+        _track_account_history(db, node_id, body.account, now)
 
     # If serial changed, update serial_after on the most recent renew log that hasn't tracked it yet
     if _valid(body.serial) and old_serial and body.serial != old_serial:

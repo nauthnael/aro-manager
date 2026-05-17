@@ -33,6 +33,7 @@ class NodeReportRequest(BaseModel):
     serial: str = ""
     account: str = ""
     script_version: str = ""
+    bind_status: str = "unknown"
 
 
 class PendingCommand(BaseModel):
