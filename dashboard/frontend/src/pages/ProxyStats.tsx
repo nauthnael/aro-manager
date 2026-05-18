@@ -234,9 +234,10 @@ export default function ProxyStats() {
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
                             {p.node_ids.map(nid => (
-                              <button
+                              <a
                                 key={nid}
-                                onClick={() => navigate(`/nodes/${encodeURIComponent(nid)}`)}
+                                href={`/nodes/${encodeURIComponent(nid)}`}
+                                onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(nid)}`) }}
                                 className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-mono text-[11px] transition-colors"
                               >
                                 {nid}

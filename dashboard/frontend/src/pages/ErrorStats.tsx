@@ -252,9 +252,10 @@ function ProxyStatsPanel({
                     </span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {visibleNodes.map(nid => (
-                        <button
+                        <a
                           key={nid}
-                          onClick={() => navigate(`/nodes/${encodeURIComponent(nid)}`)}
+                          href={`/nodes/${encodeURIComponent(nid)}`}
+                          onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(nid)}`) }}
                           className="px-1.5 py-0 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-mono text-[10px] leading-5 transition-colors"
                         >
                           {nid}
@@ -329,9 +330,10 @@ function NodeGrid({ nodes }: { nodes: NodeErrorStats[] }) {
         {display.map(node => {
           const dominantErr = ERROR_TYPES.find(t => (node.errors_by_type[t] ?? 0) > 0)
           return (
-            <button
+            <a
               key={node.node_id}
-              onClick={() => navigate(`/nodes/${encodeURIComponent(node.node_id)}`)}
+              href={`/nodes/${encodeURIComponent(node.node_id)}`}
+              onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(node.node_id)}`) }}
               className={`rounded-lg border p-2 text-left hover:shadow-md transition-shadow ${scoreCardBg(node.today_score)}`}
             >
               <p className="font-mono text-[10px] font-semibold text-gray-700 truncate">{node.node_id}</p>
@@ -348,7 +350,7 @@ function NodeGrid({ nodes }: { nodes: NodeErrorStats[] }) {
               ) : (
                 <span className="text-[9px] text-green-600">OK</span>
               )}
-            </button>
+            </a>
           )
         })}
       </div>
@@ -533,7 +535,11 @@ export default function ErrorStats() {
                     <tr
                       key={node.node_id}
                       className="hover:bg-blue-50 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/nodes/${encodeURIComponent(node.node_id)}`)}
+                      onClick={e => {
+                        if (e.ctrlKey || e.metaKey) { window.open(`/nodes/${encodeURIComponent(node.node_id)}`, '_blank'); return }
+                        navigate(`/nodes/${encodeURIComponent(node.node_id)}`)
+                      }}
+                      onAuxClick={e => { if (e.button === 1) window.open(`/nodes/${encodeURIComponent(node.node_id)}`, '_blank') }}
                     >
                       <td className="px-4 py-3 font-mono text-xs text-gray-700 max-w-[160px]">
                         <span className="truncate block">{node.node_id}</span>

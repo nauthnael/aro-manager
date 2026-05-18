@@ -513,8 +513,9 @@ export default function RenewNodes() {
                             />
                           </td>
                           <td className="px-3 py-2.5">
-                            <button
-                              onClick={() => navigate(`/nodes/${encodeURIComponent(node.node_id)}`)}
+                            <a
+                              href={`/nodes/${encodeURIComponent(node.node_id)}`}
+                              onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(node.node_id)}`) }}
                               className="font-mono text-xs text-blue-600 hover:underline"
                             >
                               {node.node_id}
@@ -652,12 +653,13 @@ export default function RenewNodes() {
                             {new Date(log.renewed_at + 'Z').toLocaleString('vi-VN')}
                           </td>
                           <td className="px-3 py-2.5">
-                            <button
-                              onClick={() => navigate(`/nodes/${encodeURIComponent(log.node_id)}`)}
+                            <a
+                              href={`/nodes/${encodeURIComponent(log.node_id)}`}
+                              onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(log.node_id)}`) }}
                               className="font-mono text-xs text-blue-600 hover:underline"
                             >
                               {log.node_id}
-                            </button>
+                            </a>
                           </td>
                           <td className="px-3 py-2.5 text-xs">
                             {log.account_before ? (
