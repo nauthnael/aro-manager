@@ -89,6 +89,7 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN backup_enabled BOOLEAN DEFAULT FALSE",
         "ALTER TABLE app_settings ADD COLUMN backup_interval_hours INTEGER DEFAULT 24",
         "ALTER TABLE app_settings ADD COLUMN backup_retention_count INTEGER DEFAULT 7",
+        "ALTER TABLE node_status ADD COLUMN ip_leak BOOLEAN",
     ]
     for sql in ddl_migrations:
         try:
