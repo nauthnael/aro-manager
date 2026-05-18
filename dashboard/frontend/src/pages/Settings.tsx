@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { useGoBack } from '../utils/navigation'
 import { ArrowLeft, Check, Pencil, Plus, Send, Radio, Database, Download, Trash2, RefreshCw, X } from 'lucide-react'
 import api from '../api/client'
 import { TagOut } from '../types'
@@ -216,6 +217,7 @@ function TagManager() {
 export default function SettingsPage() {
   useEffect(() => { document.title = '💲 Cài đặt | ARO Dashboard' }, [])
   const navigate = useNavigate()
+  const goBack = useGoBack()
   const qc = useQueryClient()
   const [form, setForm] = useState<SettingsData>({
     tg_critical: '', tg_warning: '', tg_info: '', tg_stats: '',
@@ -331,7 +333,7 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1 text-gray-500 hover:text-gray-800">
+          <button onClick={goBack} className="p-1 text-gray-500 hover:text-gray-800">
             <ArrowLeft size={18} />
           </button>
           <h1 className="text-lg font-bold text-gray-800 flex-1">Cài đặt</h1>

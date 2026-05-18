@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useGoBack } from '../utils/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
@@ -114,6 +115,7 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
+  const goBack = useGoBack()
   const qc = useQueryClient()
 
   const [editingNotes, setEditingNotes] = useState(false)
@@ -242,7 +244,7 @@ export default function NodeDetail() {
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1 text-gray-500 hover:text-gray-800">
+          <button onClick={goBack} className="p-1 text-gray-500 hover:text-gray-800">
             <ArrowLeft size={18} />
           </button>
           <div className="flex-1 min-w-0">
