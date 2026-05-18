@@ -241,7 +241,7 @@ export default function ProxyStats() {
                                 className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-mono text-[11px] transition-colors"
                               >
                                 {nid}
-                              </button>
+                              </a>
                             ))}
                           </div>
                         </td>

@@ -259,7 +259,7 @@ function ProxyStatsPanel({
                           className="px-1.5 py-0 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 font-mono text-[10px] leading-5 transition-colors"
                         >
                           {nid}
-                        </button>
+                        </a>
                       ))}
                       {hiddenCount > 0 && (
                         <span className="text-[10px] text-gray-400 leading-5">+{hiddenCount}</span>

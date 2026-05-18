@@ -519,7 +519,7 @@ export default function RenewNodes() {
                               className="font-mono text-xs text-blue-600 hover:underline"
                             >
                               {node.node_id}
-                            </button>
+                            </a>
                             {node.is_stale && (
                               <span className="ml-1 text-xs text-gray-400">(stale)</span>
                             )}
