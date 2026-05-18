@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.9"
+SCRIPT_VERSION="3.8.10"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1912,7 +1912,7 @@ _execute_dashboard_command() {
                         -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
                         -H "Content-Type: application/json" \
                         -d "{\"result\":\"${result}\",\"success\":true}" > /dev/null 2>&1 || true
-                    nohup bash "$target_script" update --watchdog-only > /tmp/aro_update.log 2>&1 &
+                    nohup bash "$target_script" update > /tmp/aro_update.log 2>&1 &
                     disown
                     return
                 else
