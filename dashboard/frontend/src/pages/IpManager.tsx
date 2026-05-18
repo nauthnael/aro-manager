@@ -192,7 +192,8 @@ export default function IpManager() {
       cell: info => {
         const ip = info.getValue()
         const isDup = info.row.original.is_ip_duplicate
-        if (!ip) return <span className="text-gray-300 text-sm">—</span>
+        const isUnknown = !ip || ['n/a', 'na', 'unknown', 'none', '0.0.0.0'].includes(ip.trim().toLowerCase())
+        if (isUnknown) return <span className="text-gray-300 text-sm">—</span>
         return (
           <span className={`inline-flex items-center gap-1 font-mono text-sm px-2 py-0.5 rounded ${
             isDup ? 'bg-red-100 text-red-700 font-semibold' : 'text-gray-700'
