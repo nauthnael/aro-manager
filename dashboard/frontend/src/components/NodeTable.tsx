@@ -47,6 +47,7 @@ interface Props {
   onTagClick?: (tagId: number) => void
   page?: number
   pageSize?: number
+  stickyTop?: number
 }
 
 const col = createColumnHelper<NodeStatus>()
@@ -56,7 +57,7 @@ const STATUS_ORDER = ['Online', 'NoInternet', 'Unbound', 'proxy_expired', 'Offli
 const toFlagEmoji = (cc: string) =>
   cc.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
 
-export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick, page = 1, pageSize = 50 }: Props) {
+export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorting, onSortingChange, onTagClick, page = 1, pageSize = 50, stickyTop = 56 }: Props) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [updateTarget, setUpdateTarget] = useState<UpdateTarget | null>(null)
@@ -148,7 +149,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
                 onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(id)}`) }}
                 className="font-mono text-sm font-medium text-blue-600 hover:underline text-left"
               >
-                {id}
+                {id || <span className="text-gray-400 italic font-normal">(no id)</span>}
               </a>
               {country_code && (
                 <span title={country_code} className="text-base leading-none shrink-0">
@@ -409,7 +410,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
 
       <div className="overflow-x-auto rounded-lg shadow">
         <table className="min-w-full bg-white divide-y divide-gray-200">
-          <thead className="bg-gray-50 sticky top-14 z-10">
+          <thead className="bg-gray-50 sticky z-10" style={{ top: stickyTop }}>
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
                 {hg.headers.map(h => (
