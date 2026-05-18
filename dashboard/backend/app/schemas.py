@@ -445,6 +445,9 @@ class NodeIpInfo(BaseModel):
     last_seen: Optional[datetime] = None
     is_stale: bool = False
     is_ip_duplicate: bool = False
+    # "proxy_shared"     = same exit IP AND same proxy (proxy shared across nodes)
+    # "routing_conflict" = same exit IP BUT different proxies (real IP collision)
+    duplicate_type: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -455,6 +458,8 @@ class IpManagerResponse(BaseModel):
     total: int
     duplicate_ip_count: int
     affected_node_count: int
+    proxy_shared_count: int = 0
+    routing_conflict_count: int = 0
 
 
 # --- Diagnostics ---

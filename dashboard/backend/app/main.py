@@ -390,33 +390,48 @@ def scheduled_backup_task():
 
 def check_duplicate_exit_ips():
     """Runs every 5 min — detect nodes sharing the same exit IP and alert via Telegram."""
-    from collections import Counter
+    from collections import defaultdict
+    _SENTINEL = {"n/a", "na", "unknown", "0.0.0.0", "none", ""}
+
     db = SessionLocal()
     try:
         cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
         if not cfg or not cfg.tg_critical:
             return
 
+        all_nodes = {n.node_id: n for n in db.query(models.Node).all()}
         statuses = db.query(models.NodeStatus).all()
-        ip_to_nodes: dict = {}
-        for s in statuses:
-            if not s.public_ip:
-                continue
-            ip_to_nodes.setdefault(s.public_ip, []).append(s.node_id)
 
-        duplicates = {ip: nodes for ip, nodes in ip_to_nodes.items() if len(nodes) > 1}
+        ip_to_nodes: dict = defaultdict(list)
+        for s in statuses:
+            if not s.public_ip or s.public_ip.strip().lower() in _SENTINEL:
+                continue
+            ip_to_nodes[s.public_ip.strip()].append(s.node_id)
+
+        duplicates = {ip: nids for ip, nids in ip_to_nodes.items() if len(nids) > 1}
         if not duplicates:
             return
+
+        def proxy_key(node_id: str) -> str:
+            n = all_nodes.get(node_id)
+            if not n:
+                return ""
+            return f"{n.proxy_host or ''}:{n.proxy_port or ''}:{n.proxy_user or ''}"
 
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
         lines = [f"⚠️ <b>TRÙNG EXIT IP</b> – {now}\n"]
         for ip, node_ids in sorted(duplicates.items()):
+            proxy_keys = {proxy_key(nid) for nid in node_ids}
+            dup_type = "proxy_shared" if len(proxy_keys) == 1 else "routing_conflict"
+            icon = "🟡" if dup_type == "proxy_shared" else "🔴"
+            label = "Proxy share" if dup_type == "proxy_shared" else "Routing conflict"
             nodes_str = ", ".join(f"<code>{n}</code>" for n in sorted(node_ids))
-            lines.append(f"🔴 IP <code>{ip}</code> → {nodes_str}")
-        lines.append("\nKiểm tra cấu hình proxy ngay!")
+            lines.append(f"{icon} <code>{ip}</code> [{label}] → {nodes_str}")
+
+        lines.append("\n🟡 Proxy share: nhiều node dùng chung proxy")
+        lines.append("🔴 Routing conflict: exit IP thực sự trùng")
 
         enqueue_telegram_message(cfg.tg_critical, "\n".join(lines))
-        # Flush immediately so alert arrives without waiting for the 2-min queue
         flush_telegram_queue()
     except Exception as exc:
         logger.error("check_duplicate_exit_ips error: %s", exc)

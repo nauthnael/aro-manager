@@ -284,6 +284,7 @@ export interface NodeIpInfo {
   last_seen: string | null
   is_stale: boolean
   is_ip_duplicate: boolean
+  duplicate_type: 'proxy_shared' | 'routing_conflict' | null
 }
 
 export interface IpManagerResponse {
@@ -291,6 +292,8 @@ export interface IpManagerResponse {
   total: number
   duplicate_ip_count: number
   affected_node_count: number
+  proxy_shared_count: number
+  routing_conflict_count: number
 }
 
 export interface DiagnosticLog {
