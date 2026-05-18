@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.6"
+SCRIPT_VERSION="3.8.7"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -745,12 +745,13 @@ create_redsocks_service() {
 [Unit]
 Description=Redsocks SOCKS5 Transparent Proxy for ARO
 Documentation=https://github.com/darkk/redsocks
-After=network.target
+After=network-online.target
 
 [Service]
 Type=simple
 ExecStartPre=/bin/sh -c 'ss -tlnp | grep -q ":${REDSOCKS_PORT} " && fuser -k ${REDSOCKS_PORT}/tcp 2>/dev/null || true'
 ExecStart=$redsocks_bin -c $REDSOCKS_CONF_FILE
+ExecStartPost=/bin/bash $SCRIPT_DIR/$SCRIPT_NAME _restore_iptables
 Restart=on-failure
 RestartSec=10s
 
@@ -5864,6 +5865,19 @@ main() {
             load_configs
             detect_desktop_user
             watchdog_loop
+            ;;
+
+        _restore_iptables)
+            # Internal command - called by redsocks-aro.service ExecStartPost
+            # Re-applies iptables kill-switch rules after redsocks starts.
+            # LXC containers lose iptables state on restart; netfilter-persistent
+            # is unreliable in LXC, so we re-apply rules from redsocks service itself.
+            if [[ ! -f "$PROXY_CONF_FILE" ]]; then
+                exit 0
+            fi
+            load_configs
+            detect_desktop_user
+            setup_iptables_rules 2>/dev/null || true
             ;;
             
         report)
