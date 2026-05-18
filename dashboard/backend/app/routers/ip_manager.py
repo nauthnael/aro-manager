@@ -13,6 +13,9 @@ from app.schemas import IpManagerResponse, NodeIpInfo
 
 router = APIRouter(prefix="/ip-manager", tags=["ip-manager"])
 
+# IPs that nodes report when they cannot determine their real exit IP
+_SENTINEL_IPS = {"n/a", "na", "unknown", "0.0.0.0", "none", ""}
+
 
 def _build_node_ip_info(node: models.Node, status: Optional[models.NodeStatus], duplicate_ips: set, now: datetime) -> NodeIpInfo:
     is_stale = False
@@ -52,11 +55,13 @@ def get_ip_manager_nodes(
     nodes = db.query(models.Node).all()
     statuses = {s.node_id: s for s in db.query(models.NodeStatus).all()}
 
-    # Find duplicate public IPs (ignore empty/None)
+    # Find duplicate public IPs (ignore empty/None and sentinel placeholder values)
     ip_counts = Counter(
         statuses[n.node_id].public_ip
         for n in nodes
-        if n.node_id in statuses and statuses[n.node_id].public_ip
+        if n.node_id in statuses
+        and statuses[n.node_id].public_ip
+        and statuses[n.node_id].public_ip.strip().lower() not in _SENTINEL_IPS
     )
     duplicate_ips = {ip for ip, cnt in ip_counts.items() if cnt > 1}
 
