@@ -177,12 +177,13 @@ export default function IpManager() {
     col.accessor('node_id', {
       header: 'Node ID',
       cell: info => (
-        <button
-          className="font-mono text-sm text-blue-600 hover:underline text-left"
-          onClick={() => navigate(`/nodes/${encodeURIComponent(info.getValue())}`)}
+        <a
+          href={`/nodes/${encodeURIComponent(info.getValue())}`}
+          onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(info.getValue())}`) }}
+          className="font-mono text-sm text-blue-600 hover:underline"
         >
           {info.getValue()}
-        </button>
+        </a>
       ),
     }),
     col.accessor('account', {
