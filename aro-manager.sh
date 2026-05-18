@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.7"
+SCRIPT_VERSION="3.8.8"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -5271,9 +5271,12 @@ do_update() {
         create_wrapper_script
     fi
 
-    log_info "Step 4/5: Rebuilding configs + watchdog service..."
+    log_info "Step 4/5: Rebuilding configs + services..."
     save_proxy_config
     save_watchdog_config
+    if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
+        create_redsocks_service
+    fi
     create_watchdog_service
     systemctl daemon-reload
 
@@ -5281,10 +5284,8 @@ do_update() {
     log_info "Step 5/5: Starting services..."
 
     if [[ "${USE_PROXY:-1}" -eq 1 ]]; then
-        if ! systemctl is-active --quiet redsocks-aro; then
-            systemctl start redsocks-aro
-            sleep 3
-        fi
+        systemctl restart redsocks-aro
+        sleep 3
     fi
 
     systemctl start aro-watchdog
