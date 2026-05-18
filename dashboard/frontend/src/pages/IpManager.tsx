@@ -12,6 +12,7 @@ import {
 import { ArrowLeft, RefreshCw, AlertTriangle, Globe, CheckCircle, RotateCcw } from 'lucide-react'
 import { NodeIpInfo, IpManagerResponse } from '../types'
 import api from '../api/client'
+import { useGoBack } from '../utils/navigation'
 
 const col = createColumnHelper<NodeIpInfo>()
 
@@ -81,6 +82,7 @@ function StatusBadge({ status, isStale }: { status: string | null; isStale: bool
 export default function IpManager() {
   useEffect(() => { document.title = '🌐 IP Manager | ARO Dashboard' }, [])
   const navigate = useNavigate()
+  const goBack = useGoBack()
   const qc = useQueryClient()
   const [onlyDuplicates, setOnlyDuplicates] = useState(false)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -238,7 +240,7 @@ export default function IpManager() {
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/')}
+              onClick={goBack}
               className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <ArrowLeft size={18} />

@@ -6,6 +6,7 @@ import { formatDistanceToNow, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import api from '../api/client'
 import { RenewCandidatesResponse, RenewHistoryResponse, RenewCandidate, RenewLog, RenewStatsResponse, RenewStatsNode } from '../types'
+import { useGoBack } from '../utils/navigation'
 
 type Tab = 'candidates' | 'history' | 'stats'
 
@@ -98,12 +99,19 @@ function ActionMenu({ node, onAction }: { node: RenewStatsNode; onAction: (nodeI
 
 export default function RenewNodes() {
   const navigate = useNavigate()
+  const goBack = useGoBack()
   const [searchParams] = useSearchParams()
   const qc = useQueryClient()
   useEffect(() => { document.title = '💲 Renew Node | ARO Dashboard' }, [])
 
   const initialTab = (searchParams.get('tab') as Tab | null) ?? 'candidates'
   const [tab, setTab] = useState<Tab>(initialTab)
+
+  // Sync active tab into URL so navigate(-1) restores the correct tab
+  const setTabAndUrl = (t: Tab) => {
+    setTab(t)
+    navigate(`/renew?tab=${t}`, { replace: true })
+  }
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [minHistoryDays, setMinHistoryDays] = useState(0)
   const [filterAvgScore, setFilterAvgScore] = useState(true)
@@ -299,7 +307,7 @@ export default function RenewNodes() {
         <div className="max-w-[1880px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/')}
+              onClick={goBack}
               className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
             >
               <ArrowLeft size={15} />
@@ -331,7 +339,7 @@ export default function RenewNodes() {
         {/* Tabs */}
         <div className="flex gap-1 border-b border-gray-200">
           <button
-            onClick={() => setTab('candidates')}
+            onClick={() => setTabAndUrl('candidates')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === 'candidates'
                 ? 'border-orange-500 text-orange-600'
@@ -349,7 +357,7 @@ export default function RenewNodes() {
             </span>
           </button>
           <button
-            onClick={() => setTab('history')}
+            onClick={() => setTabAndUrl('history')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === 'history'
                 ? 'border-orange-500 text-orange-600'
@@ -362,7 +370,7 @@ export default function RenewNodes() {
             </span>
           </button>
           <button
-            onClick={() => setTab('stats')}
+            onClick={() => setTabAndUrl('stats')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === 'stats'
                 ? 'border-violet-600 text-violet-700'

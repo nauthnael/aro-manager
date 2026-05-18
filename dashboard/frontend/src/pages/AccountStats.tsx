@@ -12,6 +12,7 @@ import {
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { AccountStats } from '../types'
 import api from '../api/client'
+import { useGoBack } from '../utils/navigation'
 
 const col = createColumnHelper<AccountStats>()
 
@@ -27,6 +28,7 @@ function Pill({ value, cls }: { value: number; cls: string }) {
 export default function AccountStatsPage() {
   useEffect(() => { document.title = '💲 Account Stats | ARO Dashboard' }, [])
   const navigate = useNavigate()
+  const goBack = useGoBack()
   const [sorting, setSorting] = useState<SortingState>([{ id: 'total_points', desc: true }])
 
   const { data = [], isLoading, refetch, isFetching } = useQuery<AccountStats[]>({
@@ -95,7 +97,7 @@ export default function AccountStatsPage() {
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-[1880px] mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1 text-gray-500 hover:text-gray-800">
+          <button onClick={goBack} className="p-1 text-gray-500 hover:text-gray-800">
             <ArrowLeft size={18} />
           </button>
           <div className="flex-1">
