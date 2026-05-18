@@ -17,6 +17,7 @@ from app.routers import settings as settings_router
 from app.routers import errors as errors_router
 from app.routers import renew as renew_router
 from app.routers import tags as tags_router
+from app.routers import ip_manager as ip_manager_router
 from app.backup import ensure_backup_dir, scheduled_backup
 from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
@@ -378,6 +379,42 @@ def scheduled_backup_task():
         db.close()
 
 
+def check_duplicate_exit_ips():
+    """Runs every 5 min — detect nodes sharing the same exit IP and alert via Telegram."""
+    from collections import Counter
+    db = SessionLocal()
+    try:
+        cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+        if not cfg or not cfg.tg_critical:
+            return
+
+        statuses = db.query(models.NodeStatus).all()
+        ip_to_nodes: dict = {}
+        for s in statuses:
+            if not s.public_ip:
+                continue
+            ip_to_nodes.setdefault(s.public_ip, []).append(s.node_id)
+
+        duplicates = {ip: nodes for ip, nodes in ip_to_nodes.items() if len(nodes) > 1}
+        if not duplicates:
+            return
+
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        lines = [f"⚠️ <b>TRÙNG EXIT IP</b> – {now}\n"]
+        for ip, node_ids in sorted(duplicates.items()):
+            nodes_str = ", ".join(f"<code>{n}</code>" for n in sorted(node_ids))
+            lines.append(f"🔴 IP <code>{ip}</code> → {nodes_str}")
+        lines.append("\nKiểm tra cấu hình proxy ngay!")
+
+        enqueue_telegram_message(cfg.tg_critical, "\n".join(lines))
+        # Flush immediately so alert arrives without waiting for the 2-min queue
+        flush_telegram_queue()
+    except Exception as exc:
+        logger.error("check_duplicate_exit_ips error: %s", exc)
+    finally:
+        db.close()
+
+
 def refresh_ip_countries_task():
     db = SessionLocal()
     try:
@@ -422,6 +459,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(cleanup_old_data, "interval", hours=6)
     scheduler.add_job(check_offline_alerts, "interval", minutes=2)
     scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
+    scheduler.add_job(check_duplicate_exit_ips, "interval", minutes=5)
     scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
     scheduler.add_job(refresh_ip_countries_task, "interval", minutes=10)
@@ -448,3 +486,4 @@ app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(errors_router.router, prefix="/api/v1")
 app.include_router(renew_router.router, prefix="/api/v1")
 app.include_router(tags_router.router, prefix="/api/v1")
+app.include_router(ip_manager_router.router, prefix="/api/v1")

@@ -270,3 +270,21 @@ export interface NodeAccountHistory {
   first_seen: string
   last_seen: string
 }
+
+export interface NodeIpInfo {
+  node_id: string
+  account: string | null
+  public_ip: string | null
+  proxy_host: string | null
+  aro_status: string | null
+  last_seen: string | null
+  is_stale: boolean
+  is_ip_duplicate: boolean
+}
+
+export interface IpManagerResponse {
+  nodes: NodeIpInfo[]
+  total: number
+  duplicate_ip_count: number
+  affected_node_count: number
+}

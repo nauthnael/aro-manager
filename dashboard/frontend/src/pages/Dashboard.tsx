@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Tag as TagIcon, X } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Globe, Tag as TagIcon, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
@@ -311,6 +311,14 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
             >
               <RotateCcw size={15} />
               <span className="hidden sm:inline">Renew Node</span>
+            </button>
+            <button
+              onClick={() => navigate('/ip-manager')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Quản lý IP Nodes"
+            >
+              <Globe size={15} />
+              <span className="hidden sm:inline">IP Manager</span>
             </button>
             <button
               onClick={() => navigate('/settings')}

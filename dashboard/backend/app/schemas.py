@@ -427,3 +427,26 @@ class NodeAccountHistoryOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- IP Manager ---
+
+class NodeIpInfo(BaseModel):
+    node_id: str
+    account: Optional[str] = None
+    public_ip: Optional[str] = None
+    proxy_host: Optional[str] = None
+    aro_status: Optional[str] = None
+    last_seen: Optional[datetime] = None
+    is_stale: bool = False
+    is_ip_duplicate: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class IpManagerResponse(BaseModel):
+    nodes: List[NodeIpInfo]
+    total: int
+    duplicate_ip_count: int
+    affected_node_count: int
