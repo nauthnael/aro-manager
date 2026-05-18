@@ -439,6 +439,8 @@ class NodeIpInfo(BaseModel):
     account: Optional[str] = None
     public_ip: Optional[str] = None
     proxy_host: Optional[str] = None
+    proxy_port: Optional[int] = None
+    proxy_user: Optional[str] = None
     aro_status: Optional[str] = None
     last_seen: Optional[datetime] = None
     is_stale: bool = False

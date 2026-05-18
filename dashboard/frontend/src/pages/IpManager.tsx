@@ -206,9 +206,15 @@ export default function IpManager() {
         )
       },
     }),
-    col.accessor('proxy_host', {
-      header: 'Proxy Host',
-      cell: info => <span className="text-xs text-gray-500 font-mono">{info.getValue() || '—'}</span>,
+    col.display({
+      id: 'proxy',
+      header: 'Proxy',
+      cell: info => {
+        const { proxy_host, proxy_port, proxy_user } = info.row.original
+        if (!proxy_host) return <span className="text-gray-300 text-xs">—</span>
+        const parts = [proxy_host, proxy_port ?? '', proxy_user ?? ''].filter(Boolean)
+        return <span className="text-xs text-gray-600 font-mono">{parts.join(':')}</span>
+      },
     }),
     col.accessor('aro_status', {
       header: 'Trạng thái',

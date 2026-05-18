@@ -278,6 +278,8 @@ export interface NodeIpInfo {
   account: string | null
   public_ip: string | null
   proxy_host: string | null
+  proxy_port: number | null
+  proxy_user: string | null
   aro_status: string | null
   last_seen: string | null
   is_stale: boolean
