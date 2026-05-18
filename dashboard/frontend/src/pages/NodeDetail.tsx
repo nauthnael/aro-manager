@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useGoBack } from '../utils/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon } from 'lucide-react'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon, ChevronDown, ChevronUp, Bug } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from 'recharts'
-import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory, TagOut } from '../types'
+import { NodeDetailResponse, RestartEvent, ErrorEvent, DailyScore, ERROR_LABELS, ERROR_COLORS, ErrorType, RenewHistoryResponse, NodeAccountHistory, TagOut, DiagnosticLog } from '../types'
 import api from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import RewardChart from '../components/RewardChart'
@@ -161,6 +161,16 @@ export default function NodeDetail() {
     refetchInterval: 60_000,
     enabled: !!nodeId,
   })
+
+  const { data: diagnostics } = useQuery<DiagnosticLog[]>({
+    queryKey: ['diagnostics', nodeId],
+    queryFn: () => api.get(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/diagnostics`).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: !!nodeId,
+  })
+
+  const [expandedDiagId, setExpandedDiagId] = useState<number | null>(null)
+  const toggleDiag = useCallback((id: number) => setExpandedDiagId(prev => prev === id ? null : id), [])
 
   const saveNotes = useMutation({
     mutationFn: () => api.put(`/dashboard/nodes/${encodeURIComponent(nodeId!)}/notes`, { notes: notesValue }),
@@ -780,6 +790,50 @@ export default function NodeDetail() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Diagnostics */}
+        {diagnostics && diagnostics.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <Bug size={15} className="text-purple-500" />
+              <h2 className="text-sm font-semibold text-gray-700">IP Leak Diagnostics</h2>
+              <span className="ml-auto text-xs text-gray-400">{diagnostics.length} bản ghi</span>
+            </div>
+            <div className="space-y-2">
+              {diagnostics.map(d => (
+                <div key={d.id} className="border border-gray-100 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => toggleDiag(d.id)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-xs font-mono text-gray-500 whitespace-nowrap">
+                      {format(new Date(d.collected_at + 'Z'), 'dd/MM/yyyy HH:mm:ss')}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700">
+                      {d.trigger}
+                    </span>
+                    <span className="ml-auto text-gray-400">
+                      {expandedDiagId === d.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </span>
+                  </button>
+                  {expandedDiagId === d.id && (
+                    <div className="border-t border-gray-100 bg-gray-950 p-3 relative">
+                      <button
+                        onClick={() => navigator.clipboard.writeText(d.content)}
+                        className="absolute top-2 right-2 text-[10px] px-2 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                      >
+                        Copy
+                      </button>
+                      <pre className="text-[11px] text-green-400 font-mono whitespace-pre-wrap break-words leading-relaxed max-h-[500px] overflow-y-auto">
+                        {d.content}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}

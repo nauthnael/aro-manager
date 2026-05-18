@@ -453,3 +453,23 @@ class IpManagerResponse(BaseModel):
     total: int
     duplicate_ip_count: int
     affected_node_count: int
+
+
+# --- Diagnostics ---
+
+class DiagnosticUploadRequest(BaseModel):
+    node_id: str
+    api_key: str
+    trigger: str = "ip_leak_reboot"
+    content: str
+
+
+class DiagnosticLogOut(BaseModel):
+    id: int
+    node_id: str
+    collected_at: datetime
+    trigger: str
+    content: str
+
+    class Config:
+        from_attributes = True

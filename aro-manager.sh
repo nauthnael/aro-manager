@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.1"
+SCRIPT_VERSION="3.9.2"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1875,14 +1875,107 @@ send_notify_ip_leak_recovered() {
     send_telegram "$msg" || true
 }
 
+collect_ip_leak_diagnostics() {
+    local ts; ts=$(date '+%Y%m%d_%H%M%S')
+    local logfile="/var/log/aro-ip-leak-debug-${ts}.log"
+
+    # Gather key metrics for the Telegram summary
+    local conntrack_count conntrack_max redsocks_listen root_ip user_ip
+    conntrack_count=$(sysctl -n net.netfilter.nf_conntrack_count 2>/dev/null || echo "?")
+    conntrack_max=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null || echo "?")
+    if ss -lntp 2>/dev/null | grep -q ':12345'; then
+        redsocks_listen="YES"
+    else
+        redsocks_listen="NO ⚠️"
+    fi
+    root_ip=$(curl --max-time 8 -sf https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || echo "?")
+    user_ip=$(sudo -u "$EFFECTIVE_USER" curl --max-time 8 -sf https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || echo "?")
+
+    # Write full diagnostic log to disk (survives reboot)
+    {
+        echo "=== ARO IP LEAK DIAGNOSTIC REPORT ==="
+        echo "Timestamp  : $(date '+%Y-%m-%d %H:%M:%S') UTC"
+        echo "Hostname   : ${HOSTNAME}"
+        echo "Script     : v${SCRIPT_VERSION}"
+        echo "Trigger    : ip_leak_reboot"
+        echo "Real IP    : $(state_get 'ip_leak_real_ip' 'unknown')"
+        echo "Exit IP    : $(state_get 'ip_leak_exit_ip' 'unknown')"
+        echo ""
+        echo "=== CONNTRACK ==="
+        sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max 2>/dev/null || echo "N/A"
+        echo ""
+        echo "=== REDSOCKS SOCKET STATES ==="
+        ss -tnp 2>/dev/null | grep -i redsocks || echo "(no redsocks sockets found)"
+        echo ""
+        echo "=== LISTENING ON :12345 ==="
+        ss -lntp 2>/dev/null | grep -E ':12345|redsocks' || echo "(not listening)"
+        echo ""
+        echo "=== ROUTING TABLE ==="
+        ip route show 2>/dev/null || echo "N/A"
+        echo ""
+        echo "=== IPTABLES nat ARO_PROXY ==="
+        iptables -t nat -L ARO_PROXY -n -v 2>/dev/null || echo "N/A (chain may not exist)"
+        echo ""
+        echo "=== REDSOCKS SERVICE STATUS ==="
+        systemctl status redsocks-aro --no-pager -l 2>/dev/null || echo "N/A"
+        echo ""
+        echo "=== REDSOCKS JOURNAL (50 lines) ==="
+        journalctl -u redsocks-aro -n 50 --no-pager 2>/dev/null || echo "N/A"
+        echo ""
+        echo "=== EXIT IP (root — bypasses proxy) ==="
+        echo "${root_ip}"
+        echo ""
+        echo "=== EXIT IP (${EFFECTIVE_USER} — via proxy) ==="
+        echo "${user_ip}"
+    } > "$logfile" 2>&1
+
+    # Upload full log to dashboard in background
+    if [[ -n "${DASHBOARD_URL:-}" && -n "${DASHBOARD_API_KEY:-}" ]]; then
+        (
+            DIAG_URL="${DASHBOARD_URL%/}" \
+            DIAG_KEY="${DASHBOARD_API_KEY}" \
+            DIAG_NODE="${HOSTNAME}" \
+            DIAG_FILE="$logfile" \
+            python3 - <<'PYEOF'
+import json, os, urllib.request, sys
+try:
+    with open(os.environ['DIAG_FILE'], 'r', errors='replace') as f:
+        content = f.read(65535)
+    payload = json.dumps({
+        'node_id':  os.environ['DIAG_NODE'],
+        'api_key':  os.environ['DIAG_KEY'],
+        'trigger':  'ip_leak_reboot',
+        'content':  content,
+    }).encode()
+    req = urllib.request.Request(
+        os.environ['DIAG_URL'] + '/api/v1/nodes/diagnostic',
+        data=payload,
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    urllib.request.urlopen(req, timeout=15)
+except Exception as e:
+    sys.stderr.write(f'diagnostic upload failed: {e}\n')
+PYEOF
+        ) &>/dev/null &
+    fi
+
+    # Return one-line summary for embedding in Telegram message
+    printf "conntrack: %s/%s | redsocks: %s | root: %s | user: %s" \
+        "$conntrack_count" "$conntrack_max" "$redsocks_listen" "$root_ip" "$user_ip"
+}
+
 send_notify_ip_leak_give_up() {
     local real_ip="${1:-unknown}"
+    local diag_summary="${2:-}"
+    local diag_section=""
+    [[ -n "$diag_summary" ]] && diag_section=$'\n'"📊 Diagnostics: <code>${diag_summary}</code>"
     local msg="🚨 <b>[IP LEAK - AUTO-FIX THẤT BẠI] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
 ──────────────────────
 🖥️ VPS:    ${HOSTNAME}
 🔍 Real IP: <code>${real_ip}</code>
 ❌ ${IP_LEAK_MAX_RECOVERY}/${IP_LEAK_MAX_RECOVERY} recovery attempts FAILED
-🔁 Đang reboot VPS để khắc phục...
+🔁 Đang reboot VPS để khắc phục...${diag_section}
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
     send_telegram "$msg" || true
 }
@@ -1921,8 +2014,10 @@ handle_ip_leak_recovery() {
         local leak_exit; leak_exit=$(state_get "ip_leak_exit_ip" "unknown")
         send_notify_ip_leak "$leak_exit" "$leak_real" "$recovery_count" || true
         if [[ "$recovery_count" -ge "$IP_LEAK_MAX_RECOVERY" ]]; then
-            watchdog_log "IP LEAK: ${IP_LEAK_MAX_RECOVERY} recovery attempts failed — scheduling VPS reboot in 1 minute"
-            send_notify_ip_leak_give_up "$leak_real" || true
+            watchdog_log "IP LEAK: ${IP_LEAK_MAX_RECOVERY} recovery attempts failed — collecting diagnostics"
+            local diag_summary; diag_summary=$(collect_ip_leak_diagnostics 2>/dev/null || echo "")
+            watchdog_log "IP LEAK: diagnostics collected — scheduling VPS reboot in 1 minute"
+            send_notify_ip_leak_give_up "$leak_real" "$diag_summary" || true
             shutdown -r +1 "aro-manager: IP leak auto-recovery failed, rebooting" &
         fi
         return 1

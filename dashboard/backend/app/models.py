@@ -200,3 +200,15 @@ class NodeTag(Base):
 
     node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE"), primary_key=True)
     tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+
+
+class NodeDiagnosticLog(Base):
+    __tablename__ = "node_diagnostic_log"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE", onupdate="CASCADE"), index=True)
+    collected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    trigger = Column(String(50), nullable=False)
+    content = Column(Text, nullable=False)
+
+    __table_args__ = (Index("ix_node_diagnostic_log_node_ts", "node_id", "collected_at"),)

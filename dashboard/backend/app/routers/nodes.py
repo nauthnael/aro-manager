@@ -292,6 +292,42 @@ def complete_command(
     return {"ok": True}
 
 
+@router.post("/nodes/diagnostic")
+def upload_diagnostic(body: schemas.DiagnosticUploadRequest, db: Session = Depends(get_db)):
+    if body.api_key != settings.dashboard_api_key:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    node_id = body.node_id.strip()
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    log = models.NodeDiagnosticLog(
+        node_id=node_id,
+        collected_at=datetime.utcnow(),
+        trigger=body.trigger,
+        content=body.content[:65535],
+    )
+    db.add(log)
+    db.flush()
+
+    # Keep only 10 most recent per node
+    old_ids = (
+        db.query(models.NodeDiagnosticLog.id)
+        .filter(models.NodeDiagnosticLog.node_id == node_id)
+        .order_by(models.NodeDiagnosticLog.collected_at.desc())
+        .offset(10)
+        .all()
+    )
+    if old_ids:
+        db.query(models.NodeDiagnosticLog).filter(
+            models.NodeDiagnosticLog.id.in_([r[0] for r in old_ids])
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/nodes/{node_id}/account-history", response_model=List[schemas.NodeAccountHistoryOut])
 def get_account_history(
     node_id: str,
