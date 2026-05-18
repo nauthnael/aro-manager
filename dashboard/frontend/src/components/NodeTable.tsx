@@ -408,9 +408,9 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg shadow">
+      <div className="overflow-auto rounded-lg shadow" style={{ maxHeight: `calc(100vh - ${stickyTop + 244}px)` }}>
         <table className="min-w-full bg-white divide-y divide-gray-200">
-          <thead className="bg-gray-50 sticky z-10" style={{ top: stickyTop }}>
+          <thead className="bg-gray-50 sticky top-0 z-10">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
                 {hg.headers.map(h => (
