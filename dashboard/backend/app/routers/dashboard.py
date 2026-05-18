@@ -502,6 +502,21 @@ def get_node(
     )
 
 
+@router.get("/dashboard/nodes/{node_id}/diagnostics", response_model=List[schemas.DiagnosticLogOut])
+def get_diagnostics(
+    node_id: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    return (
+        db.query(models.NodeDiagnosticLog)
+        .filter(models.NodeDiagnosticLog.node_id == node_id)
+        .order_by(models.NodeDiagnosticLog.collected_at.desc())
+        .limit(10)
+        .all()
+    )
+
+
 @router.get("/dashboard/renew-stats", response_model=schemas.RenewStatsResponse)
 def get_renew_stats(
     date: Optional[str] = Query(None),

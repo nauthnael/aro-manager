@@ -290,3 +290,11 @@ export interface IpManagerResponse {
   duplicate_ip_count: number
   affected_node_count: number
 }
+
+export interface DiagnosticLog {
+  id: number
+  node_id: string
+  collected_at: string
+  trigger: string
+  content: string
+}
