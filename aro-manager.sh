@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.0"
+SCRIPT_VERSION="3.9.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1882,10 +1882,7 @@ send_notify_ip_leak_give_up() {
 🖥️ VPS:    ${HOSTNAME}
 🔍 Real IP: <code>${real_ip}</code>
 ❌ ${IP_LEAK_MAX_RECOVERY}/${IP_LEAK_MAX_RECOVERY} recovery attempts FAILED
-⛔ ARO sẽ không tự khởi động lại
-🛠️ Cần can thiệp thủ công:
-   sudo ./aro-manager.sh proxy enable
-   sudo ./aro-manager.sh start
+🔁 Đang reboot VPS để khắc phục...
 🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
     send_telegram "$msg" || true
 }
@@ -1924,8 +1921,9 @@ handle_ip_leak_recovery() {
         local leak_exit; leak_exit=$(state_get "ip_leak_exit_ip" "unknown")
         send_notify_ip_leak "$leak_exit" "$leak_real" "$recovery_count" || true
         if [[ "$recovery_count" -ge "$IP_LEAK_MAX_RECOVERY" ]]; then
-            watchdog_log "IP LEAK: ${IP_LEAK_MAX_RECOVERY} recovery attempts failed — giving up, ARO stays killed"
+            watchdog_log "IP LEAK: ${IP_LEAK_MAX_RECOVERY} recovery attempts failed — scheduling VPS reboot in 1 minute"
             send_notify_ip_leak_give_up "$leak_real" || true
+            shutdown -r +1 "aro-manager: IP leak auto-recovery failed, rebooting" &
         fi
         return 1
     fi
