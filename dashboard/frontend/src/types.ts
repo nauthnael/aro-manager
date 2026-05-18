@@ -15,6 +15,7 @@ export interface NodeStatus {
   node_id: string
   aro_status: string | null
   proxy_ok: boolean | null
+  ip_leak: boolean | null
   reward_today: number | null
   reward_yesterday: number | null
   total_score: number | null
@@ -57,6 +58,7 @@ export interface NodeListResponse {
   no_points_avg_count: number
   no_points_2days_count: number
   renew_0points_count: number
+  ip_leak_count: number
 }
 
 export interface RenewStatsNode {

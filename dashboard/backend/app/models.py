@@ -57,6 +57,7 @@ class NodeStatus(Base):
     node_id = Column(String(255), ForeignKey("nodes.node_id", ondelete="CASCADE", onupdate="CASCADE"), unique=True, index=True)
     aro_status = Column(String(50))
     proxy_ok = Column(Boolean)
+    ip_leak = Column(Boolean, nullable=True)
     reward_today = Column(Float)
     reward_yesterday = Column(Float)
     uptime_ratio = Column(Float)

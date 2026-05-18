@@ -171,6 +171,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
 
     status.aro_status = body.aro_status
     status.proxy_ok = body.proxy_ok
+    status.ip_leak = body.ip_leak
     status.reward_today = body.reward_today
     status.reward_yesterday = body.reward_yesterday
     status.uptime_ratio = body.uptime_ratio

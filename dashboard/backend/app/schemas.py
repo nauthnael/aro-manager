@@ -23,6 +23,7 @@ class NodeReportRequest(BaseModel):
     api_key: str
     aro_status: str
     proxy_ok: bool
+    ip_leak: bool = False
     reward_today: float = 0
     reward_yesterday: float = 0
     uptime_ratio: float = 0
@@ -99,6 +100,7 @@ class NodeStatusOut(BaseModel):
     node_id: str
     aro_status: Optional[str] = None
     proxy_ok: Optional[bool] = None
+    ip_leak: Optional[bool] = None
     reward_today: Optional[float] = None
     reward_yesterday: Optional[float] = None
     total_score: Optional[float] = None
@@ -144,6 +146,7 @@ class NodeListResponse(BaseModel):
     no_points_avg_count: int = 0
     no_points_2days_count: int = 0
     renew_0points_count: int = 0
+    ip_leak_count: int = 0
 
 
 class RenewStatsNodeOut(BaseModel):

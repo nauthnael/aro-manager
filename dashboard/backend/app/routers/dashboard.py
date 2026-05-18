@@ -34,6 +34,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
         node_id=node.node_id,
         aro_status=status.aro_status if status else None,
         proxy_ok=status.proxy_ok if status else None,
+        ip_leak=status.ip_leak if status else None,
         reward_today=status.reward_today if status else None,
         reward_yesterday=status.reward_yesterday if status else None,
         total_score=total_score,
@@ -215,6 +216,7 @@ def list_nodes(
     stale = sum(1 for n in all_out if n.is_stale)
     no_exit_ip_count = sum(1 for n in all_out if not n.public_ip or n.public_ip.upper() == 'N/A')
     needs_renew_count = sum(1 for n in all_out if n.needs_renew)
+    ip_leak_count = sum(1 for n in all_out if n.ip_leak is True)
 
     # Compute yesterday's reward from NodeHistory.
     # After the storage fix, records are stored under yesterday's date with the correct reward value.
@@ -341,6 +343,8 @@ def list_nodes(
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter == "no_exit_ip":
         filtered = [n for n in filtered if not n.public_ip or n.public_ip.upper() == 'N/A']
+    elif status_filter == "ip_leak":
+        filtered = [n for n in filtered if n.ip_leak is True]
     elif status_filter:
         filtered = [n for n in filtered if not n.is_stale and n.aro_status == status_filter]
     if exclude_new_nodes:
@@ -415,6 +419,7 @@ def list_nodes(
         no_points_avg_count=no_points_avg_count,
         no_points_2days_count=no_points_2days_count,
         renew_0points_count=renew_0points_count,
+        ip_leak_count=ip_leak_count,
     )
 
 

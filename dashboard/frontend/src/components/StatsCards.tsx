@@ -9,6 +9,7 @@ interface Stats {
   no_points_avg_count?: number
   no_points_2days_count?: number
   renew_0points_count?: number
+  ip_leak_count?: number
 }
 
 function Card({
@@ -43,6 +44,8 @@ interface Props {
 }
 
 export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
+  const ipLeakCount = stats.ip_leak_count ?? 0
+
   const statusCards = [
     { key: null,            label: 'Total',         value: stats.total,               border: 'border-gray-400' },
     { key: 'Online',        label: 'Online',        value: stats.online,              border: 'border-green-500' },
@@ -85,6 +88,21 @@ export default function StatsCards({ stats, activeFilter, onFilter }: Props) {
           />
         ))}
       </div>
+      {ipLeakCount > 0 && (
+        <div
+          onClick={() => onFilter(activeFilter === 'ip_leak' ? null : 'ip_leak')}
+          className={`flex items-center gap-3 rounded-lg border-l-4 border-red-600 bg-red-50 px-4 py-3 shadow cursor-pointer transition-all
+            ${activeFilter === 'ip_leak' ? 'ring-2 ring-offset-1 ring-red-400' : 'hover:shadow-md'}`}
+        >
+          <span className="text-xl">🚨</span>
+          <div>
+            <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">IP Leak Detected</p>
+            <p className="text-sm text-red-600">
+              <span className="font-bold text-lg">{ipLeakCount}</span> node{ipLeakCount > 1 ? 's' : ''} đang lộ IP thật — ARO đã bị kill
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

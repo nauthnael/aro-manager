@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.8.10"
+SCRIPT_VERSION="3.9.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -81,6 +81,10 @@ DAILY_REPORT_ENABLED=true   # true/false — tắt/bật báo cáo hằng ngày 
 PROXY_CHECK_INTERVAL=600          # real proxy test every 10 minutes - giảm 50% outbound curl
 PROXY_DOWN_NOTIFY_MAX=15          # max Telegram alerts per hour khi proxy server lỗi
 PROXY_DOWN_NOTIFY_INTERVAL=$(( 3600 / PROXY_DOWN_NOTIFY_MAX ))
+
+# IP leak detection
+IP_LEAK_CHECK_INTERVAL=300        # compare real IP vs exit IP every 5 minutes
+IP_LEAK_MAX_RECOVERY=2            # auto-recovery attempts before giving up
 
 # ── Stuck-connecting watchdog ───────────────────────────────────
 STUCK_THRESHOLD_MINUTES=10  # tray=NoInternet >10m = stuck thực sự (không phải fluctuation)
@@ -1840,6 +1844,93 @@ send_notify_proxy_dead() {
     send_telegram "$msg"
 }
 
+send_notify_ip_leak() {
+    local exit_ip="${1:-unknown}"
+    local real_ip="${2:-unknown}"
+    local attempt="${3:-0}"
+    local attempt_label=""
+    [[ "$attempt" -gt 0 ]] && attempt_label=$'\n'"🔄 Auto-recovery attempt: ${attempt}/${IP_LEAK_MAX_RECOVERY}"
+    local msg="🚨🚨🚨 <b>[IP LEAK DETECTED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+🖥️ VPS:    ${HOSTNAME}
+🌐 Exit IP: <code>${exit_ip}</code> ← TRÙNG IP THẬT!
+🔍 Real IP: <code>${real_ip}</code>
+🔌 Proxy:  ${PROXY_HOST}:${PROXY_PORT}
+⛔ ARO đã bị kill để ngăn lộ IP thêm${attempt_label}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')
+
+<i>Fix thủ công: sudo ./aro-manager.sh proxy enable &amp;&amp; sudo ./aro-manager.sh start</i>"
+    send_telegram "$msg" || true
+}
+
+send_notify_ip_leak_recovered() {
+    local exit_ip="${1:-unknown}"
+    local attempt="${2:-1}"
+    local msg="✅ <b>[IP LEAK FIXED] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+🖥️ VPS:    ${HOSTNAME}
+🌐 Exit IP: <code>${exit_ip}</code> ← Đã qua proxy
+🔄 Tự sửa sau attempt ${attempt}/${IP_LEAK_MAX_RECOVERY}
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+    send_telegram "$msg" || true
+}
+
+send_notify_ip_leak_give_up() {
+    local real_ip="${1:-unknown}"
+    local msg="🚨 <b>[IP LEAK - AUTO-FIX THẤT BẠI] ${HOSTNAME} | v${SCRIPT_VERSION}</b>
+──────────────────────
+🖥️ VPS:    ${HOSTNAME}
+🔍 Real IP: <code>${real_ip}</code>
+❌ ${IP_LEAK_MAX_RECOVERY}/${IP_LEAK_MAX_RECOVERY} recovery attempts FAILED
+⛔ ARO sẽ không tự khởi động lại
+🛠️ Cần can thiệp thủ công:
+   sudo ./aro-manager.sh proxy enable
+   sudo ./aro-manager.sh start
+🕐 Time: $(date '+%Y-%m-%d %H:%M:%S')"
+    send_telegram "$msg" || true
+}
+
+# Auto-recovery khi phát hiện IP leak.
+# Chạy proxy enable, chờ 15s, kiểm tra lại.
+# Returns 0 nếu fix thành công, 1 nếu vẫn còn leak hoặc đã give up.
+handle_ip_leak_recovery() {
+    local leak_real; leak_real=$(state_get "ip_leak_real_ip" "unknown")
+    local recovery_count; recovery_count=$(state_get "ip_leak_recovery_count" "0")
+
+    if [[ "$recovery_count" -ge "$IP_LEAK_MAX_RECOVERY" ]]; then
+        watchdog_log "IP LEAK: give-up state (${recovery_count}/${IP_LEAK_MAX_RECOVERY} attempts used), ARO stays killed"
+        return 1
+    fi
+
+    recovery_count=$(( recovery_count + 1 ))
+    state_set "ip_leak_recovery_count" "$recovery_count"
+    watchdog_log "IP LEAK auto-recovery attempt ${recovery_count}/${IP_LEAK_MAX_RECOVERY} — running proxy enable"
+
+    bash "$SCRIPT_DIR/$SCRIPT_NAME" proxy enable > /tmp/aro_leak_recovery.log 2>&1 || true
+    sleep 15
+
+    local _check_result=0
+    check_ip_leak 2>/dev/null || _check_result=$?
+
+    if [[ "$_check_result" -eq 0 ]]; then
+        local fixed_ip; fixed_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 8 "https://ifconfig.me" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+        watchdog_log "IP LEAK fixed after attempt ${recovery_count} — exit IP now: $fixed_ip"
+        state_set "ip_leak_detected" "0"
+        state_set "ip_leak_recovery_count" "0"
+        send_notify_ip_leak_recovered "$fixed_ip" "$recovery_count" || true
+        return 0
+    else
+        watchdog_log "IP LEAK still present after attempt ${recovery_count}"
+        local leak_exit; leak_exit=$(state_get "ip_leak_exit_ip" "unknown")
+        send_notify_ip_leak "$leak_exit" "$leak_real" "$recovery_count" || true
+        if [[ "$recovery_count" -ge "$IP_LEAK_MAX_RECOVERY" ]]; then
+            watchdog_log "IP LEAK: ${IP_LEAK_MAX_RECOVERY} recovery attempts failed — giving up, ARO stays killed"
+            send_notify_ip_leak_give_up "$leak_real" || true
+        fi
+        return 1
+    fi
+}
+
 _execute_dashboard_command() {
     local cmd_id="$1"
     local action="$2"
@@ -2126,6 +2217,10 @@ report_to_dashboard() {
     local base_url="${DASHBOARD_URL%/}"
     local node_id="$HOSTNAME"
 
+    local ip_leak_flag; ip_leak_flag=$(state_get "ip_leak_detected" "0")
+    local ip_leak_bool="false"
+    [[ "$ip_leak_flag" == "1" ]] && ip_leak_bool="true"
+
     local payload
     payload=$(python3 -c "
 import json, sys
@@ -2145,6 +2240,7 @@ d = {
     'account':          sys.argv[13],
     'script_version':   sys.argv[14],
     'bind_status':      sys.argv[15],
+    'ip_leak':          sys.argv[16] == 'true',
 }
 print(json.dumps(d))
 " "$node_id" "$DASHBOARD_API_KEY" \
@@ -2152,7 +2248,7 @@ print(json.dumps(d))
   "${REWARD_TODAY:-0}" "${REWARD_YESTERDAY:-0}" "${UPTIME_RATIO:-0}" \
   "${PUBLIC_IP:-}" "${PROXY_HOST:-}" "${PROXY_PORT:-0}" \
   "${PROXY_USER:-}" "${SERIAL:-}" "${EMAIL:-}" "$SCRIPT_VERSION" \
-  "${BIND_STATUS:-unknown}" 2>/dev/null) || {
+  "${BIND_STATUS:-unknown}" "$ip_leak_bool" 2>/dev/null) || {
         watchdog_log "Dashboard: failed to build payload"
         return 0
     }
@@ -2420,6 +2516,60 @@ check_redsocks_functional() {
         fi
     done
     return 1
+}
+
+# ── IP leak detection ────────────────────────────────────────────
+# Compares exit IP (as ubuntu user, goes through transparent proxy)
+# against real IP (as root, bypasses iptables).
+# Returns: 0 = no leak, 1 = LEAK detected, 2 = inconclusive (no internet)
+check_ip_leak() {
+    local user_exit_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        user_exit_ip=$(sudo -u "$EFFECTIVE_USER" curl -s --max-time 8 "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
+        [[ "$user_exit_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        user_exit_ip=""
+    done
+
+    if [[ -z "$user_exit_ip" ]]; then
+        return 2
+    fi
+
+    local real_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        real_ip=$(curl -s --max-time 8 "https://${endpoint}" 2>/dev/null | tr -d '[:space:]' || true)
+        [[ "$real_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        real_ip=""
+    done
+
+    if [[ -z "$real_ip" ]]; then
+        return 2
+    fi
+
+    if [[ "$user_exit_ip" == "$real_ip" ]]; then
+        watchdog_log "🚨 IP LEAK: ubuntu exits as $user_exit_ip (= real IP $real_ip)"
+        state_set "ip_leak_detected" "1"
+        state_set "ip_leak_since" "$(date +%s)"
+        state_set "ip_leak_exit_ip" "$user_exit_ip"
+        state_set "ip_leak_real_ip" "$real_ip"
+        return 1
+    fi
+
+    state_set "ip_leak_detected" "0"
+    return 0
+}
+
+# Returns 0 = no IPv6 leak, 1 = IPv6 leak detected
+check_ipv6_leak() {
+    local ipv6_result
+    ipv6_result=$(sudo -u "$EFFECTIVE_USER" curl -6 -s --max-time 5 "https://ifconfig.me" 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ -n "$ipv6_result" ]] && [[ "$ipv6_result" == *:* ]]; then
+        watchdog_log "🚨 IPv6 LEAK: $ipv6_result"
+        state_set "ipv6_leak_detected" "1"
+        state_set "ipv6_leak_ip" "$ipv6_result"
+        return 1
+    fi
+    state_set "ipv6_leak_detected" "0"
+    return 0
 }
 
 check_disconnect_alert() {
@@ -2786,9 +2936,11 @@ watchdog_loop() {
 
     local last_daily_hour=-1
     local last_proxy_check_epoch=0   # tracks real proxy check timer
-    # Update restart: skip immediate proxy check until PROXY_CHECK_INTERVAL elapses.
+    local last_ip_leak_check_epoch=0 # tracks IP leak check timer
+    # Update restart: skip immediate checks until intervals elapse.
     if [[ $_is_update_restart -eq 1 ]]; then
         last_proxy_check_epoch=$(date +%s)
+        last_ip_leak_check_epoch=$(date +%s)
     fi
 
     # Schedule first periodic restart (54–120 minutes from now)
@@ -2884,6 +3036,43 @@ watchdog_loop() {
                     continue
                 fi
                 last_proxy_check_epoch=$(date +%s)
+            fi
+        fi
+
+        # ── IP Leak check (every IP_LEAK_CHECK_INTERVAL, proxy mode only) ──
+        if [[ "${USE_PROXY:-1}" -eq 1 ]] && [[ "$(state_get "proxy_dead" "0")" != "1" ]]; then
+            if [[ $(( now - last_ip_leak_check_epoch )) -ge $IP_LEAK_CHECK_INTERVAL ]]; then
+                local _current_leak; _current_leak=$(state_get "ip_leak_detected" "0")
+                if [[ "$_current_leak" == "1" ]]; then
+                    # Already in leak state — continue recovery attempts
+                    if ! handle_ip_leak_recovery 2>/dev/null; then
+                        last_ip_leak_check_epoch=$(date +%s)
+                        report_to_dashboard &
+                        sleep "$CHECK_INTERVAL"
+                        continue
+                    fi
+                    # Recovery succeeded — fall through to normal ARO management
+                else
+                    local _leak_result=0
+                    check_ip_leak 2>/dev/null || _leak_result=$?
+                    if [[ "$_leak_result" -eq 1 ]]; then
+                        local _leak_exit; _leak_exit=$(state_get "ip_leak_exit_ip" "unknown")
+                        local _leak_real; _leak_real=$(state_get "ip_leak_real_ip" "unknown")
+                        watchdog_log "IP LEAK detected — killing ARO, starting auto-recovery"
+                        kill_aro
+                        state_set "ip_leak_recovery_count" "0"
+                        send_notify_ip_leak "$_leak_exit" "$_leak_real" "0" || true
+                        if ! handle_ip_leak_recovery 2>/dev/null; then
+                            last_ip_leak_check_epoch=$(date +%s)
+                            report_to_dashboard &
+                            sleep "$CHECK_INTERVAL"
+                            continue
+                        fi
+                        # Recovery succeeded — fall through
+                    fi
+                    # _leak_result=2 (inconclusive) → do nothing
+                fi
+                last_ip_leak_check_epoch=$(date +%s)
             fi
         fi
 
@@ -4941,6 +5130,16 @@ do_status() {
     else
         echo "  IPv6 Block:  ✗ Inactive"
     fi
+    local _ip_leak_st; _ip_leak_st=$(state_get "ip_leak_detected" "0")
+    if [[ "$_ip_leak_st" == "1" ]]; then
+        local _leak_ip; _leak_ip=$(state_get "ip_leak_exit_ip" "?")
+        local _leak_since; _leak_since=$(state_get "ip_leak_since" "0")
+        local _leak_mins=$(( ($(date +%s) - _leak_since) / 60 ))
+        local _recovery_c; _recovery_c=$(state_get "ip_leak_recovery_count" "0")
+        echo "  IP Leak:     ❌ LEAK DETECTED (${_leak_ip}) since ${_leak_mins}m — recovery ${_recovery_c}/${IP_LEAK_MAX_RECOVERY}"
+    else
+        echo "  IP Leak:     ✓ Not detected"
+    fi
     echo ""
 
     echo "═══════════════════════════════════════════════════════════════"
@@ -4955,56 +5154,96 @@ do_proxy_test() {
         log_error "Proxy not installed"
         exit 1
     fi
-    
+
     load_configs
     detect_desktop_user
-    
-    log_info "Running IP leak test for user: $CRD_USER"
-    echo ""
-    
-    echo "Test 1: Redsocks service check..."
-    if systemctl is-active --quiet redsocks-aro; then
-        echo "  ✓ Redsocks is running"
-    else
-        echo "  ✗ Redsocks is NOT running"
-        exit 1
-    fi
-    echo ""
-    
-    echo "Test 2: Redsocks port check..."
-    if nc -z 127.0.0.1 "$REDSOCKS_PORT" 2>/dev/null; then
-        echo "  ✓ Port $REDSOCKS_PORT is listening"
-    else
-        echo "  ✗ Port $REDSOCKS_PORT is NOT listening"
-        exit 1
-    fi
-    echo ""
-    
-    echo "Test 3: IP address test (as user $CRD_USER)..."
-    echo ""
-    
-    local test_ip
-    test_ip=$(sudo -u "$CRD_USER" timeout 10 curl -s ifconfig.me 2>/dev/null || echo "FAILED")
-    
-    if [[ "$test_ip" == "FAILED" ]]; then
-        echo "  ⚠️  Could not fetch IP (kill-switch may be active)"
-    else
-        echo "  Current IP: $test_ip"
-        echo ""
-        echo "  ⚠️  VERIFY: This should be your PROXY IP, not datacenter IP!"
-    fi
-    echo ""
-    
-    echo "Test 4: DNS resolution..."
-    if sudo -u "$CRD_USER" timeout 5 nslookup google.com >/dev/null 2>&1; then
-        echo "  ✓ DNS resolution works"
-    else
-        echo "  ⚠️  DNS resolution failed"
-    fi
-    echo ""
-    
+
     echo "═══════════════════════════════════════════════════════════════"
-    echo "Test complete. Verify IP matches your proxy location."
+    echo "  IP LEAK TEST — user: $CRD_USER"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo ""
+
+    local _pass=0 _fail=0
+
+    # Test 1: Redsocks service
+    echo -n "Test 1: Redsocks service ... "
+    if systemctl is-active --quiet redsocks-aro; then
+        echo "✅ Running"
+    else
+        echo "❌ NOT running"
+        (( _fail++ )) || true
+    fi
+
+    # Test 2: iptables ARO_PROXY chain
+    echo -n "Test 2: iptables ARO_PROXY chain ... "
+    if iptables -t nat -L ARO_PROXY >/dev/null 2>&1; then
+        local rule_count; rule_count=$(iptables -t nat -L ARO_PROXY 2>/dev/null | grep -c "^" || echo "0")
+        echo "✅ Active ($rule_count rules)"
+    else
+        echo "❌ MISSING — kill-switch not active!"
+        (( _fail++ )) || true
+    fi
+
+    # Test 3: IPv6 block
+    echo -n "Test 3: IPv6 block ... "
+    local ipv6_result; ipv6_result=$(sudo -u "$CRD_USER" curl -6 -s --max-time 5 "https://ifconfig.me" 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ -z "$ipv6_result" ]]; then
+        echo "✅ Blocked (no IPv6 leak)"
+    else
+        echo "❌ IPv6 LEAK: $ipv6_result"
+        (( _fail++ )) || true
+    fi
+
+    # Test 4: Real IP (as root, bypasses iptables)
+    echo -n "Test 4: Real IP (as root) ... "
+    local real_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        real_ip=$(curl -s --max-time 8 "https://$endpoint" 2>/dev/null | tr -d '[:space:]' || true)
+        [[ "$real_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        real_ip=""
+    done
+    if [[ -n "$real_ip" ]]; then
+        echo "$real_ip"
+    else
+        echo "⚠️  Could not determine (no internet as root)"
+    fi
+
+    # Test 5: Exit IP (as ubuntu user, through transparent proxy)
+    echo -n "Test 5: Exit IP (as $CRD_USER via proxy) ... "
+    local exit_ip=""
+    for endpoint in ifconfig.me api.ipify.org icanhazip.com; do
+        exit_ip=$(sudo -u "$CRD_USER" curl -s --max-time 10 "https://$endpoint" 2>/dev/null | tr -d '[:space:]' || true)
+        [[ "$exit_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        exit_ip=""
+    done
+    if [[ -n "$exit_ip" ]]; then
+        echo "$exit_ip"
+    else
+        echo "⚠️  No response (proxy may be blocking — kill-switch active)"
+    fi
+
+    # Test 6: Compare IPs
+    echo ""
+    echo "─────────────────────────────────────────────────────────────"
+    if [[ -z "$real_ip" ]] || [[ -z "$exit_ip" ]]; then
+        echo "  ⚠️  INCONCLUSIVE — could not get both IPs for comparison"
+    elif [[ "$exit_ip" == "$real_ip" ]]; then
+        echo "  ❌ IP LEAK! Exit IP ($exit_ip) = Real IP ($real_ip)"
+        echo "     Traffic is going DIRECT, not through proxy!"
+        (( _fail++ )) || true
+    else
+        echo "  ✅ NO LEAK — Exit IP ($exit_ip) ≠ Real IP ($real_ip)"
+        echo "     Traffic is going through proxy correctly."
+        (( _pass++ )) || true
+    fi
+    echo "─────────────────────────────────────────────────────────────"
+    echo ""
+    if [[ "$_fail" -eq 0 ]]; then
+        log_success "All checks passed — no IP leak detected"
+    else
+        log_error "$_fail check(s) failed"
+        echo "Fix: sudo ./aro-manager.sh proxy enable"
+    fi
     echo "═══════════════════════════════════════════════════════════════"
 }
 
