@@ -94,7 +94,7 @@ export default function AccountStatsPage() {
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-[1880px] mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={() => navigate('/')} className="p-1 text-gray-500 hover:text-gray-800">
             <ArrowLeft size={18} />
           </button>
@@ -112,7 +112,7 @@ export default function AccountStatsPage() {
         </div>
       </header>
 
-      <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-4">
+      <main className="max-w-[1880px] mx-auto px-4 py-5 space-y-4">
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           {[

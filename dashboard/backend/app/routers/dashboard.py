@@ -187,6 +187,26 @@ def list_nodes(
 
     all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0), tags_by_node.get(n.node_id, [])) for n in nodes]
 
+    # Previous account: 2nd most recent record per node in NodeAccountHistory
+    _ah_subq = (
+        db.query(
+            models.NodeAccountHistory.node_id,
+            models.NodeAccountHistory.account,
+            func.row_number().over(
+                partition_by=models.NodeAccountHistory.node_id,
+                order_by=models.NodeAccountHistory.first_seen.desc(),
+            ).label('rn'),
+        ).subquery()
+    )
+    _prev_account_map = {
+        r.node_id: r.account
+        for r in db.query(_ah_subq.c.node_id, _ah_subq.c.account)
+        .filter(_ah_subq.c.rn == 2)
+        .all()
+    }
+    for n in all_out:
+        n.prev_account = _prev_account_map.get(n.node_id)
+
     online = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Online")
     offline = sum(1 for n in all_out if not n.is_stale and n.aro_status == "Offline")
     no_internet = sum(1 for n in all_out if not n.is_stale and n.aro_status == "NoInternet")

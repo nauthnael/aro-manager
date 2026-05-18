@@ -119,6 +119,7 @@ class NodeStatusOut(BaseModel):
     needs_renew: bool = False
     country_code: Optional[str] = None
     tags: List[TagRef] = []
+    prev_account: Optional[str] = None
 
     class Config:
         from_attributes = True

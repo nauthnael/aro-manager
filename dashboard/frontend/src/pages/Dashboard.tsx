@@ -267,7 +267,7 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-[1880px] mx-auto px-4 py-3 flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-800">💲 ARO Dashboard</h1>
             <p className="text-xs text-gray-400">
@@ -328,7 +328,7 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
         </div>
       </header>
 
-      <main className="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
+      <main className="max-w-[1880px] mx-auto px-4 py-5 space-y-5">
         {isLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             {Array.from({ length: 8 }).map((_, i) => (

@@ -35,6 +35,7 @@ export interface NodeStatus {
   needs_renew: boolean
   country_code: string | null
   tags: TagRef[]
+  prev_account?: string | null
 }
 
 export interface NodeListResponse {

@@ -201,6 +201,10 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         header: 'Account',
         cell: info => <span className="text-sm text-gray-600 truncate max-w-[160px] block">{info.getValue() ?? '—'}</span>,
       }),
+      col.accessor('prev_account', {
+        header: 'Account cũ',
+        cell: info => <span className="text-xs text-gray-400 italic truncate max-w-[140px] block">{info.getValue() ?? '—'}</span>,
+      }),
       col.accessor('total_score', {
         header: 'Tổng điểm',
         cell: info => {
