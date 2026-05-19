@@ -341,7 +341,7 @@ export default function NodeDetail() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4">
             <InfoRow label="Serial" value={node.serial} />
             <InfoRow label="Public IP" value={node.public_ip} />
-            <InfoRow label="Proxy" value={node.proxy_host ? `${node.proxy_host}:${node.proxy_port}` : null} />
+            <InfoRow label="Proxy" value={node.proxy_host ? [node.proxy_host, node.proxy_port ?? '', node.proxy_user ?? ''].filter(Boolean).join(':') : null} />
             <InfoRow
               label="Proxy OK"
               value={

@@ -261,9 +261,10 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         id: 'proxy_addr',
         header: 'Proxy Addr',
         cell: info => {
-          const { proxy_host, proxy_port } = info.row.original
+          const { proxy_host, proxy_port, proxy_user } = info.row.original
           if (!proxy_host) return <span className="text-gray-300">—</span>
-          return <CopyableCell value={`${proxy_host}:${proxy_port}`} />
+          const addr = [proxy_host, proxy_port ?? '', proxy_user ?? ''].filter(Boolean).join(':')
+          return <CopyableCell value={addr} />
         },
       }),
       col.accessor('last_seen', {
