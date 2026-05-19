@@ -28,6 +28,27 @@ import StatusBadge from './StatusBadge'
 import api from '../api/client'
 import { copyToClipboard } from '../utils/clipboard'
 
+function ProxyAddrCell({ addr }: { addr: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = () => {
+    copyToClipboard(addr)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <span
+      onClick={e => { e.stopPropagation(); handleCopy() }}
+      className="text-xs font-mono cursor-pointer select-none group flex items-center gap-1"
+      title="Bấm để copy"
+    >
+      {copied
+        ? <span className="text-green-600 font-semibold">✓ Copied</span>
+        : <span className="text-gray-700 group-hover:text-blue-600 transition-colors">{addr}</span>
+      }
+    </span>
+  )
+}
+
 interface UpdateTarget {
   node_id: string
   version: string | null
@@ -252,9 +273,9 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         header: 'Proxy Addr',
         cell: info => {
           const { proxy_host, proxy_port } = info.row.original
-          return proxy_host
-            ? <span className="text-xs font-mono text-gray-700">{proxy_host}:{proxy_port}</span>
-            : <span className="text-gray-300">—</span>
+          if (!proxy_host) return <span className="text-gray-300">—</span>
+          const addr = `${proxy_host}:${proxy_port}`
+          return <ProxyAddrCell addr={addr} />
         },
       }),
       col.accessor('last_seen', {

@@ -358,7 +358,11 @@ def list_nodes(
         .having(func.sum(_avg_sq.c.daily_max) == 0)
         .all()
     )
-    no_points_avg_count = len(_avg_rows)
+    _nodes_with_history = set(
+        row[0] for row in db.query(models.NodeHistory.node_id).distinct().all()
+    )
+    _no_history_count = sum(1 for n in all_out if n.node_id not in _nodes_with_history)
+    no_points_avg_count = len(_avg_rows) + _no_history_count
 
     # --- Filtering (applied to ALL nodes) ---
     filtered = all_out
