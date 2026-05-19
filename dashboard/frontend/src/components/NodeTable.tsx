@@ -308,6 +308,24 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
           )
         },
       }),
+      col.accessor('t1_group', {
+        id: 't1_group',
+        header: 'T1',
+        enableSorting: false,
+        cell: info => {
+          const v = info.getValue()
+          if (!v) return <span className="text-gray-300 text-xs">—</span>
+          const prefix = v.split('@')[0].slice(0, 3)
+          return (
+            <span
+              title={v}
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-indigo-50 text-indigo-600 border border-indigo-200 cursor-help"
+            >
+              {prefix}***
+            </span>
+          )
+        },
+      }),
       col.accessor('tags', {
         id: 'tags',
         header: 'Tags',

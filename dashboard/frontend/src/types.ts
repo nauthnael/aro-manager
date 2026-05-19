@@ -37,6 +37,7 @@ export interface NodeStatus {
   country_code: string | null
   tags: TagRef[]
   prev_account?: string | null
+  t1_group?: string | null
 }
 
 export interface NodeListResponse {
@@ -116,6 +117,17 @@ export interface AccountStats {
   vps_offline: number
   total_points: number
   avg_uptime: number | null
+  tier: number | null
+  parent_account: string | null
+  ref_points_yesterday: number
+  t1_count: number
+  t2_count: number
+}
+
+export interface AccountHierarchyItem {
+  account: string
+  parent_account: string | null
+  tier: number | null
 }
 
 export interface Command {

@@ -122,6 +122,7 @@ class NodeStatusOut(BaseModel):
     country_code: Optional[str] = None
     tags: List[TagRef] = []
     prev_account: Optional[str] = None
+    t1_group: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -244,6 +245,21 @@ class AccountStatsOut(BaseModel):
     vps_offline: int
     total_points: float
     avg_uptime: Optional[float] = None
+    tier: Optional[int] = None
+    parent_account: Optional[str] = None
+    ref_points_yesterday: float = 0.0
+    t1_count: int = 0
+    t2_count: int = 0
+
+
+class AccountHierarchyItem(BaseModel):
+    account: str
+    parent_account: Optional[str] = None
+    tier: Optional[int] = None
+
+
+class AccountHierarchySetIn(BaseModel):
+    assignments: List[AccountHierarchyItem]
 
 
 class SettingsOut(BaseModel):

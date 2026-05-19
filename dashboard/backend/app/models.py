@@ -212,3 +212,11 @@ class NodeDiagnosticLog(Base):
     content = Column(Text, nullable=False)
 
     __table_args__ = (Index("ix_node_diagnostic_log_node_ts", "node_id", "collected_at"),)
+
+
+class AccountHierarchy(Base):
+    __tablename__ = "account_hierarchy"
+
+    account = Column(String(255), primary_key=True)
+    parent_account = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

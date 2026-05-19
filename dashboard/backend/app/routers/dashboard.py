@@ -15,9 +15,38 @@ from app.ip_country import get_node_country
 router = APIRouter()
 
 STALE_SECS = settings.stale_threshold_secs
+MASTER_ACCOUNT = "nauthnael@gmail.com"
 
 
-def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0, tags: Optional[list] = None) -> schemas.NodeStatusOut:
+def _load_hier(db: Session) -> dict:
+    """Return {account: parent_account} map from DB."""
+    return {h.account: h.parent_account for h in db.query(models.AccountHierarchy).all()}
+
+
+def _compute_tier(account: Optional[str], hier: dict) -> Optional[int]:
+    if not account:
+        return None
+    parent = hier.get(account)
+    if parent == MASTER_ACCOUNT:
+        return 1
+    if parent and hier.get(parent) == MASTER_ACCOUNT:
+        return 2
+    return None
+
+
+def _get_t1_group(account: Optional[str], hier: dict) -> Optional[str]:
+    """Return T1 email that this account belongs to, or None."""
+    if not account:
+        return None
+    tier = _compute_tier(account, hier)
+    if tier == 1:
+        return account
+    if tier == 2:
+        return hier.get(account)
+    return None
+
+
+def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0, tags: Optional[list] = None, t1_group: Optional[str] = None) -> schemas.NodeStatusOut:
     if status and status.last_seen:
         is_stale = (now - status.last_seen).total_seconds() > STALE_SECS
     else:
@@ -58,6 +87,7 @@ def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datet
             status.public_ip if status else None,
         ),
         tags=tags or [],
+        t1_group=t1_group,
     )
 
 
@@ -186,7 +216,8 @@ def list_nodes(
             schemas.TagRef(id=tag.id, name=tag.name, color=tag.color)
         )
 
-    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0), tags_by_node.get(n.node_id, [])) for n in nodes]
+    hier = _load_hier(db)
+    all_out = [_node_out(n, statuses.get(n.node_id), now, None, None, renew_counts.get(n.node_id, 0), tags_by_node.get(n.node_id, []), _get_t1_group(n.account, hier)) for n in nodes]
 
     # Previous account: 2nd most recent record per node in NodeAccountHistory
     _ah_subq = (
@@ -471,7 +502,8 @@ def get_node(
     app_settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
 
-    node_out = _node_out(node, status, now, total_score, avg_score, tags=tags)
+    hier = _load_hier(db)
+    node_out = _node_out(node, status, now, total_score, avg_score, tags=tags, t1_group=_get_t1_group(node.account, hier))
     hist_yesterday = daily_maxes.get(now.date() - timedelta(days=1))
     if hist_yesterday:
         node_out.reward_yesterday = hist_yesterday
@@ -804,6 +836,7 @@ def account_stats(
     now = datetime.utcnow()
     nodes = db.query(models.Node).all()
     statuses = {s.node_id: s for s in db.query(models.NodeStatus).all()}
+    hier = _load_hier(db)
 
     buckets: dict = {}
     for node in nodes:
@@ -835,17 +868,98 @@ def account_stats(
         else:
             b["vps_offline"] += 1
 
+    # Build flat result with tier / parent info
     result = []
     for b in buckets.values():
         avg = b["uptime_sum"] / b["uptime_count"] if b["uptime_count"] > 0 else None
+        acct = b["account"]
+        tier = _compute_tier(acct, hier)
+        parent = hier.get(acct) if tier else None
         result.append(schemas.AccountStatsOut(
-            account=b["account"], total=b["total"],
+            account=acct, total=b["total"],
             online=b["online"], offline=b["offline"],
             no_internet=b["no_internet"], unbound=b["unbound"],
             proxy_expired=b["proxy_expired"], vps_offline=b["vps_offline"],
             total_points=round(b["total_points"], 2),
             avg_uptime=round(avg, 1) if avg is not None else None,
+            tier=tier,
+            parent_account=parent,
         ))
+
+    # Compute ref points and counts for master account row
+    pts_by_account = {r.account: r.total_points for r in result}
+    t1_accounts = {a for a, p in hier.items() if p == MASTER_ACCOUNT}
+    t2_accounts = {a for a, p in hier.items() if p in t1_accounts}
+    ref_t1 = round(sum(pts_by_account.get(a, 0) for a in t1_accounts) * 0.15, 2)
+    ref_t2 = round(sum(pts_by_account.get(a, 0) for a in t2_accounts) * 0.02, 2)
+
+    for r in result:
+        if r.account == MASTER_ACCOUNT:
+            r.ref_points_yesterday = ref_t1 + ref_t2
+            r.t1_count = len(t1_accounts)
+            r.t2_count = len(t2_accounts)
 
     result.sort(key=lambda x: x.total_points, reverse=True)
     return result
+
+
+@router.get("/accounts/hierarchy", response_model=List[schemas.AccountHierarchyItem])
+def get_hierarchy(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    hier = _load_hier(db)
+    # Collect all known accounts from nodes + hierarchy table
+    node_accounts = {n.account for n in db.query(models.Node.account).distinct().all() if n.account}
+    hier_accounts = set(hier.keys())
+    all_accounts = node_accounts | hier_accounts | {MASTER_ACCOUNT}
+
+    items = []
+    for acct in sorted(all_accounts):
+        parent = hier.get(acct)
+        tier = _compute_tier(acct, hier)
+        if acct == MASTER_ACCOUNT:
+            tier = 0
+        items.append(schemas.AccountHierarchyItem(account=acct, parent_account=parent, tier=tier))
+    return items
+
+
+@router.put("/accounts/hierarchy", response_model=List[schemas.AccountHierarchyItem])
+def set_hierarchy(
+    body: schemas.AccountHierarchySetIn,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    for item in body.assignments:
+        existing = db.query(models.AccountHierarchy).filter(models.AccountHierarchy.account == item.account).first()
+        if existing:
+            existing.parent_account = item.parent_account
+            existing.updated_at = datetime.utcnow()
+        else:
+            db.add(models.AccountHierarchy(account=item.account, parent_account=item.parent_account))
+    db.commit()
+
+    hier = _load_hier(db)
+    node_accounts = {n.account for n in db.query(models.Node.account).distinct().all() if n.account}
+    hier_accounts = set(hier.keys())
+    all_accounts = node_accounts | hier_accounts | {MASTER_ACCOUNT}
+
+    items = []
+    for acct in sorted(all_accounts):
+        parent = hier.get(acct)
+        tier = _compute_tier(acct, hier)
+        if acct == MASTER_ACCOUNT:
+            tier = 0
+        items.append(schemas.AccountHierarchyItem(account=acct, parent_account=parent, tier=tier))
+    return items
+
+
+@router.delete("/accounts/hierarchy/{account}")
+def delete_hierarchy(
+    account: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    db.query(models.AccountHierarchy).filter(models.AccountHierarchy.account == account).delete()
+    db.commit()
+    return {"ok": True}
