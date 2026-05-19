@@ -247,9 +247,15 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
             : <span className="text-red-600 text-sm">✗ Down</span>
         },
       }),
-      col.accessor('public_ip', {
-        header: 'Exit IP',
-        cell: info => <span className="text-xs font-mono text-gray-500">{info.getValue() || 'N/A'}</span>,
+      col.display({
+        id: 'proxy_addr',
+        header: 'Proxy Addr',
+        cell: info => {
+          const { proxy_host, proxy_port } = info.row.original
+          return proxy_host
+            ? <span className="text-xs font-mono text-gray-700">{proxy_host}:{proxy_port}</span>
+            : <span className="text-gray-300">—</span>
+        },
       }),
       col.accessor('last_seen', {
         header: 'Last Seen',
