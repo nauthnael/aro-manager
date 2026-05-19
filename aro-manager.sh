@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.2"
+SCRIPT_VERSION="3.9.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1531,16 +1531,53 @@ cleanup_aro_tmp() {
     fi
 }
 
+get_dbus_address_for_user() {
+    local user="$1"
+    local uid; uid=$(id -u "$user" 2>/dev/null) || return 1
+    # Prefer systemd user socket (most reliable in modern systemd/LXC)
+    if [[ -S "/run/user/${uid}/bus" ]]; then
+        echo "unix:path=/run/user/${uid}/bus"
+        return
+    fi
+    # Fall back: parse environment of user's running processes
+    for pid in $(pgrep -u "$user" 2>/dev/null | head -30); do
+        local addr
+        addr=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+            | grep '^DBUS_SESSION_BUS_ADDRESS=' | cut -d= -f2- | head -1)
+        if [[ -n "$addr" ]]; then
+            echo "$addr"
+            return
+        fi
+    done
+}
+
 launch_aro() {
     cleanup_aro_tmp
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
     watchdog_log "  Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
+
+    local uid; uid=$(id -u "$EFFECTIVE_USER" 2>/dev/null || echo "")
+    local xdg_runtime="/run/user/${uid}"
+    local dbus_addr; dbus_addr=$(get_dbus_address_for_user "$EFFECTIVE_USER" 2>/dev/null || echo "")
+
+    if [[ -n "$dbus_addr" ]]; then
+        watchdog_log "  DBUS: $dbus_addr"
+    else
+        watchdog_log "  DBUS: not found — tray icon may fail"
+    fi
+
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
         sudo -u "$EFFECTIVE_USER" \
-            env DISPLAY="$DISPLAY_NUM" XAUTHORITY="$XAUTHORITY_PATH" LIBGL_ALWAYS_SOFTWARE="1" \
+            env DISPLAY="$DISPLAY_NUM" \
+                XAUTHORITY="$XAUTHORITY_PATH" \
+                LIBGL_ALWAYS_SOFTWARE="1" \
+                XDG_RUNTIME_DIR="$xdg_runtime" \
+                ${dbus_addr:+DBUS_SESSION_BUS_ADDRESS="$dbus_addr"} \
             "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
     else
-        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 \"${WRAPPER_SCRIPT}\""
+        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 XDG_RUNTIME_DIR=\"${xdg_runtime}\""
+        [[ -n "$dbus_addr" ]] && launch_cmd+=" DBUS_SESSION_BUS_ADDRESS=\"${dbus_addr}\""
+        launch_cmd+=" \"${WRAPPER_SCRIPT}\""
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
