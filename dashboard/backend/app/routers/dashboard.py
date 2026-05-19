@@ -592,6 +592,12 @@ def get_renew_stats(
         result.sort(key=lambda x: x.renewed_at, reverse=(sort_dir == 'desc'))
     elif sort_by == 'node_id':
         result.sort(key=lambda x: x.node_id.lower(), reverse=(sort_dir == 'desc'))
+    elif sort_by == 'account':
+        result.sort(key=lambda x: (x.account or '').lower(), reverse=(sort_dir == 'desc'))
+    elif sort_by == 'renew_count':
+        result.sort(key=lambda x: x.renew_count, reverse=(sort_dir == 'desc'))
+    elif sort_by == 'aro_status':
+        result.sort(key=lambda x: (x.aro_status or '').lower(), reverse=(sort_dir == 'desc'))
 
     total = len(result)
     total_pages = math.ceil(total / page_size) if total > 0 else 1
