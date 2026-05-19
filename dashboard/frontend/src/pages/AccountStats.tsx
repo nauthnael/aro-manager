@@ -92,7 +92,7 @@ function HierarchyEditorModal({
     return null
   }
 
-  const parentOptions = [null, ...allAccounts.filter(a => a)]
+  const parentOptions = [null, ...allAccounts.filter(a => a).sort((a, b) => a.localeCompare(b))]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
