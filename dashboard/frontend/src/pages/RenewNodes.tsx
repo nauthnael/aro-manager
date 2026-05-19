@@ -124,6 +124,8 @@ export default function RenewNodes() {
   const [statsSortBy, setStatsSortBy] = useState('days_0pts')
   const [statsSortDir, setStatsSortDir] = useState<'asc' | 'desc'>('desc')
   const [statsPage, setStatsPage] = useState(1)
+  const [statsPageSize, setStatsPageSize] = useState(20)
+  const [statsSelectedIds, setStatsSelectedIds] = useState<Set<string>>(new Set())
 
   const candidateParams = new URLSearchParams()
   if (minHistoryDays > 0) candidateParams.set('min_history_days', String(minHistoryDays))
@@ -152,10 +154,10 @@ export default function RenewNodes() {
   statsParams.set('sort_by', statsSortBy)
   statsParams.set('sort_dir', statsSortDir)
   statsParams.set('page', String(statsPage))
-  statsParams.set('page_size', '50')
+  statsParams.set('page_size', String(statsPageSize))
 
   const { data: statsData, isLoading: statsLoading, refetch: statsRefetch, isFetching: statsFetching } = useQuery<RenewStatsResponse>({
-    queryKey: ['renew-stats', statsDate, statsSortBy, statsSortDir, statsPage],
+    queryKey: ['renew-stats', statsDate, statsSortBy, statsSortDir, statsPage, statsPageSize],
     queryFn: () => api.get(`/dashboard/renew-stats?${statsParams}`).then(r => r.data),
     enabled: tab === 'stats',
   })
@@ -209,6 +211,33 @@ export default function RenewNodes() {
     },
   })
 
+  const statsBulkCommand = useMutation({
+    mutationFn: ({ action, node_ids }: { action: string; node_ids: string[] }) =>
+      api.post('/dashboard/commands/bulk', { action, node_ids }).then(r => r.data),
+    onSuccess: (result) => {
+      const skippedMsg = result.skipped > 0 ? ` (bỏ qua ${result.skipped})` : ''
+      alert(`Đã gửi lệnh đến ${result.created} node${skippedMsg}.`)
+      setStatsSelectedIds(new Set())
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh bulk.')
+    },
+  })
+
+  const statsBulkRenew = useMutation({
+    mutationFn: (node_ids: string[]) => api.post('/renew/bulk', { node_ids }).then(r => r.data),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['renew-stats'] })
+      qc.invalidateQueries({ queryKey: ['renew-history'] })
+      const skippedMsg = result.skipped > 0 ? ` (bỏ qua ${result.skipped} do cooldown)` : ''
+      alert(`Đã gửi lệnh renew đến ${result.triggered} node${skippedMsg}.`)
+      setStatsSelectedIds(new Set())
+    },
+    onError: (err: any) => {
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh bulk renew.')
+    },
+  })
+
   const statsAction = useMutation({
     mutationFn: ({ node_id, action }: { node_id: string; action: string }) => {
       if (action === 'renew_node') {
@@ -248,6 +277,50 @@ export default function RenewNodes() {
       setStatsSortDir('desc')
     }
     setStatsPage(1)
+  }
+
+  const statsNodes = statsData?.nodes ?? []
+  const statsAllSelected = statsNodes.length > 0 && statsNodes.every(n => statsSelectedIds.has(n.node_id))
+  const statsSomeSelected = statsNodes.some(n => statsSelectedIds.has(n.node_id))
+  const statsSelectedCount = statsSelectedIds.size
+
+  const statsToggleSelect = (id: string) => {
+    setStatsSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const statsToggleSelectAll = () => {
+    if (statsAllSelected) {
+      const next = new Set(statsSelectedIds)
+      statsNodes.forEach(n => next.delete(n.node_id))
+      setStatsSelectedIds(next)
+    } else {
+      const next = new Set(statsSelectedIds)
+      statsNodes.forEach(n => next.add(n.node_id))
+      setStatsSelectedIds(next)
+    }
+  }
+
+  const handleStatsBulkAction = (action: string) => {
+    const ids = [...statsSelectedIds]
+    if (ids.length === 0) return
+    const labels: Record<string, string> = {
+      restart_aro: 'Restart ARO',
+      restart_watchdog: 'Restart Watchdog',
+      renew_node: 'Bulk Renew',
+      update_script: 'Update Script',
+      reboot_vps: 'Reboot VPS',
+    }
+    if (!confirm(`${labels[action] ?? action} ${ids.length} node đã chọn?`)) return
+    if (action === 'renew_node') {
+      statsBulkRenew.mutate(ids)
+    } else {
+      statsBulkCommand.mutate({ action, node_ids: ids })
+    }
   }
 
   const handleBulkUpdate = () => {
@@ -753,31 +826,109 @@ export default function RenewNodes() {
         {/* Stats Tab */}
         {tab === 'stats' && (
           <div className="space-y-3">
-            {/* Filters */}
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 whitespace-nowrap">Ngày renew:</span>
-                <input
-                  type="date"
-                  value={statsDate}
-                  onChange={e => { setStatsDate(e.target.value); setStatsPage(1) }}
-                  className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
-                />
-                {statsDate && (
-                  <button
-                    onClick={() => { setStatsDate(''); setStatsPage(1) }}
-                    className="text-xs text-gray-400 hover:text-gray-600"
-                  >
-                    Xóa
-                  </button>
+            {/* Filters + Pagination row */}
+            <div className="flex items-center gap-3 flex-wrap justify-between">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 whitespace-nowrap">Ngày renew:</span>
+                  <input
+                    type="date"
+                    value={statsDate}
+                    onChange={e => { setStatsDate(e.target.value); setStatsPage(1) }}
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+                  />
+                  {statsDate && (
+                    <button
+                      onClick={() => { setStatsDate(''); setStatsPage(1) }}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Xóa
+                    </button>
+                  )}
+                </div>
+                {statsData && (
+                  <span className="text-xs text-gray-500">
+                    {statsDate ? `${statsData.total} node renew ngày ${statsDate} chưa có điểm` : `${statsData.total} node renew chưa có điểm`}
+                  </span>
                 )}
               </div>
-              {statsData && (
-                <span className="text-xs text-gray-500">
-                  {statsDate ? `${statsData.total} node renew ngày ${statsDate} chưa có điểm` : `${statsData.total} node renew chưa có điểm`}
-                </span>
+
+              {/* Pagination controls */}
+              {statsData && statsData.total > 0 && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span>Hiển thị:</span>
+                  <select
+                    value={statsPageSize}
+                    onChange={e => { setStatsPageSize(Number(e.target.value)); setStatsPage(1) }}
+                    className="border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-violet-300"
+                  >
+                    {[10, 20, 50, 100, 200].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <span className="text-gray-400">/trang</span>
+                  <div className="flex items-center gap-1 ml-1">
+                    <button
+                      onClick={() => setStatsPage(p => Math.max(1, p - 1))}
+                      disabled={statsPage === 1}
+                      className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40 font-medium"
+                    >
+                      ‹
+                    </button>
+                    <span className="px-1">{statsPage}/{statsData.total_pages}</span>
+                    <button
+                      onClick={() => setStatsPage(p => Math.min(statsData.total_pages, p + 1))}
+                      disabled={statsPage === statsData.total_pages}
+                      className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40 font-medium"
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
+
+            {/* Bulk action bar */}
+            {statsSelectedCount > 0 && (
+              <div className="flex items-center gap-2 flex-wrap bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+                <span className="text-xs text-violet-700 font-medium">Đã chọn {statsSelectedCount} node</span>
+                <button onClick={() => setStatsSelectedIds(new Set())} className="text-xs text-violet-400 hover:text-violet-600 hover:underline">
+                  Bỏ chọn
+                </button>
+                <div className="h-4 w-px bg-violet-200" />
+                <button
+                  onClick={() => handleStatsBulkAction('renew_node')}
+                  disabled={statsBulkRenew.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-xs rounded-lg font-medium transition-colors"
+                >
+                  <RotateCcw size={12} />
+                  Bulk Renew
+                </button>
+                <button
+                  onClick={() => handleStatsBulkAction('update_script')}
+                  disabled={statsBulkCommand.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs rounded-lg font-medium transition-colors"
+                >
+                  <Download size={12} />
+                  Update Script
+                </button>
+                <button
+                  onClick={() => handleStatsBulkAction('restart_aro')}
+                  disabled={statsBulkCommand.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-xs rounded-lg font-medium transition-colors"
+                >
+                  <RefreshCw size={12} />
+                  Restart ARO
+                </button>
+                <button
+                  onClick={() => handleStatsBulkAction('reboot_vps')}
+                  disabled={statsBulkCommand.isPending}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white text-xs rounded-lg font-medium transition-colors"
+                >
+                  Reboot VPS
+                </button>
+              </div>
+            )}
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               {statsLoading ? (
@@ -790,41 +941,86 @@ export default function RenewNodes() {
                   </p>
                 </div>
               ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 border-b border-gray-100">
-                        <tr>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Hostname</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Account</th>
-                          <th
-                            className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
-                            onClick={() => handleStatsSort('renewed_at')}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-100">
+                      <tr>
+                        <th className="w-8 px-3 py-2.5">
+                          <input
+                            type="checkbox"
+                            checked={statsAllSelected}
+                            ref={el => { if (el) el.indeterminate = statsSomeSelected && !statsAllSelected }}
+                            onChange={statsToggleSelectAll}
+                            className="rounded border-gray-300 accent-violet-600 cursor-pointer"
+                          />
+                        </th>
+                        <th className="text-right px-2 py-2.5 font-semibold text-gray-400 w-8 text-xs">#</th>
+                        <th
+                          className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none"
+                          onClick={() => handleStatsSort('node_id')}
+                        >
+                          Hostname <SortIcon col="node_id" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th
+                          className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none"
+                          onClick={() => handleStatsSort('account')}
+                        >
+                          Account <SortIcon col="account" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th
+                          className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
+                          onClick={() => handleStatsSort('renewed_at')}
+                        >
+                          Ngày renew <SortIcon col="renewed_at" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th
+                          className="text-right px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
+                          onClick={() => handleStatsSort('days_0pts')}
+                        >
+                          Số ngày 0 điểm <SortIcon col="days_0pts" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th
+                          className="text-center px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
+                          onClick={() => handleStatsSort('renew_count')}
+                        >
+                          Số lần renew <SortIcon col="renew_count" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th
+                          className="text-left px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none"
+                          onClick={() => handleStatsSort('aro_status')}
+                        >
+                          Trạng thái <SortIcon col="aro_status" sortBy={statsSortBy} sortDir={statsSortDir} />
+                        </th>
+                        <th className="text-left px-3 py-2.5 font-semibold text-gray-600 whitespace-nowrap">Last seen</th>
+                        <th className="px-3 py-2.5"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {statsData.nodes.map((node, idx) => {
+                        const isSelected = statsSelectedIds.has(node.node_id)
+                        const rowNum = (statsPage - 1) * statsPageSize + idx + 1
+                        return (
+                          <tr
+                            key={node.node_id}
+                            className={`hover:bg-gray-50 transition-colors ${node.is_stale ? 'opacity-60' : ''} ${isSelected ? 'bg-violet-50' : ''}`}
                           >
-                            Ngày renew <SortIcon col="renewed_at" sortBy={statsSortBy} sortDir={statsSortDir} />
-                          </th>
-                          <th
-                            className="text-right px-3 py-2.5 font-semibold text-gray-600 cursor-pointer hover:text-gray-800 select-none whitespace-nowrap"
-                            onClick={() => handleStatsSort('days_0pts')}
-                          >
-                            Số ngày 0 điểm <SortIcon col="days_0pts" sortBy={statsSortBy} sortDir={statsSortDir} />
-                          </th>
-                          <th className="text-center px-3 py-2.5 font-semibold text-gray-600 whitespace-nowrap">Số lần renew</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Trạng thái</th>
-                          <th className="text-left px-3 py-2.5 font-semibold text-gray-600">Last seen</th>
-                          <th className="px-3 py-2.5"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {statsData.nodes.map(node => (
-                          <tr key={node.node_id} className={`hover:bg-gray-50 transition-colors ${node.is_stale ? 'opacity-60' : ''}`}>
                             <td className="px-3 py-2.5">
-                              <button
-                                onClick={() => navigate(`/nodes/${encodeURIComponent(node.node_id)}`)}
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => statsToggleSelect(node.node_id)}
+                                className="rounded border-gray-300 accent-violet-600 cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-2 py-2.5 text-right text-xs text-gray-400">{rowNum}</td>
+                            <td className="px-3 py-2.5">
+                              <a
+                                href={`/nodes/${encodeURIComponent(node.node_id)}`}
+                                onClick={e => { e.preventDefault(); navigate(`/nodes/${encodeURIComponent(node.node_id)}`) }}
                                 className="font-mono text-xs text-blue-600 hover:underline"
                               >
                                 {node.node_id}
-                              </button>
+                              </a>
                               {node.is_stale && <span className="ml-1 text-xs text-gray-400">(stale)</span>}
                             </td>
                             <td className="px-3 py-2.5 text-gray-600 text-xs">{node.account ?? '—'}</td>
@@ -857,34 +1053,11 @@ export default function RenewNodes() {
                               <ActionMenu node={node} onAction={handleStatsAction} />
                             </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {statsData.total_pages > 1 && (
-                    <div className="flex items-center justify-between px-3 py-2.5 border-t border-gray-100 text-xs text-gray-500">
-                      <span>Tổng: {statsData.total} node</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setStatsPage(p => Math.max(1, p - 1))}
-                          disabled={statsPage === 1}
-                          className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
-                        >
-                          ‹
-                        </button>
-                        <span>{statsPage}/{statsData.total_pages}</span>
-                        <button
-                          onClick={() => setStatsPage(p => Math.min(statsData.total_pages, p + 1))}
-                          disabled={statsPage === statsData.total_pages}
-                          className="px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
-                        >
-                          ›
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>
