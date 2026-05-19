@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.4"
+SCRIPT_VERSION="3.9.5"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1535,31 +1535,12 @@ launch_aro() {
     cleanup_aro_tmp
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
     watchdog_log "  Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
-
-    local uid; uid=$(id -u "$EFFECTIVE_USER" 2>/dev/null || echo "")
-    local xdg_runtime="/run/user/${uid}"
-
-    # dbus-run-session starts an isolated D-Bus session for ARO and auto-cleans
-    # up the daemon when ARO exits. This avoids conflicts with the XFCE session
-    # bus and works reliably on fresh VNC sessions.
-    local dbus_launcher=""
-    if command -v dbus-run-session >/dev/null 2>&1; then
-        dbus_launcher="dbus-run-session --"
-        watchdog_log "  DBUS: using dbus-run-session (isolated session)"
-    else
-        watchdog_log "  DBUS: dbus-run-session not found, launching without"
-    fi
-
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
         sudo -u "$EFFECTIVE_USER" \
-            env DISPLAY="$DISPLAY_NUM" \
-                XAUTHORITY="$XAUTHORITY_PATH" \
-                LIBGL_ALWAYS_SOFTWARE="1" \
-                XDG_RUNTIME_DIR="$xdg_runtime" \
-            $dbus_launcher "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
+            env DISPLAY="$DISPLAY_NUM" XAUTHORITY="$XAUTHORITY_PATH" LIBGL_ALWAYS_SOFTWARE="1" \
+            "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
     else
-        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 XDG_RUNTIME_DIR=\"${xdg_runtime}\""
-        launch_cmd+=" ${dbus_launcher} \"${WRAPPER_SCRIPT}\""
+        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 \"${WRAPPER_SCRIPT}\""
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
