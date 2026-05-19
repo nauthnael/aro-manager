@@ -28,22 +28,22 @@ import StatusBadge from './StatusBadge'
 import api from '../api/client'
 import { copyToClipboard } from '../utils/clipboard'
 
-function ProxyAddrCell({ addr }: { addr: string }) {
+function CopyableCell({ value, className = 'text-xs font-mono text-gray-700' }: { value: string; className?: string }) {
   const [copied, setCopied] = useState(false)
   const handleCopy = () => {
-    copyToClipboard(addr)
+    copyToClipboard(value)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
   return (
     <span
       onClick={e => { e.stopPropagation(); handleCopy() }}
-      className="text-xs font-mono cursor-pointer select-none group flex items-center gap-1"
+      className="cursor-pointer select-none group flex items-center gap-1"
       title="Bấm để copy"
     >
       {copied
-        ? <span className="text-green-600 font-semibold">✓ Copied</span>
-        : <span className="text-gray-700 group-hover:text-blue-600 transition-colors">{addr}</span>
+        ? <span className="text-green-600 font-semibold text-xs">✓ Copied</span>
+        : <span className={`${className} group-hover:text-blue-600 transition-colors`}>{value}</span>
       }
     </span>
   )
@@ -198,18 +198,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         cell: info => {
           const v = info.getValue()
           if (!v) return <span className="text-sm text-gray-400">—</span>
-          return (
-            <span className="flex items-center gap-1 group/serial">
-              <span className="font-mono text-sm text-gray-700">{v}</span>
-              <button
-                onClick={e => { e.stopPropagation(); copyToClipboard(v) }}
-                title="Copy serial"
-                className="opacity-0 group-hover/serial:opacity-100 transition-opacity text-gray-400 hover:text-blue-500 shrink-0"
-              >
-                <Copy size={12} />
-              </button>
-            </span>
-          )
+          return <CopyableCell value={v} className="font-mono text-sm text-gray-700" />
         },
       }),
       col.accessor(row => ({ s: row.aro_status, stale: row.is_stale }), {
@@ -274,8 +263,7 @@ export default function NodeTable({ nodes, selectedIds, onSelectionChange, sorti
         cell: info => {
           const { proxy_host, proxy_port } = info.row.original
           if (!proxy_host) return <span className="text-gray-300">—</span>
-          const addr = `${proxy_host}:${proxy_port}`
-          return <ProxyAddrCell addr={addr} />
+          return <CopyableCell value={`${proxy_host}:${proxy_port}`} />
         },
       }),
       col.accessor('last_seen', {
