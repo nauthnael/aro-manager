@@ -35,15 +35,10 @@ def _compute_tier(account: Optional[str], hier: dict) -> Optional[int]:
 
 
 def _get_t1_group(account: Optional[str], hier: dict) -> Optional[str]:
-    """Return T1 email that this account belongs to, or None."""
+    """Return the parent (referrer) of this account in hierarchy, or None."""
     if not account:
         return None
-    tier = _compute_tier(account, hier)
-    if tier == 1:
-        return account
-    if tier == 2:
-        return hier.get(account)
-    return None
+    return hier.get(account) or None
 
 
 def _node_out(node: models.Node, status: Optional[models.NodeStatus], now: datetime, total_score: Optional[float] = None, avg_score: Optional[float] = None, renew_count: int = 0, tags: Optional[list] = None, t1_group: Optional[str] = None) -> schemas.NodeStatusOut:
