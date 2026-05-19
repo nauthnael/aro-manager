@@ -404,7 +404,7 @@ def list_nodes(
             n.avg_score = pair[1]
         scores_computed = True
         if no_points_avg:
-            filtered = [n for n in filtered if n.avg_score is not None and n.avg_score == 0]
+            filtered = [n for n in filtered if n.avg_score is None or n.avg_score == 0]
 
     # --- Sorting (applied to ALL filtered nodes before pagination) ---
     if sort_by:
