@@ -14,7 +14,7 @@ from app.database import get_db
 router = APIRouter()
 
 COOLDOWN_HOURS = 4
-MAX_CONCURRENT_RENEWS = 5
+MAX_CONCURRENT_RENEWS = 20
 
 
 def _get_renew_count(db: Session, node_id: str) -> int:
