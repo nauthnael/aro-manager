@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     history_retention_days: int = 30
     stale_threshold_secs: int = 180  # node chưa báo cáo trong 3 phút = stale
     telegram_bot_token: str = ""
+    max_concurrent_renews: int = 20
 
     class Config:
         env_file = ".env"

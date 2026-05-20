@@ -14,7 +14,6 @@ from app.database import get_db
 router = APIRouter()
 
 COOLDOWN_HOURS = 4
-MAX_CONCURRENT_RENEWS = 20
 
 
 def _get_renew_count(db: Session, node_id: str) -> int:
@@ -157,10 +156,10 @@ def trigger_renew(
         )
 
     pending = _pending_renew_count(db)
-    if pending >= MAX_CONCURRENT_RENEWS:
+    if pending >= settings.max_concurrent_renews:
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit: đang có {pending} renew đang chờ. Tối đa {MAX_CONCURRENT_RENEWS} node cùng lúc.",
+            detail=f"Rate limit: đang có {pending} renew đang chờ. Tối đa {settings.max_concurrent_renews} node cùng lúc.",
         )
 
     # Cancel duplicate pending renew commands
@@ -218,7 +217,7 @@ def bulk_renew(
 
     # Track how many slots are available (global rate limit)
     current_pending = _pending_renew_count(db)
-    slots_available = MAX_CONCURRENT_RENEWS - current_pending
+    slots_available = settings.max_concurrent_renews - current_pending
 
     for node_id in body.node_ids:
         node = existing_nodes.get(node_id)
@@ -229,7 +228,7 @@ def bulk_renew(
 
         if slots_available <= 0:
             skipped += 1
-            details.append({"node_id": node_id, "ok": False, "reason": f"Rate limit: tối đa {MAX_CONCURRENT_RENEWS} node cùng lúc"})
+            details.append({"node_id": node_id, "ok": False, "reason": f"Rate limit: tối đa {settings.max_concurrent_renews} node cùng lúc"})
             continue
 
         last_renew = _get_last_renew(db, node_id)
