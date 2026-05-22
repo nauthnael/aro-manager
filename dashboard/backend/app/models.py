@@ -23,6 +23,7 @@ class AppSettings(Base):
     backup_enabled = Column(Boolean, default=False)
     backup_interval_hours = Column(Integer, default=24)
     backup_retention_count = Column(Integer, default=7)
+    duplicate_ip_alert_minutes = Column(Integer, default=60)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
