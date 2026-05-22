@@ -760,6 +760,100 @@ def set_node_proxy(
     return {"ok": True, "command_id": cmd.id}
 
 
+@router.post("/dashboard/nodes/bulk-set-proxy")
+def bulk_set_node_proxy(
+    body: schemas.BulkSetProxyRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Bulk queue set_proxy commands. Validates format, internal batch duplicates, and DB uniqueness."""
+    import base64
+
+    if not body.assignments:
+        raise HTTPException(status_code=400, detail="Danh sách assignments trống")
+
+    # Step 1: Validate all proxy formats
+    fmt_errors = []
+    parsed = []
+    for a in body.assignments:
+        parts = a.proxy.strip().split(":")
+        if len(parts) != 4:
+            fmt_errors.append(f"Node {a.node_id}: sai định dạng (cần host:port:user:pass)")
+            continue
+        try:
+            port = int(parts[1])
+        except ValueError:
+            fmt_errors.append(f"Node {a.node_id}: port không phải số nguyên")
+            continue
+        parsed.append({
+            "node_id": a.node_id,
+            "proxy": a.proxy.strip(),
+            "host": parts[0],
+            "port": port,
+            "user": parts[2],
+        })
+
+    if fmt_errors:
+        raise HTTPException(status_code=400, detail="\n".join(fmt_errors))
+
+    # Step 2: Check duplicates within batch (same host:port:user)
+    batch_node_ids = {p["node_id"] for p in parsed}
+    seen_keys: dict = {}
+    dup_errors = []
+    for p in parsed:
+        key = f"{p['host']}:{p['port']}:{p['user']}"
+        if key in seen_keys:
+            dup_errors.append(f"Proxy {key} bị trùng giữa node {seen_keys[key]} và {p['node_id']}")
+        else:
+            seen_keys[key] = p["node_id"]
+
+    if dup_errors:
+        raise HTTPException(status_code=409, detail="\n".join(dup_errors))
+
+    # Step 3: Check DB uniqueness (exclude nodes in this batch)
+    conflict_errors = []
+    for p in parsed:
+        conflict = (
+            db.query(models.Node)
+            .filter(
+                models.Node.node_id.notin_(batch_node_ids),
+                models.Node.proxy_host == p["host"],
+                models.Node.proxy_port == p["port"],
+                models.Node.proxy_user == p["user"],
+            )
+            .first()
+        )
+        if conflict:
+            conflict_errors.append(
+                f"Proxy {p['host']}:{p['port']}:{p['user']} đang dùng bởi node {conflict.node_id}"
+            )
+
+    if conflict_errors:
+        raise HTTPException(status_code=409, detail="\n".join(conflict_errors))
+
+    # Step 4: Cancel existing pending set_proxy and create new commands
+    created = 0
+    for p in parsed:
+        db.query(models.Command).filter(
+            models.Command.node_id == p["node_id"],
+            models.Command.action == "set_proxy",
+            models.Command.status == "pending",
+        ).delete()
+
+        payload_b64 = base64.b64encode(p["proxy"].encode()).decode()
+        cmd = models.Command(
+            node_id=p["node_id"],
+            action="set_proxy",
+            payload=payload_b64,
+            created_by=current_user.username,
+        )
+        db.add(cmd)
+        created += 1
+
+    db.commit()
+    return {"ok": True, "created": created}
+
+
 @router.put("/dashboard/nodes/{node_id}/settings")
 def update_node_settings(
     node_id: str,

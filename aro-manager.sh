@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.5"
+SCRIPT_VERSION="3.9.6"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2258,6 +2258,71 @@ print(json.dumps({'result': d, 'success': True}))
                         watchdog_log "Dashboard: proxy changed — watchdog sẽ khởi động lại ARO"
                         result="Proxy changed to ${PROXY_HOST}:${PROXY_PORT} on ${HOSTNAME} — ARO will restart"
                     fi
+                fi
+            fi
+            ;;
+        combo_purge_proxy_renew)
+            if [[ -z "$payload_b64" ]]; then
+                result="ERROR: payload trống"
+                success="false"
+            else
+                local new_proxy
+                new_proxy=$(echo "$payload_b64" | base64 -d 2>/dev/null)
+                if [[ -z "$new_proxy" ]]; then
+                    result="ERROR: base64 decode thất bại"
+                    success="false"
+                else
+                    watchdog_log "Dashboard: combo_purge_proxy_renew — proxy=${new_proxy%%:*}:... — sending early ack"
+                    # Gửi complete ngay vì lệnh này chạy lâu (~3-5 phút)
+                    curl -sf --max-time 5 \
+                        -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                        -H "Content-Type: application/json" \
+                        -d '{"result":"Combo Renew đang thực thi: purge → đổi proxy → cài lại ARO...","success":true}' > /dev/null 2>&1 || true
+
+                    # Bước 1: Kill ARO + Purge aro-desktop
+                    kill_aro
+                    watchdog_log "Combo Renew: purging aro-desktop..."
+                    DEBIAN_FRONTEND=noninteractive apt-get purge -y aro-desktop 2>/dev/null || true
+                    apt-get autoremove -y 2>/dev/null || true
+
+                    # Bước 2: Đổi proxy (giống handler set_proxy)
+                    IFS=':' read -r PROXY_HOST PROXY_PORT PROXY_USER PROXY_PASS <<< "$new_proxy"
+                    if [[ -n "$PROXY_HOST" ]] && [[ -n "$PROXY_PORT" ]]; then
+                        watchdog_log "Combo Renew: updating proxy to ${PROXY_HOST}:${PROXY_PORT}..."
+                        save_proxy_config
+                        create_redsocks_config
+                        systemctl restart redsocks-aro 2>/dev/null || true
+                        # Chờ redsocks khởi động xong trước khi cài ARO
+                        local rs_waited=0
+                        while [[ $rs_waited -lt ${PROXY_RESTART_TIMEOUT_SECS:-60} ]]; do
+                            if systemctl is-active --quiet redsocks-aro 2>/dev/null; then
+                                watchdog_log "Combo Renew: redsocks ready (${rs_waited}s)"
+                                break
+                            fi
+                            sleep 2
+                            rs_waited=$(( rs_waited + 2 ))
+                        done
+                    else
+                        watchdog_log "Combo Renew: WARNING — không parse được proxy, bỏ qua bước đổi proxy"
+                    fi
+
+                    # Bước 3: Tải + cài lại ARO (giống handler renew_node)
+                    local deb_path="/tmp/ARO_Desktop_latest_debian.deb"
+                    rm -f "$deb_path"
+                    watchdog_log "Combo Renew: downloading ARO package..."
+                    if wget -q --timeout=120 -O "$deb_path" \
+                        "https://download.aro.network/files/packages/linux/ARO_Desktop_latest_debian.deb"; then
+                        watchdog_log "Combo Renew: installing ARO package..."
+                        if DEBIAN_FRONTEND=noninteractive apt-get install -y "$deb_path" 2>/dev/null; then
+                            watchdog_log "Combo Renew: hoàn thành — watchdog sẽ khởi động lại ARO trong chu kỳ tiếp theo"
+                        else
+                            watchdog_log "Combo Renew: ERROR — apt install thất bại"
+                        fi
+                    else
+                        watchdog_log "Combo Renew: ERROR — không tải được package từ ARO network"
+                    fi
+                    rm -f "$deb_path"
+                    return  # Đã gửi complete phía trên, không gửi lại
                 fi
             fi
             ;;

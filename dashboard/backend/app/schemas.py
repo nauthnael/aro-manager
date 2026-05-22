@@ -94,6 +94,19 @@ class BulkTagRequest(BaseModel):
     remove_tag_ids: List[int] = []
 
 
+class BulkSetProxyAssignment(BaseModel):
+    node_id: str
+    proxy: str
+
+
+class BulkSetProxyRequest(BaseModel):
+    assignments: List[BulkSetProxyAssignment]
+
+
+class BulkComboRenewRequest(BaseModel):
+    assignments: List[BulkSetProxyAssignment]
+
+
 # --- Dashboard ---
 
 class NodeStatusOut(BaseModel):
