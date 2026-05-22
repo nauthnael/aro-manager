@@ -7,6 +7,7 @@ interface Props {
   onClose: () => void
   onSubmit: (assignments: { node_id: string; proxy: string }[]) => void
   isPending: boolean
+  variant?: 'proxy' | 'combo'
 }
 
 function isValidProxyFormat(line: string): boolean {
@@ -21,7 +22,19 @@ function proxyKey(line: string): string {
   return parts.length >= 3 ? `${parts[0]}:${parts[1]}:${parts[2]}` : line
 }
 
-export default function BulkProxyModal({ nodes, onClose, onSubmit, isPending }: Props) {
+export default function BulkProxyModal({ nodes, onClose, onSubmit, isPending, variant = 'proxy' }: Props) {
+  const isCombo = variant === 'combo'
+  const title = isCombo
+    ? `Combo: Purge → Đổi Proxy → Cài lại (${nodes.length} node)`
+    : `Đổi Proxy cho ${nodes.length} node đã chọn`
+  const submitLabel = isCombo
+    ? `Xác nhận Combo Renew (${nodes.length} node)`
+    : `Xác nhận đổi proxy (${nodes.length} node)`
+  const btnClass = isCombo
+    ? 'bg-amber-600 hover:bg-amber-700'
+    : 'bg-violet-600 hover:bg-violet-700'
+  const ringClass = isCombo ? 'focus:ring-amber-400' : 'focus:ring-violet-400'
+
   const [text, setText] = useState('')
 
   const lines = useMemo(
@@ -64,13 +77,22 @@ export default function BulkProxyModal({ nodes, onClose, onSubmit, isPending }: 
 
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">
-            Đổi Proxy cho {nodes.length} node đã chọn
-          </h3>
+          <h3 className="text-base font-semibold text-gray-800">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X size={18} />
           </button>
         </div>
+
+        {/* Combo warning banner */}
+        {isCombo && (
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+            <span className="mt-0.5 shrink-0">⚠️</span>
+            <span>
+              Node sẽ <strong>offline ~2–5 phút</strong> trong quá trình purge + cài lại ARO.
+              Đây là thao tác <strong>không thể hoàn tác</strong> — serial cũ và lịch sử ARO sẽ bị xóa.
+            </span>
+          </div>
+        )}
 
         {/* Textarea */}
         <div>
@@ -88,7 +110,7 @@ export default function BulkProxyModal({ nodes, onClose, onSubmit, isPending }: 
             placeholder={'host:port:user:pass\nhost:port:user:pass\n...'}
             rows={8}
             spellCheck={false}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-400 resize-y"
+            className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 resize-y ${ringClass}`}
           />
           <p className="text-xs text-gray-400 mt-1">
             Định dạng: <code className="bg-gray-100 px-1 rounded">host:port:user:pass</code> · Mỗi dòng tương ứng với 1 node theo thứ tự bên dưới
@@ -163,9 +185,9 @@ export default function BulkProxyModal({ nodes, onClose, onSubmit, isPending }: 
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || isPending}
-            className="px-4 py-2 text-sm text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className={`px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${btnClass}`}
           >
-            {isPending ? 'Đang gửi...' : `Xác nhận đổi proxy (${nodes.length} node)`}
+            {isPending ? 'Đang gửi...' : submitLabel}
           </button>
         </div>
 
