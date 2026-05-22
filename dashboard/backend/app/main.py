@@ -392,10 +392,50 @@ def scheduled_backup_task():
 
 _last_dup_ip_alert: Optional[datetime] = None
 
+_TG_MAX_LEN = 4000  # leave headroom below Telegram's 4096 hard limit
+
+
+def _split_tg_chunks(header: str, ip_lines: list[str], footer: str) -> list[str]:
+    """Split a long duplicate-IP alert into ≤_TG_MAX_LEN chunks.
+
+    Each chunk except the first starts with a continuation header so readers
+    know it belongs to the same alert.  The footer is appended to the last chunk.
+    """
+    chunks: list[str] = []
+    total = len(ip_lines)
+
+    current_lines: list[str] = []
+    current_header = header
+    current_len = len(current_header) + 1  # +1 for leading \n
+
+    for i, line in enumerate(ip_lines):
+        line_len = len(line) + 1  # +1 for \n separator
+        # Check if adding this line (plus footer on last chunk) would overflow
+        is_last_line = i == total - 1
+        tail = ("\n" + footer) if is_last_line else ""
+        if current_len + line_len + len(tail) > _TG_MAX_LEN and current_lines:
+            # flush current chunk
+            chunk_num = len(chunks) + 1
+            suffix = f"\n\n📄 Tiếp theo… (phần {chunk_num + 1})"
+            chunks.append(current_header + "\n" + "\n".join(current_lines) + suffix)
+            # start new chunk
+            current_header = f"⚠️ <b>TRÙNG EXIT IP</b> (tiếp phần {chunk_num + 1})"
+            current_lines = [line]
+            current_len = len(current_header) + 1 + line_len
+        else:
+            current_lines.append(line)
+            current_len += line_len
+
+    if current_lines:
+        chunks.append(current_header + "\n" + "\n".join(current_lines) + "\n" + footer)
+
+    return chunks or [current_header + "\n" + footer]
+
 
 def check_duplicate_exit_ips():
     """Runs every 1 min — detect nodes sharing the same exit IP and alert via Telegram.
-    Only sends an alert when duplicate_ip_alert_minutes have elapsed since the last alert."""
+    Only sends an alert when duplicate_ip_alert_minutes have elapsed since the last alert.
+    Long alerts are automatically split into multiple messages."""
     global _last_dup_ip_alert
     from collections import defaultdict
     _SENTINEL = {"n/a", "na", "unknown", "0.0.0.0", "none", ""}
@@ -433,20 +473,34 @@ def check_duplicate_exit_ips():
             return f"{n.proxy_host or ''}:{n.proxy_port or ''}:{n.proxy_user or ''}"
 
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        lines = [f"⚠️ <b>TRÙNG EXIT IP</b> – {now}\n"]
+        routing_count = 0
+        proxy_count = 0
+        ip_lines: list[str] = []
         for ip, node_ids in sorted(duplicates.items()):
             proxy_keys = {proxy_key(nid) for nid in node_ids}
             dup_type = "proxy_shared" if len(proxy_keys) == 1 else "routing_conflict"
+            if dup_type == "routing_conflict":
+                routing_count += 1
+            else:
+                proxy_count += 1
             icon = "🟡" if dup_type == "proxy_shared" else "🔴"
             label = "Proxy share" if dup_type == "proxy_shared" else "Routing conflict"
             nodes_str = ", ".join(f"<code>{n}</code>" for n in sorted(node_ids))
-            lines.append(f"{icon} <code>{ip}</code> [{label}] → {nodes_str}")
+            ip_lines.append(f"{icon} <code>{ip}</code> [{label}] → {nodes_str}")
 
-        lines.append("\n🟡 Proxy share: nhiều node dùng chung proxy")
-        lines.append("🔴 Routing conflict: exit IP thực sự trùng")
+        summary = []
+        if routing_count:
+            summary.append(f"🔴 {routing_count} Routing conflict")
+        if proxy_count:
+            summary.append(f"🟡 {proxy_count} Proxy share")
+        header = f"⚠️ <b>TRÙNG EXIT IP</b> – {now}\n" + " · ".join(summary)
+        footer = "🟡 Proxy share: nhiều node dùng chung proxy\n🔴 Routing conflict: exit IP thực sự trùng"
+
+        chunks = _split_tg_chunks(header, ip_lines, footer)
 
         _last_dup_ip_alert = now_dt
-        enqueue_telegram_message(cfg.tg_critical, "\n".join(lines))
+        for chunk in chunks:
+            enqueue_telegram_message(cfg.tg_critical, chunk)
         flush_telegram_queue()
     except Exception as exc:
         logger.error("check_duplicate_exit_ips error: %s", exc)
