@@ -21,6 +21,7 @@ interface SettingsData {
   backup_enabled: boolean
   backup_interval_hours: number
   backup_retention_count: number
+  duplicate_ip_alert_minutes: number
 }
 
 interface BackupFile {
@@ -230,6 +231,7 @@ export default function SettingsPage() {
     backup_enabled: false,
     backup_interval_hours: 24,
     backup_retention_count: 7,
+    duplicate_ip_alert_minutes: 60,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -403,6 +405,26 @@ export default function SettingsPage() {
           </div>
           <p className="text-xs text-gray-400">
             Alert gửi vào topic <span className="text-red-500 font-medium">Nghiêm trọng</span>. Mỗi lần offline chỉ gửi 1 lần.
+          </p>
+        </div>
+
+        {/* Duplicate IP alert */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700">Cảnh báo Trùng Exit IP</h2>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Gửi lại sau mỗi</label>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={form.duplicate_ip_alert_minutes}
+              onChange={e => setForm(f => ({ ...f, duplicate_ip_alert_minutes: parseInt(e.target.value) || 60 }))}
+              className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <label className="text-sm text-gray-600">phút (nếu vẫn còn trùng)</label>
+          </div>
+          <p className="text-xs text-gray-400">
+            Alert gửi vào topic <span className="text-red-500 font-medium">Nghiêm trọng</span>. Kiểm tra mỗi phút, chỉ gửi khi đủ khoảng thời gian cấu hình và còn node bị trùng IP.
           </p>
         </div>
 

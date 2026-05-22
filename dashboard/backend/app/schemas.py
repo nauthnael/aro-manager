@@ -277,6 +277,7 @@ class SettingsOut(BaseModel):
     backup_enabled: bool = False
     backup_interval_hours: int = 24
     backup_retention_count: int = 7
+    duplicate_ip_alert_minutes: int = 60
 
     class Config:
         from_attributes = True
@@ -296,6 +297,7 @@ class SettingsIn(BaseModel):
     backup_enabled: bool = False
     backup_interval_hours: int = 24
     backup_retention_count: int = 7
+    duplicate_ip_alert_minutes: int = 60
 
 
 class BackupFileInfo(BaseModel):

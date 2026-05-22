@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
@@ -98,6 +99,7 @@ def migrate_db():
             content TEXT NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS ix_node_diagnostic_log_node_ts ON node_diagnostic_log (node_id, collected_at)",
+        "ALTER TABLE app_settings ADD COLUMN duplicate_ip_alert_minutes INTEGER DEFAULT 60",
     ]
     for sql in ddl_migrations:
         try:
@@ -388,8 +390,13 @@ def scheduled_backup_task():
         db.close()
 
 
+_last_dup_ip_alert: Optional[datetime] = None
+
+
 def check_duplicate_exit_ips():
-    """Runs every 5 min — detect nodes sharing the same exit IP and alert via Telegram."""
+    """Runs every 1 min — detect nodes sharing the same exit IP and alert via Telegram.
+    Only sends an alert when duplicate_ip_alert_minutes have elapsed since the last alert."""
+    global _last_dup_ip_alert
     from collections import defaultdict
     _SENTINEL = {"n/a", "na", "unknown", "0.0.0.0", "none", ""}
 
@@ -398,6 +405,13 @@ def check_duplicate_exit_ips():
         cfg = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
         if not cfg or not cfg.tg_critical:
             return
+
+        alert_interval = max(1, cfg.duplicate_ip_alert_minutes or 60)
+        now_dt = datetime.utcnow()
+        if _last_dup_ip_alert is not None:
+            elapsed = (now_dt - _last_dup_ip_alert).total_seconds() / 60
+            if elapsed < alert_interval:
+                return
 
         all_nodes = {n.node_id: n for n in db.query(models.Node).all()}
         statuses = db.query(models.NodeStatus).all()
@@ -431,6 +445,7 @@ def check_duplicate_exit_ips():
         lines.append("\n🟡 Proxy share: nhiều node dùng chung proxy")
         lines.append("🔴 Routing conflict: exit IP thực sự trùng")
 
+        _last_dup_ip_alert = now_dt
         enqueue_telegram_message(cfg.tg_critical, "\n".join(lines))
         flush_telegram_queue()
     except Exception as exc:
@@ -483,7 +498,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(cleanup_old_data, "interval", hours=6)
     scheduler.add_job(check_offline_alerts, "interval", minutes=2)
     scheduler.add_job(check_renew_monitoring, "interval", minutes=5)
-    scheduler.add_job(check_duplicate_exit_ips, "interval", minutes=5)
+    scheduler.add_job(check_duplicate_exit_ips, "interval", minutes=1)
     scheduler.add_job(flush_telegram_queue, "interval", minutes=2)
     scheduler.add_job(calculate_daily_scores, "cron", hour=0, minute=5)
     scheduler.add_job(refresh_ip_countries_task, "interval", minutes=10)
