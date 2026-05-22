@@ -7,6 +7,7 @@ import { NodeListResponse, TagOut } from '../types'
 import api from '../api/client'
 import StatsCards from '../components/StatsCards'
 import NodeTable from '../components/NodeTable'
+import BulkProxyModal from '../components/BulkProxyModal'
 import { copyToClipboard } from '../utils/clipboard'
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200, 500]
@@ -75,6 +76,9 @@ export default function Dashboard() {
   const [bulkTagOpen, setBulkTagOpen] = useState(false)
   const [bulkAddIds, setBulkAddIds] = useState<Set<number>>(new Set())
   const [bulkRemoveIds, setBulkRemoveIds] = useState<Set<number>>(new Set())
+
+  // Bulk proxy modal state
+  const [bulkProxyOpen, setBulkProxyOpen] = useState(false)
 
   const bulkBarRef = useRef<HTMLDivElement>(null)
   const [bulkBarHeight, setBulkBarHeight] = useState(0)
@@ -145,6 +149,20 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
       qc.invalidateQueries({ queryKey: ['nodes'] })
       alert(`Đã kích hoạt renew cho ${result.triggered} node${result.skipped ? ` (bỏ qua ${result.skipped})` : ''}.`)
       setSelectedIds(new Set())
+    },
+  })
+
+  const bulkSetProxy = useMutation({
+    mutationFn: (assignments: { node_id: string; proxy: string }[]) =>
+      api.post('/dashboard/nodes/bulk-set-proxy', { assignments }).then(r => r.data),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['commands'] })
+      alert(`Đã gửi lệnh đổi proxy đến ${result.created} node.`)
+      setBulkProxyOpen(false)
+      setSelectedIds(new Set())
+    },
+    onError: (err: any) => {
+      alert(`Lỗi: ${err?.response?.data?.detail ?? 'Không thể đổi proxy'}`)
     },
   })
 
@@ -571,6 +589,12 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
             >
               {bulkRenew.isPending ? 'Đang renew...' : `Bulk Renew (${selectedCount})`}
             </button>
+            <button
+              onClick={() => setBulkProxyOpen(true)}
+              className="px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors"
+            >
+              Đổi Proxy ({selectedCount})
+            </button>
           </div>
         )}
 
@@ -637,6 +661,15 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
           </div>
         )}
       </main>
+
+      {bulkProxyOpen && (
+        <BulkProxyModal
+          nodes={visibleNodes.filter(n => selectedIds.has(n.node_id))}
+          onClose={() => setBulkProxyOpen(false)}
+          onSubmit={assignments => bulkSetProxy.mutate(assignments)}
+          isPending={bulkSetProxy.isPending}
+        />
+      )}
     </div>
   )
 }
