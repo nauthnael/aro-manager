@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Globe, Tag as TagIcon, X } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Globe, Tag as TagIcon, X, TrendingUp } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
@@ -324,6 +324,14 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
             </p>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => navigate('/charts')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Biểu đồ thống kê"
+            >
+              <TrendingUp size={15} />
+              <span className="hidden sm:inline">Biểu đồ</span>
+            </button>
             <button
               onClick={() => navigate('/accounts')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"

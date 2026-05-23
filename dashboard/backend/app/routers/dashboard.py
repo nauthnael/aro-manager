@@ -453,6 +453,93 @@ def list_nodes(
     )
 
 
+@router.get("/dashboard/stats-trend", response_model=schemas.StatsTrendResponse)
+def get_stats_trend(
+    days: int = Query(30, ge=7, le=30),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    now = datetime.utcnow()
+    today = now.date()
+    # Load NodeHistory cho khoảng [today - days - 2, today] (thêm 2 ngày để tính lookback)
+    cutoff = datetime(*(today - timedelta(days=days + 2)).timetuple()[:3])
+    history_rows = (
+        db.query(models.NodeHistory.node_id, models.NodeHistory.timestamp, models.NodeHistory.reward_today)
+        .filter(models.NodeHistory.timestamp >= cutoff)
+        .all()
+    )
+
+    # Build: rewards[node_id][date] = max_reward_today
+    from collections import defaultdict
+    rewards: dict = defaultdict(dict)
+    for row in history_rows:
+        d = row.timestamp.date()
+        prev = rewards[row.node_id].get(d)
+        val = row.reward_today or 0.0
+        rewards[row.node_id][d] = max(prev, val) if prev is not None else val
+
+    # Tập node đã từng có điểm (all-time trong window)
+    ever_had_points: set = {nid for nid, days_map in rewards.items() if any(v > 0 for v in days_map.values())}
+
+    # Load NodeRenewLog — chỉ cần node_id và renewed_at
+    renew_rows = (
+        db.query(models.NodeRenewLog.node_id, func.max(models.NodeRenewLog.renewed_at).label("last_renewed"))
+        .group_by(models.NodeRenewLog.node_id)
+        .all()
+    )
+    # renewed_map[node_id] = date of last renewal
+    renewed_map: dict = {r.node_id: r.last_renewed.date() for r in renew_rows if r.last_renewed}
+
+    result = []
+    for offset in range(days, 0, -1):
+        D = today - timedelta(days=offset)
+        D1 = D - timedelta(days=1)   # D-1
+        D2 = D - timedelta(days=2)   # D-2
+
+        all_nodes = set(rewards.keys())
+
+        # Không điểm hôm qua: node có reward[D-1] == 0 hoặc không có record ngày D-1
+        no_points_yesterday = sum(
+            1 for nid in all_nodes
+            if rewards[nid].get(D1, 0.0) == 0.0
+        )
+
+        # TB 0 điểm: node chưa bao giờ có điểm tính đến ngày D
+        no_points_avg = sum(
+            1 for nid in all_nodes
+            if all(v == 0.0 for d, v in rewards[nid].items() if d <= D)
+        )
+
+        # Mất điểm 2 ngày: đã từng có điểm nhưng 0 cả D-1 lẫn D-2
+        no_points_2days = sum(
+            1 for nid in ever_had_points
+            if rewards[nid].get(D1, 0.0) == 0.0 and rewards[nid].get(D2, 0.0) == 0.0
+        )
+
+        # Renew 0 điểm: renewed trước ngày D, không có điểm nào từ ngày renew đến D
+        renew_0points = 0
+        for nid, renew_date in renewed_map.items():
+            if renew_date > D:
+                continue
+            # Kiểm tra có reward > 0 nào từ renew_date đến D không
+            has_points_since_renew = any(
+                v > 0 for d, v in rewards.get(nid, {}).items()
+                if renew_date <= d <= D
+            )
+            if not has_points_since_renew:
+                renew_0points += 1
+
+        result.append(schemas.StatsTrendPoint(
+            date=D.isoformat(),
+            no_points_yesterday=no_points_yesterday,
+            no_points_avg=no_points_avg,
+            no_points_2days=no_points_2days,
+            renew_0points=renew_0points,
+        ))
+
+    return schemas.StatsTrendResponse(data=result, days=days)
+
+
 @router.get("/dashboard/nodes/{node_id}", response_model=schemas.NodeDetailResponse)
 def get_node(
     node_id: str,

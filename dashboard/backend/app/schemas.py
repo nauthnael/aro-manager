@@ -195,6 +195,19 @@ class HistoryPoint(BaseModel):
     uptime_ratio: Optional[float] = None
 
 
+class StatsTrendPoint(BaseModel):
+    date: str
+    no_points_yesterday: int
+    no_points_avg: int
+    no_points_2days: int
+    renew_0points: int
+
+
+class StatsTrendResponse(BaseModel):
+    data: List[StatsTrendPoint]
+    days: int
+
+
 class RestartEventOut(BaseModel):
     id: int
     node_id: str
