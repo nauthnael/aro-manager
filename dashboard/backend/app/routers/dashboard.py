@@ -459,69 +459,80 @@ def get_stats_trend(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
+    from collections import defaultdict
     now = datetime.utcnow()
     today = now.date()
-    # Load NodeHistory cho khoảng [today - days - 2, today] (thêm 2 ngày để tính lookback)
-    cutoff = datetime(*(today - timedelta(days=days + 2)).timetuple()[:3])
+
+    # Luôn load full 30 ngày để tránh sai số khi days=7 hoặc 14
+    full_cutoff = datetime(*(today - timedelta(days=32)).timetuple()[:3])
     history_rows = (
         db.query(models.NodeHistory.node_id, models.NodeHistory.timestamp, models.NodeHistory.reward_today)
-        .filter(models.NodeHistory.timestamp >= cutoff)
+        .filter(models.NodeHistory.timestamp >= full_cutoff)
         .all()
     )
 
-    # Build: rewards[node_id][date] = max_reward_today
-    from collections import defaultdict
+    # rewards[node_id][date] = max_reward_today
     rewards: dict = defaultdict(dict)
     for row in history_rows:
         d = row.timestamp.date()
-        prev = rewards[row.node_id].get(d)
         val = row.reward_today or 0.0
+        prev = rewards[row.node_id].get(d)
         rewards[row.node_id][d] = max(prev, val) if prev is not None else val
 
-    # Tập node đã từng có điểm (all-time trong window)
-    ever_had_points: set = {nid for nid, days_map in rewards.items() if any(v > 0 for v in days_map.values())}
+    nodes_in_history: set = set(rewards.keys())
 
-    # Load NodeRenewLog — chỉ cần node_id và renewed_at
+    # Tất cả node_id từ NodeStatus — để biết nodes không có history
+    all_node_ids: set = {
+        row[0] for row in db.query(models.NodeStatus.node_id).all()
+    }
+    # Nodes không bao giờ lưu vào NodeHistory (reward_yesterday luôn == 0 hoặc None)
+    no_history_count: int = len(all_node_ids - nodes_in_history)
+
+    # Nodes đã từng có điểm (full 30d)
+    ever_had_points: set = {nid for nid, dm in rewards.items() if any(v > 0 for v in dm.values())}
+
+    # TB 0 điểm là constant: nodes trong history mà toàn bộ rewards == 0 + nodes không có history
+    # NodeHistory chỉ lưu khi reward_yesterday > 0, nên nodes_in_history hầu hết có reward > 0
+    nodes_all_zero_in_history = sum(
+        1 for nid in nodes_in_history
+        if all(v == 0.0 for v in rewards[nid].values())
+    )
+    static_no_points_avg = nodes_all_zero_in_history + no_history_count
+
+    # Load NodeRenewLog
     renew_rows = (
         db.query(models.NodeRenewLog.node_id, func.max(models.NodeRenewLog.renewed_at).label("last_renewed"))
         .group_by(models.NodeRenewLog.node_id)
         .all()
     )
-    # renewed_map[node_id] = date of last renewal
     renewed_map: dict = {r.node_id: r.last_renewed.date() for r in renew_rows if r.last_renewed}
 
     result = []
     for offset in range(days, 0, -1):
         D = today - timedelta(days=offset)
-        D1 = D - timedelta(days=1)   # D-1
-        D2 = D - timedelta(days=2)   # D-2
+        D1 = D - timedelta(days=1)
+        D2 = D - timedelta(days=2)
 
-        all_nodes = set(rewards.keys())
-
-        # Không điểm hôm qua: node có reward[D-1] == 0 hoặc không có record ngày D-1
-        no_points_yesterday = sum(
-            1 for nid in all_nodes
-            if rewards[nid].get(D1, 0.0) == 0.0
+        # Không điểm hôm qua: nodes trong history không có reward D-1 + nodes không có history
+        no_points_yesterday = (
+            sum(1 for nid in nodes_in_history if rewards[nid].get(D1, 0.0) == 0.0)
+            + no_history_count
         )
 
-        # TB 0 điểm: node chưa bao giờ có điểm tính đến ngày D
-        no_points_avg = sum(
-            1 for nid in all_nodes
-            if all(v == 0.0 for d, v in rewards[nid].items() if d <= D)
-        )
+        # TB 0 điểm: constant — không đổi theo ngày D
+        no_points_avg = static_no_points_avg
 
-        # Mất điểm 2 ngày: đã từng có điểm nhưng 0 cả D-1 lẫn D-2
+        # Mất điểm 2 ngày: đã từng có điểm (full 30d) nhưng 0 cả D-1 lẫn D-2
         no_points_2days = sum(
             1 for nid in ever_had_points
             if rewards[nid].get(D1, 0.0) == 0.0 and rewards[nid].get(D2, 0.0) == 0.0
         )
 
-        # Renew 0 điểm: renewed trước ngày D, không có điểm nào từ ngày renew đến D
+        # Renew 0 điểm: renewed trước ngày D, không có reward nào từ renew_date đến D
         renew_0points = 0
         for nid, renew_date in renewed_map.items():
             if renew_date > D:
                 continue
-            # Kiểm tra có reward > 0 nào từ renew_date đến D không
             has_points_since_renew = any(
                 v > 0 for d, v in rewards.get(nid, {}).items()
                 if renew_date <= d <= D
