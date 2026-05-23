@@ -48,6 +48,7 @@ class NodeReportResponse(BaseModel):
     commands: List[PendingCommand] = []
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
+    periodic_restart_wait_minutes: int = 2
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
 
@@ -283,6 +284,7 @@ class SettingsOut(BaseModel):
     alert_offline_minutes: int
     periodic_restart_min: int
     periodic_restart_max: int
+    periodic_restart_wait_minutes: int = 2
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
     node_tg_bot_token: str = ""
@@ -304,6 +306,7 @@ class SettingsIn(BaseModel):
     alert_offline_minutes: int = 10
     periodic_restart_min: int = 54
     periodic_restart_max: int = 120
+    periodic_restart_wait_minutes: int = 2
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
     node_tg_bot_token: str = ""

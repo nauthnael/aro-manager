@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.6"
+SCRIPT_VERSION="3.9.7"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -66,6 +66,7 @@ CHECK_INTERVAL=60           # Chu kỳ watchdog: 60s - giảm 50% IO, vẫn đ�
 # ── Periodic restart ─────────────────────────────────────────────
 PERIODIC_RESTART_MIN_MINS=54   # Minimum minutes between periodic restarts
 PERIODIC_RESTART_MAX_MINS=120  # Maximum minutes between periodic restarts
+PERIODIC_RESTART_WAIT_MINS=2   # Minutes to wait (ARO killed) before restarting
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
 STALE_RESTART_MINUTES=5       # Nếu log stale kéo dài >5m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
@@ -2498,6 +2499,23 @@ except:
         local _cur_stale; _cur_stale=$(state_get "dashboard_log_stale_restart_minutes" "")
         [[ "$_cur_stale" != "$_stale_mins" ]] && state_set "dashboard_log_stale_restart_minutes" "$_stale_mins"
     fi
+
+    # Đọc thời gian chờ trước khi restart từ dashboard
+    local _pwait
+    _pwait=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get('periodic_restart_wait_minutes')
+    if isinstance(v, int) and 1 <= v <= 20:
+        print(v)
+except:
+    pass
+" "$response" 2>/dev/null)
+    if [[ -n "$_pwait" ]]; then
+        local _cur_pwait; _cur_pwait=$(state_get "dashboard_periodic_wait" "")
+        [[ "$_cur_pwait" != "$_pwait" ]] && state_set "dashboard_periodic_wait" "$_pwait"
+    fi
 }
 
 send_daily_report() {
@@ -2988,6 +3006,14 @@ apply_dashboard_periodic_config() {
         PERIODIC_RESTART_MAX_MINS=$new_max
         schedule_next_periodic_restart
     fi
+
+    local new_wait; new_wait=$(state_get "dashboard_periodic_wait" "")
+    if [[ -n "$new_wait" ]] && [[ "$new_wait" =~ ^[0-9]+$ ]] && [[ $new_wait -ge 1 ]] && [[ $new_wait -le 20 ]]; then
+        if [[ "$new_wait" != "$PERIODIC_RESTART_WAIT_MINS" ]]; then
+            watchdog_log "Dashboard config: periodic restart wait ${PERIODIC_RESTART_WAIT_MINS}m → ${new_wait}m"
+            PERIODIC_RESTART_WAIT_MINS=$new_wait
+        fi
+    fi
 }
 
 apply_dashboard_daily_report_config() {
@@ -3283,10 +3309,25 @@ watchdog_loop() {
 
                         # ── Periodic restart (mỗi 54–120 phút ngẫu nhiên) ──
                         if [[ $_next_periodic_restart -gt 0 ]] && [[ $now -ge $_next_periodic_restart ]]; then
-                            watchdog_log "Periodic ARO restart triggered — restarting app để duy trì kết nối"
+                            watchdog_log "Periodic ARO restart triggered — tắt ARO, chờ ${PERIODIC_RESTART_WAIT_MINS}m rồi khởi động lại"
                             local _pr_start; _pr_start=$(date +%s)
                             kill_aro
-                            sleep 3
+
+                            # Chờ thời gian cấu hình; vẫn gửi report lên dashboard định kỳ
+                            local _wait_end=$(( $(date +%s) + PERIODIC_RESTART_WAIT_MINS * 60 ))
+                            local _wait_report_interval=30
+                            local _wait_last_report=0
+                            while [[ $(date +%s) -lt $_wait_end ]]; do
+                                local _now_w; _now_w=$(date +%s)
+                                local _remaining=$(( _wait_end - _now_w ))
+                                if [[ $(( _now_w - _wait_last_report )) -ge $_wait_report_interval ]]; then
+                                    watchdog_log "Periodic restart: đang chờ ${_remaining}s trước khi khởi động lại ARO"
+                                    report_to_dashboard "Offline" &
+                                    _wait_last_report=$_now_w
+                                fi
+                                sleep 5
+                            done
+
                             launch_aro
                             state_set "last_restart" "$(date +%s)"
                             state_set "stable_since" "$(date +%s)"

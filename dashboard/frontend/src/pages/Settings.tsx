@@ -15,6 +15,7 @@ interface SettingsData {
   alert_offline_minutes: number
   periodic_restart_min: number
   periodic_restart_max: number
+  periodic_restart_wait_minutes: number
   daily_report_enabled: boolean
   log_stale_restart_minutes: number
   node_tg_bot_token: string
@@ -225,6 +226,7 @@ export default function SettingsPage() {
     alert_offline_minutes: 10,
     periodic_restart_min: 54,
     periodic_restart_max: 120,
+    periodic_restart_wait_minutes: 2,
     daily_report_enabled: true,
     log_stale_restart_minutes: 5,
     node_tg_bot_token: '',
@@ -460,6 +462,21 @@ export default function SettingsPage() {
           {form.periodic_restart_min >= form.periodic_restart_max && (
             <p className="text-xs text-red-500">Min phải nhỏ hơn Max.</p>
           )}
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Chờ</label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={form.periodic_restart_wait_minutes}
+              onChange={e => setForm(f => ({ ...f, periodic_restart_wait_minutes: Math.max(1, Math.min(20, parseInt(e.target.value) || 2)) }))}
+              className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <label className="text-sm text-gray-600 whitespace-nowrap">phút trước khi khởi động lại (1–20)</label>
+          </div>
+          <p className="text-xs text-gray-400">
+            Sau khi tắt ARO, watchdog chờ thời gian này rồi mới khởi động lại. Trong thời gian chờ vẫn gửi report lên Dashboard bình thường.
+          </p>
         </div>
 
         {/* Log stale restart */}

@@ -210,12 +210,13 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         app_settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
         pmin = app_settings.periodic_restart_min if app_settings and app_settings.periodic_restart_min else 54
         pmax = app_settings.periodic_restart_max if app_settings and app_settings.periodic_restart_max else 120
+        pwait = (app_settings.periodic_restart_wait_minutes or 2) if app_settings else 2
         daily_report_enabled = app_settings.daily_report_enabled if app_settings and app_settings.daily_report_enabled is not None else True
         global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
         # Per-node override takes precedence over global
         effective_stale = node.log_stale_restart_minutes if node.log_stale_restart_minutes is not None else global_stale
     except Exception:
-        pmin, pmax = 54, 120
+        pmin, pmax, pwait = 54, 120, 2
         daily_report_enabled = True
         effective_stale = 5
 
@@ -224,6 +225,7 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         commands=[schemas.PendingCommand(id=c.id, action=c.action, payload=c.payload) for c in pending],
         periodic_restart_min=pmin,
         periodic_restart_max=pmax,
+        periodic_restart_wait_minutes=pwait,
         daily_report_enabled=daily_report_enabled,
         log_stale_restart_minutes=effective_stale,
     )

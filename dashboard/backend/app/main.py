@@ -100,6 +100,7 @@ def migrate_db():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_node_diagnostic_log_node_ts ON node_diagnostic_log (node_id, collected_at)",
         "ALTER TABLE app_settings ADD COLUMN duplicate_ip_alert_minutes INTEGER DEFAULT 60",
+        "ALTER TABLE app_settings ADD COLUMN periodic_restart_wait_minutes INTEGER DEFAULT 2",
     ]
     for sql in ddl_migrations:
         try:

@@ -60,6 +60,7 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     row.backup_interval_hours = max(1, min(body.backup_interval_hours, 720))
     row.backup_retention_count = max(1, min(body.backup_retention_count, 30))
     row.duplicate_ip_alert_minutes = max(1, min(body.duplicate_ip_alert_minutes, 1440))
+    row.periodic_restart_wait_minutes = max(1, min(body.periodic_restart_wait_minutes, 20))
     db.commit()
     db.refresh(row)
     return row
