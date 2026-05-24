@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.8"
+SCRIPT_VERSION="3.9.9"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -1539,14 +1539,36 @@ cleanup_aro_tmp() {
 
 launch_aro() {
     cleanup_aro_tmp
+
+    # Tauri 2.0 tray icon requires D-Bus session bus. When launched from systemd (clean env),
+    # DBUS_SESSION_BUS_ADDRESS is not inherited — read it from the user's running processes.
+    local _dbus_addr=""
+    while IFS= read -r _pid; do
+        local _addr
+        _addr=$(tr '\0' '\n' < "/proc/$_pid/environ" 2>/dev/null \
+            | grep '^DBUS_SESSION_BUS_ADDRESS=' | head -1 | cut -d= -f2- || true)
+        if [[ -n "$_addr" ]]; then
+            _dbus_addr="$_addr"
+            break
+        fi
+    done < <(pgrep -u "$EFFECTIVE_USER" 2>/dev/null)
+
     watchdog_log "Launching ARO via wrapper: $WRAPPER_SCRIPT"
     watchdog_log "  Display: $DISPLAY_NUM | XAUTH: $XAUTHORITY_PATH"
+    watchdog_log "  DBUS: ${_dbus_addr:-not found (tray icon may fail)}"
+
     if command -v sudo >/dev/null 2>&1 && sudo -n -u "$EFFECTIVE_USER" true 2>/dev/null; then
-        sudo -u "$EFFECTIVE_USER" \
-            env DISPLAY="$DISPLAY_NUM" XAUTHORITY="$XAUTHORITY_PATH" LIBGL_ALWAYS_SOFTWARE="1" \
-            "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
+        local _env_args=(
+            DISPLAY="$DISPLAY_NUM"
+            XAUTHORITY="$XAUTHORITY_PATH"
+            LIBGL_ALWAYS_SOFTWARE="1"
+        )
+        [[ -n "$_dbus_addr" ]] && _env_args+=(DBUS_SESSION_BUS_ADDRESS="$_dbus_addr")
+        sudo -u "$EFFECTIVE_USER" env "${_env_args[@]}" "$WRAPPER_SCRIPT" >/dev/null 2>&1 &
     else
-        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 \"${WRAPPER_SCRIPT}\""
+        local _dbus_part=""
+        [[ -n "$_dbus_addr" ]] && _dbus_part="DBUS_SESSION_BUS_ADDRESS=\"$_dbus_addr\""
+        local launch_cmd="DISPLAY=\"${DISPLAY_NUM}\" XAUTHORITY=\"${XAUTHORITY_PATH}\" LIBGL_ALWAYS_SOFTWARE=1 ${_dbus_part} \"${WRAPPER_SCRIPT}\""
         su - "$EFFECTIVE_USER" -c "$launch_cmd" >/dev/null 2>&1 &
     fi
     watchdog_log "ARO launch initiated (PID: $!)"
@@ -3801,6 +3823,7 @@ Type=simple
 ExecStart=$SCRIPT_DIR/$SCRIPT_NAME watchdog-loop
 Restart=on-failure
 RestartSec=10s
+StartLimitBurst=0
 User=root
 KillMode=process
 
@@ -3818,6 +3841,7 @@ Type=simple
 ExecStart=$SCRIPT_DIR/$SCRIPT_NAME watchdog-loop
 Restart=on-failure
 RestartSec=10s
+StartLimitBurst=0
 User=root
 KillMode=process
 
@@ -5754,6 +5778,7 @@ do_update_watchdog_only() {
     # Mark this as an update restart so watchdog preserves ARO state and uptime.
     state_set "$UPDATE_RESTART_FLAG" "1"
 
+    systemctl enable aro-watchdog >/dev/null 2>&1
     systemctl restart aro-watchdog
     sleep 3
 
@@ -5870,6 +5895,7 @@ do_update() {
         sleep 3
     fi
 
+    systemctl enable aro-watchdog >/dev/null 2>&1
     systemctl start aro-watchdog
     sleep 3
 
