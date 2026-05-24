@@ -215,10 +215,17 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         global_stale = (app_settings.log_stale_restart_minutes or 5) if app_settings else 5
         # Per-node override takes precedence over global
         effective_stale = node.log_stale_restart_minutes if node.log_stale_restart_minutes is not None else global_stale
+        vps_reboot_count = (app_settings.periodic_vps_reboot_count or 6) if app_settings else 6
+        vps_reboot_enabled = (
+            app_settings.periodic_vps_reboot_enabled
+            if app_settings and app_settings.periodic_vps_reboot_enabled is not None
+            else True
+        )
     except Exception:
         pmin, pmax, pwait = 54, 120, 2
         daily_report_enabled = True
         effective_stale = 5
+        vps_reboot_count, vps_reboot_enabled = 6, True
 
     return schemas.NodeReportResponse(
         ok=True,
@@ -228,6 +235,8 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
         periodic_restart_wait_minutes=pwait,
         daily_report_enabled=daily_report_enabled,
         log_stale_restart_minutes=effective_stale,
+        periodic_vps_reboot_count=vps_reboot_count,
+        periodic_vps_reboot_enabled=vps_reboot_enabled,
     )
 
 

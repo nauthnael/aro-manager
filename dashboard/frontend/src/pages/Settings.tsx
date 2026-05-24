@@ -23,6 +23,8 @@ interface SettingsData {
   backup_interval_hours: number
   backup_retention_count: number
   duplicate_ip_alert_minutes: number
+  periodic_vps_reboot_count: number
+  periodic_vps_reboot_enabled: boolean
 }
 
 interface BackupFile {
@@ -234,6 +236,8 @@ export default function SettingsPage() {
     backup_interval_hours: 24,
     backup_retention_count: 7,
     duplicate_ip_alert_minutes: 60,
+    periodic_vps_reboot_count: 6,
+    periodic_vps_reboot_enabled: true,
   })
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error: string | null } | null>>({})
   const [testingTopic, setTestingTopic] = useState<string | null>(null)
@@ -476,6 +480,50 @@ export default function SettingsPage() {
           </div>
           <p className="text-xs text-gray-400">
             Sau khi tắt ARO, watchdog chờ thời gian này rồi mới khởi động lại. Trong thời gian chờ vẫn gửi report lên Dashboard bình thường.
+          </p>
+        </div>
+
+        {/* Periodic VPS reboot */}
+        <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Reboot VPS định kỳ</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Khởi động lại toàn bộ VPS theo lịch định kỳ. Mỗi node tự lên lịch với jitter ±30 phút để tránh reboot đồng loạt.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setForm(f => ({ ...f, periodic_vps_reboot_enabled: !f.periodic_vps_reboot_enabled }))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                form.periodic_vps_reboot_enabled ? 'bg-blue-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  form.periodic_vps_reboot_enabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+          {form.periodic_vps_reboot_enabled && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="text-sm text-gray-600 whitespace-nowrap">Số lần mỗi ngày</label>
+              <input
+                type="number"
+                min={1}
+                max={24}
+                value={form.periodic_vps_reboot_count}
+                onChange={e => setForm(f => ({ ...f, periodic_vps_reboot_count: Math.max(1, Math.min(24, parseInt(e.target.value) || 6)) }))}
+                className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <label className="text-sm text-gray-500 whitespace-nowrap">
+                (~{(1440 / form.periodic_vps_reboot_count / 60).toFixed(1)}h/lần, jitter ±30 phút)
+              </label>
+            </div>
+          )}
+          <p className="text-xs text-gray-400">
+            Áp dụng cho toàn bộ node sau chu kỳ báo cáo tiếp theo (~60s). Node sẽ offline ~2–5 phút mỗi lần reboot.
           </p>
         </div>
 

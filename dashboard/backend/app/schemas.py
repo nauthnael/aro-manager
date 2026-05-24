@@ -51,6 +51,8 @@ class NodeReportResponse(BaseModel):
     periodic_restart_wait_minutes: int = 2
     daily_report_enabled: bool = True
     log_stale_restart_minutes: int = 5
+    periodic_vps_reboot_count: int = 6
+    periodic_vps_reboot_enabled: bool = True
 
 
 # --- Command complete (node → backend) ---
@@ -306,6 +308,8 @@ class SettingsOut(BaseModel):
     backup_interval_hours: int = 24
     backup_retention_count: int = 7
     duplicate_ip_alert_minutes: int = 60
+    periodic_vps_reboot_count: int = 6
+    periodic_vps_reboot_enabled: bool = True
 
     class Config:
         from_attributes = True
@@ -327,6 +331,8 @@ class SettingsIn(BaseModel):
     backup_interval_hours: int = 24
     backup_retention_count: int = 7
     duplicate_ip_alert_minutes: int = 60
+    periodic_vps_reboot_count: int = 6
+    periodic_vps_reboot_enabled: bool = True
 
 
 class BackupFileInfo(BaseModel):

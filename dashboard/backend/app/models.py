@@ -25,6 +25,8 @@ class AppSettings(Base):
     backup_retention_count = Column(Integer, default=7)
     duplicate_ip_alert_minutes = Column(Integer, default=60)
     periodic_restart_wait_minutes = Column(Integer, default=2)
+    periodic_vps_reboot_count = Column(Integer, default=6)
+    periodic_vps_reboot_enabled = Column(Boolean, default=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

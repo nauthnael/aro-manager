@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.7"
+SCRIPT_VERSION="3.9.8"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -67,6 +67,10 @@ CHECK_INTERVAL=60           # Chu kỳ watchdog: 60s - giảm 50% IO, vẫn đ�
 PERIODIC_RESTART_MIN_MINS=54   # Minimum minutes between periodic restarts
 PERIODIC_RESTART_MAX_MINS=120  # Maximum minutes between periodic restarts
 PERIODIC_RESTART_WAIT_MINS=2   # Minutes to wait (ARO killed) before restarting
+
+# ── Periodic VPS reboot ──────────────────────────────────────────
+PERIODIC_VPS_REBOOT_COUNT=6        # Số lần reboot VPS mỗi ngày
+PERIODIC_VPS_REBOOT_ENABLED=true   # Bật/tắt reboot VPS định kỳ
 LOG_STALE_MINUTES=10        # Log không update >10m = ARO frozen hoặc crash
 STALE_RESTART_MINUTES=5       # Nếu log stale kéo dài >5m → force restart dù không có disconnect
 DISCONNECT_ALERT_MINUTES=15 # Disconnected >15m mới trigger restart (tránh false positive)
@@ -116,6 +120,7 @@ _tray_unknown_last_log=0
 _unbound_last_log=0
 PRE_RESTART_NOTIFY_COOLDOWN=300   # Tối thiểu 5 phút giữa 2 lần gửi pre-restart notification
 _next_periodic_restart=0          # Epoch time for next scheduled periodic ARO restart
+_next_periodic_vps_reboot=0       # Epoch time for next scheduled periodic VPS reboot
 
 # Guard flags
 _WAIT_FOR_ARO_ONLINE_RUNNING=false
@@ -2516,6 +2521,38 @@ except:
         local _cur_pwait; _cur_pwait=$(state_get "dashboard_periodic_wait" "")
         [[ "$_cur_pwait" != "$_pwait" ]] && state_set "dashboard_periodic_wait" "$_pwait"
     fi
+
+    # Đọc cấu hình periodic VPS reboot từ dashboard
+    local _vps_count _vps_enabled
+    _vps_count=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get('periodic_vps_reboot_count')
+    if isinstance(v, int) and 1 <= v <= 24:
+        print(v)
+except:
+    pass
+" "$response" 2>/dev/null)
+    if [[ -n "$_vps_count" ]]; then
+        local _cur_vps_count; _cur_vps_count=$(state_get "dashboard_vps_reboot_count" "")
+        [[ "$_cur_vps_count" != "$_vps_count" ]] && state_set "dashboard_vps_reboot_count" "$_vps_count"
+    fi
+
+    _vps_enabled=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get('periodic_vps_reboot_enabled')
+    if v is not None:
+        print('true' if v else 'false')
+except:
+    pass
+" "$response" 2>/dev/null)
+    if [[ -n "$_vps_enabled" ]]; then
+        local _cur_vps_enabled; _cur_vps_enabled=$(state_get "dashboard_vps_reboot_enabled" "")
+        [[ "$_cur_vps_enabled" != "$_vps_enabled" ]] && state_set "dashboard_vps_reboot_enabled" "$_vps_enabled"
+    fi
 }
 
 send_daily_report() {
@@ -3036,6 +3073,28 @@ apply_dashboard_log_stale_config() {
     fi
 }
 
+apply_dashboard_vps_reboot_config() {
+    local new_count; new_count=$(state_get "dashboard_vps_reboot_count" "")
+    local new_enabled; new_enabled=$(state_get "dashboard_vps_reboot_enabled" "")
+
+    if [[ -n "$new_count" ]] && [[ "$new_count" =~ ^[0-9]+$ ]] && \
+       [[ $new_count -ge 1 ]] && [[ $new_count -le 24 ]]; then
+        if [[ "$new_count" != "$PERIODIC_VPS_REBOOT_COUNT" ]]; then
+            watchdog_log "Dashboard config: VPS reboot ${PERIODIC_VPS_REBOOT_COUNT}x/day → ${new_count}x/day"
+            PERIODIC_VPS_REBOOT_COUNT=$new_count
+            schedule_next_periodic_vps_reboot
+        fi
+    fi
+
+    if [[ -n "$new_enabled" ]] && [[ "$new_enabled" != "$PERIODIC_VPS_REBOOT_ENABLED" ]]; then
+        watchdog_log "Dashboard config: VPS reboot enabled ${PERIODIC_VPS_REBOOT_ENABLED} → ${new_enabled}"
+        PERIODIC_VPS_REBOOT_ENABLED=$new_enabled
+        if [[ "$new_enabled" == "true" ]] && [[ $_next_periodic_vps_reboot -eq 0 ]]; then
+            schedule_next_periodic_vps_reboot
+        fi
+    fi
+}
+
 schedule_next_periodic_restart() {
     local range=$(( PERIODIC_RESTART_MAX_MINS - PERIODIC_RESTART_MIN_MINS ))
     local rand_mins=$(( RANDOM % (range + 1) + PERIODIC_RESTART_MIN_MINS ))
@@ -3045,6 +3104,19 @@ schedule_next_periodic_restart() {
         || date -r "$_next_periodic_restart" '+%H:%M:%S' 2>/dev/null \
         || echo "$_next_periodic_restart")
     watchdog_log "Next periodic ARO restart scheduled in ${rand_mins}m (at ${next_time})"
+}
+
+schedule_next_periodic_vps_reboot() {
+    local base=$(( 24 * 60 / PERIODIC_VPS_REBOOT_COUNT ))
+    local jitter=$(( RANDOM % 61 - 30 ))   # ±30 phút ngẫu nhiên để giãn cách các node
+    local next_mins=$(( base + jitter ))
+    [[ $next_mins -lt 30 ]] && next_mins=30
+    _next_periodic_vps_reboot=$(( $(date +%s) + next_mins * 60 ))
+    local next_time
+    next_time=$(date -d "@$_next_periodic_vps_reboot" '+%H:%M' 2>/dev/null \
+        || date -r "$_next_periodic_vps_reboot" '+%H:%M' 2>/dev/null \
+        || echo "${next_mins}m")
+    watchdog_log "Next periodic VPS reboot in ${next_mins}m (at ${next_time}) [${PERIODIC_VPS_REBOOT_COUNT}x/day]"
 }
 
 report_periodic_restart_to_dashboard() {
@@ -3130,6 +3202,11 @@ watchdog_loop() {
     # Schedule first periodic restart (54–120 minutes from now)
     schedule_next_periodic_restart
 
+    # Schedule first periodic VPS reboot
+    if [[ "$PERIODIC_VPS_REBOOT_ENABLED" == "true" ]]; then
+        schedule_next_periodic_vps_reboot
+    fi
+
     while true; do
         local now; now=$(date +%s)
 
@@ -3137,6 +3214,7 @@ watchdog_loop() {
         apply_dashboard_periodic_config
         apply_dashboard_daily_report_config
         apply_dashboard_log_stale_config
+        apply_dashboard_vps_reboot_config
 
         # ── Maintenance mode check ──────────────────────────────────
         if is_maintenance_mode; then
@@ -3354,6 +3432,15 @@ watchdog_loop() {
                                 report_periodic_restart_to_dashboard "false" "$_pr_duration" &
                             fi
                             schedule_next_periodic_restart
+                        fi
+
+                        # ── Periodic VPS reboot (định kỳ reboot toàn bộ VPS) ──────────
+                        if [[ "$PERIODIC_VPS_REBOOT_ENABLED" == "true" ]] && \
+                           [[ $_next_periodic_vps_reboot -gt 0 ]] && \
+                           [[ $now -ge $_next_periodic_vps_reboot ]]; then
+                            watchdog_log "Periodic VPS reboot triggered (${PERIODIC_VPS_REBOOT_COUNT}x/day) — VPS sẽ reboot trong 1 phút"
+                            _next_periodic_vps_reboot=0   # Tránh trigger lại trong 1 phút chờ shutdown
+                            shutdown -r +1 "Periodic VPS reboot" &
                         fi
                         ;;
                     

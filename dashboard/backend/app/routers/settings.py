@@ -61,6 +61,8 @@ def update_settings(body: schemas.SettingsIn, db: Session = Depends(get_db), _=D
     row.backup_retention_count = max(1, min(body.backup_retention_count, 30))
     row.duplicate_ip_alert_minutes = max(1, min(body.duplicate_ip_alert_minutes, 1440))
     row.periodic_restart_wait_minutes = max(1, min(body.periodic_restart_wait_minutes, 20))
+    row.periodic_vps_reboot_count = max(1, min(body.periodic_vps_reboot_count, 24))
+    row.periodic_vps_reboot_enabled = body.periodic_vps_reboot_enabled
     db.commit()
     db.refresh(row)
     return row
