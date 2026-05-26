@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useGoBack } from '../utils/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon, ChevronDown, ChevronUp, Bug } from 'lucide-react'
+import { ArrowLeft, Pencil, Check, X, RefreshCw, ShieldAlert, RotateCcw, Clock, Trash2, Tag as TagIcon, ChevronDown, ChevronUp, Bug, Download, Loader2 } from 'lucide-react'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
 import { vi } from 'date-fns/locale'
 import {
@@ -234,6 +234,52 @@ export default function NodeDetail() {
     onError: (err: any) => alert(err?.response?.data?.detail ?? 'Lỗi khi xoá node.'),
   })
 
+  const [logFetchStatus, setLogFetchStatus] = useState<'idle' | 'pending' | 'completed' | 'failed'>('idle')
+
+  useEffect(() => {
+    if (logFetchStatus !== 'pending' || !nodeId) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get(`/dashboard/nodes/${encodeURIComponent(nodeId)}/aro-log`)
+        const { status, ready } = res.data
+        if (status === 'completed' && ready) setLogFetchStatus('completed')
+        else if (status === 'failed') setLogFetchStatus('failed')
+      } catch {}
+    }, 3000)
+    const timeout = setTimeout(() => setLogFetchStatus('failed'), 120_000)
+    return () => { clearInterval(interval); clearTimeout(timeout) }
+  }, [logFetchStatus, nodeId])
+
+  const handleFetchLog = async () => {
+    if (!nodeId) return
+    try {
+      setLogFetchStatus('pending')
+      await api.post(`/dashboard/nodes/${encodeURIComponent(nodeId)}/fetch-log`)
+    } catch (err: any) {
+      setLogFetchStatus('failed')
+      alert(err?.response?.data?.detail ?? 'Lỗi khi gửi lệnh tải log.')
+    }
+  }
+
+  const handleDownloadLog = async () => {
+    if (!nodeId) return
+    try {
+      const res = await api.get(
+        `/dashboard/nodes/${encodeURIComponent(nodeId)}/aro-log/download`,
+        { responseType: 'blob' },
+      )
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      a.download = `ARO_Desktop_${nodeId}_${dateStr}.log`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert('Lỗi khi tải file log.')
+    }
+  }
+
   const startEditNotes = () => {
     setNotesValue(data?.node.notes ?? '')
     setEditingNotes(true)
@@ -331,6 +377,36 @@ export default function NodeDetail() {
               </span>
             )}
           </button>
+          {logFetchStatus === 'completed' ? (
+            <button
+              onClick={handleDownloadLog}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg font-medium transition-colors whitespace-nowrap"
+              title="Tải file log về máy"
+            >
+              <Download size={14} />
+              Tải xuống
+            </button>
+          ) : (
+            <button
+              onClick={logFetchStatus === 'failed' ? handleFetchLog : logFetchStatus === 'idle' ? handleFetchLog : undefined}
+              disabled={logFetchStatus === 'pending'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg font-medium transition-colors whitespace-nowrap ${
+                logFetchStatus === 'failed'
+                  ? 'bg-red-100 hover:bg-red-200 text-red-700'
+                  : logFetchStatus === 'pending'
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              }`}
+              title="Kéo file ARO Desktop.log từ node về server"
+            >
+              {logFetchStatus === 'pending' ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Download size={14} />
+              )}
+              {logFetchStatus === 'pending' ? 'Đang lấy log...' : logFetchStatus === 'failed' ? 'Lỗi, thử lại' : 'Tải ARO Log'}
+            </button>
+          )}
         </div>
       </header>
 

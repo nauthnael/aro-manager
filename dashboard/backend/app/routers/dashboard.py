@@ -1,8 +1,10 @@
 import math
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,7 @@ from app.auth import create_token, get_current_user, verify_password
 from app.config import settings
 from app.database import get_db
 from app.ip_country import get_node_country
+from app.routers.nodes import NODE_LOGS_DIR
 
 router = APIRouter()
 
@@ -1017,6 +1020,77 @@ def delete_node(
     db.delete(node)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/dashboard/nodes/{node_id}/fetch-log")
+def fetch_node_log(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    node = db.query(models.Node).filter(models.Node.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node không tồn tại.")
+
+    # Cancel existing pending fetch_log commands for this node
+    db.query(models.Command).filter(
+        models.Command.node_id == node_id,
+        models.Command.action == "fetch_log",
+        models.Command.status == "pending",
+    ).delete()
+
+    cmd = models.Command(
+        node_id=node_id,
+        action="fetch_log",
+        created_by=current_user.username,
+    )
+    db.add(cmd)
+    db.commit()
+    db.refresh(cmd)
+    return {"ok": True, "command_id": cmd.id, "status": "pending"}
+
+
+@router.get("/dashboard/nodes/{node_id}/aro-log")
+def get_aro_log_status(
+    node_id: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_user),
+):
+    cmd = (
+        db.query(models.Command)
+        .filter(
+            models.Command.node_id == node_id,
+            models.Command.action == "fetch_log",
+        )
+        .order_by(models.Command.created_at.desc())
+        .first()
+    )
+    if not cmd:
+        return {"status": "none"}
+
+    safe_node_id = node_id.replace("/", "_").replace("..", "_")
+    log_path = os.path.join(NODE_LOGS_DIR, f"aro_log_{safe_node_id}.log")
+    ready = cmd.status == "completed" and os.path.exists(log_path)
+    return {
+        "status": cmd.status,
+        "command_id": cmd.id,
+        "updated_at": cmd.completed_at or cmd.created_at,
+        "ready": ready,
+    }
+
+
+@router.get("/dashboard/nodes/{node_id}/aro-log/download")
+def download_aro_log(
+    node_id: str,
+    _: models.User = Depends(get_current_user),
+):
+    safe_node_id = node_id.replace("/", "_").replace("..", "_")
+    log_path = os.path.join(NODE_LOGS_DIR, f"aro_log_{safe_node_id}.log")
+    if not os.path.exists(log_path):
+        raise HTTPException(status_code=404, detail="Log chưa được tải về. Hãy bấm 'Tải ARO Log' trước.")
+    date_str = datetime.utcnow().strftime("%Y%m%d")
+    filename = f"ARO_Desktop_{safe_node_id}_{date_str}.log"
+    return FileResponse(path=log_path, filename=filename, media_type="text/plain")
 
 
 @router.get("/dashboard/accounts", response_model=List[schemas.AccountStatsOut])

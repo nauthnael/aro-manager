@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.9.9"
+SCRIPT_VERSION="3.10.0"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2176,6 +2176,29 @@ print(json.dumps({'result': d, 'success': True}))
                 return
             else
                 result="ERROR: Không thể chụp màn hình. Cần cài scrot hoặc imagemagick (display: ${DISPLAY_NUM:-:1})"
+                success="false"
+            fi
+            ;;
+        fetch_log)
+            watchdog_log "Dashboard: fetching ARO Desktop log"
+            local log_file="/home/ubuntu/.local/share/com.aro.ARONetwork/logs/ARO Desktop.log"
+            if [[ -f "$log_file" ]]; then
+                local encoded
+                encoded=$(tail -c 5242880 "$log_file" | base64 -w 0)
+                local json_file="/tmp/aro_log_payload_${cmd_id}.json"
+                echo "$encoded" | python3 -c "
+import json, sys
+d = sys.stdin.read().strip()
+print(json.dumps({'result': d, 'success': True}))
+" > "$json_file" 2>/dev/null
+                curl -sf --max-time 60 \
+                    -X POST "${base_url}/api/v1/nodes/${node_id}/commands/${cmd_id}/complete" \
+                    -H "Content-Type: application/json" \
+                    -d "@$json_file" > /dev/null 2>&1 || true
+                rm -f "$json_file"
+                return
+            else
+                result="ERROR: Log file không tồn tại: $log_file"
                 success="false"
             fi
             ;;

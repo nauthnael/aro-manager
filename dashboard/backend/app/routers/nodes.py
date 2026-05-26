@@ -1,3 +1,5 @@
+import base64
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -9,6 +11,8 @@ from app import models, schemas
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
+
+NODE_LOGS_DIR = os.environ.get("NODE_LOGS_DIR", "/app/node-logs")
 
 router = APIRouter()
 
@@ -289,8 +293,22 @@ def complete_command(
     if not cmd:
         raise HTTPException(status_code=404)
     cmd.status = "completed" if body.success else "failed"
-    cmd.result = body.result
     cmd.completed_at = datetime.utcnow()
+
+    if cmd.action == "fetch_log" and body.success and body.result:
+        try:
+            os.makedirs(NODE_LOGS_DIR, exist_ok=True)
+            log_data = base64.b64decode(body.result)
+            safe_node_id = node_id.replace("/", "_").replace("..", "_")
+            log_path = os.path.join(NODE_LOGS_DIR, f"aro_log_{safe_node_id}.log")
+            with open(log_path, "wb") as f:
+                f.write(log_data)
+            cmd.result = "saved"
+        except Exception as e:
+            cmd.result = f"ERROR saving log: {e}"
+            cmd.status = "failed"
+    else:
+        cmd.result = body.result
 
     if cmd.action == "renew_node":
         renew_log = db.query(models.NodeRenewLog).filter(
