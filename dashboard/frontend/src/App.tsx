@@ -10,6 +10,7 @@ const ErrorStats = lazy(() => import('./pages/ErrorStats'))
 const ProxyStats = lazy(() => import('./pages/ProxyStats'))
 const RenewNodes = lazy(() => import('./pages/RenewNodes'))
 const IpManager = lazy(() => import('./pages/IpManager'))
+const UuidStats = lazy(() => import('./pages/UuidStats'))
 const StatisticsCharts = lazy(() => import('./pages/StatisticsCharts'))
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
         <Route path="/renew" element={<PrivateRoute><RenewNodes /></PrivateRoute>} />
         <Route path="/ip-manager" element={<PrivateRoute><IpManager /></PrivateRoute>} />
+        <Route path="/uuid-manager" element={<PrivateRoute><UuidStats /></PrivateRoute>} />
         <Route path="/charts" element={<PrivateRoute><StatisticsCharts /></PrivateRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

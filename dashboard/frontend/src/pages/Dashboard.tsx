@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Globe, Tag as TagIcon, X, TrendingUp } from 'lucide-react'
+import { BarChart2, LogOut, RefreshCw, Settings, ShieldAlert, RotateCcw, Globe, Tag as TagIcon, X, TrendingUp, Fingerprint } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { type SortingState } from '@tanstack/react-table'
 import { NodeListResponse, TagOut } from '../types'
@@ -363,6 +363,14 @@ const { data: allTags = [] } = useQuery<TagOut[]>({
             >
               <Globe size={15} />
               <span className="hidden sm:inline">IP Manager</span>
+            </button>
+            <button
+              onClick={() => navigate('/uuid-manager')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-violet-600 hover:text-violet-800 hover:bg-violet-50 rounded-lg transition-colors"
+              title="Kiểm tra trùng UUID"
+            >
+              <Fingerprint size={15} />
+              <span className="hidden sm:inline">UUID Check</span>
             </button>
             <button
               onClick={() => navigate('/settings')}

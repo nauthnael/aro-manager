@@ -35,6 +35,7 @@ class NodeReportRequest(BaseModel):
     account: str = ""
     script_version: str = ""
     bind_status: str = "unknown"
+    uuid: str = ""
 
 
 class PendingCommand(BaseModel):
@@ -513,6 +514,28 @@ class IpManagerResponse(BaseModel):
     affected_node_count: int
     proxy_shared_count: int = 0
     routing_conflict_count: int = 0
+
+
+# --- UUID Manager ---
+
+class NodeUuidInfo(BaseModel):
+    node_id: str
+    account: Optional[str] = None
+    uuid: Optional[str] = None
+    aro_status: Optional[str] = None
+    last_seen: Optional[datetime] = None
+    is_stale: bool = False
+    is_uuid_duplicate: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class UuidManagerResponse(BaseModel):
+    nodes: List[NodeUuidInfo]
+    total: int
+    duplicate_uuid_count: int
+    affected_node_count: int
 
 
 # --- Diagnostics ---

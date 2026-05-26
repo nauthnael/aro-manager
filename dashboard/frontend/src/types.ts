@@ -308,6 +308,23 @@ export interface IpManagerResponse {
   routing_conflict_count: number
 }
 
+export interface NodeUuidInfo {
+  node_id: string
+  account: string | null
+  uuid: string | null
+  aro_status: string | null
+  last_seen: string | null
+  is_stale: boolean
+  is_uuid_duplicate: boolean
+}
+
+export interface UuidManagerResponse {
+  nodes: NodeUuidInfo[]
+  total: number
+  duplicate_uuid_count: number
+  affected_node_count: number
+}
+
 export interface DiagnosticLog {
   id: number
   node_id: string

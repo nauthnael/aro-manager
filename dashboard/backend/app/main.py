@@ -19,6 +19,7 @@ from app.routers import errors as errors_router
 from app.routers import renew as renew_router
 from app.routers import tags as tags_router
 from app.routers import ip_manager as ip_manager_router
+from app.routers import uuid_manager as uuid_manager_router
 from app.backup import ensure_backup_dir, scheduled_backup
 from app.ip_country import refresh_ip_countries, warm_ip_cache
 from app.scoring import calculate_score_for_day
@@ -103,6 +104,7 @@ def migrate_db():
         "ALTER TABLE app_settings ADD COLUMN periodic_restart_wait_minutes INTEGER DEFAULT 2",
         "ALTER TABLE app_settings ADD COLUMN periodic_vps_reboot_count INTEGER DEFAULT 6",
         "ALTER TABLE app_settings ADD COLUMN periodic_vps_reboot_enabled BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE node_status ADD COLUMN uuid VARCHAR(100)",
     ]
     for sql in ddl_migrations:
         try:
@@ -583,3 +585,4 @@ app.include_router(errors_router.router, prefix="/api/v1")
 app.include_router(renew_router.router, prefix="/api/v1")
 app.include_router(tags_router.router, prefix="/api/v1")
 app.include_router(ip_manager_router.router, prefix="/api/v1")
+app.include_router(uuid_manager_router.router, prefix="/api/v1")

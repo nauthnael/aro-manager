@@ -67,6 +67,7 @@ class NodeStatus(Base):
     uptime_ratio = Column(Float)
     public_ip = Column(String(50))
     script_version = Column(String(20))
+    uuid = Column(String(100), nullable=True)
     last_seen = Column(DateTime)
     last_snapshot_at = Column(DateTime)
 

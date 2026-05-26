@@ -182,6 +182,8 @@ def node_report(body: schemas.NodeReportRequest, db: Session = Depends(get_db)):
     status.uptime_ratio = body.uptime_ratio
     status.public_ip = body.public_ip
     status.script_version = body.script_version
+    if body.uuid and body.uuid.strip() and body.uuid.strip().upper() != "N/A":
+        status.uuid = body.uuid.strip()
     status.last_seen = now
 
     _maybe_save_history(db, status, body)
