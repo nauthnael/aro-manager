@@ -1,10 +1,11 @@
+import gzip
 import math
 import os
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -1088,9 +1089,24 @@ def download_aro_log(
     log_path = os.path.join(NODE_LOGS_DIR, f"aro_log_{safe_node_id}.log")
     if not os.path.exists(log_path):
         raise HTTPException(status_code=404, detail="Log chưa được tải về. Hãy bấm 'Tải ARO Log' trước.")
+    with open(log_path, "rb") as f:
+        data = f.read()
+    # Auto-decompress nếu file là gzip (magic bytes: 1f 8b)
+    if data[:2] == b'\x1f\x8b':
+        try:
+            data = gzip.decompress(data)
+            # Ghi lại file đã giải nén để các lần tải sau không cần decompress
+            with open(log_path, "wb") as f:
+                f.write(data)
+        except Exception:
+            pass
     date_str = datetime.utcnow().strftime("%Y%m%d")
     filename = f"ARO_Desktop_{safe_node_id}_{date_str}.log"
-    return FileResponse(path=log_path, filename=filename, media_type="text/plain")
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/dashboard/accounts", response_model=List[schemas.AccountStatsOut])
