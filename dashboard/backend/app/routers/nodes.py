@@ -1,4 +1,5 @@
 import base64
+import gzip
 import os
 from datetime import datetime, timedelta
 from typing import Optional
@@ -298,7 +299,7 @@ def complete_command(
     if cmd.action == "fetch_log" and body.success and body.result:
         try:
             os.makedirs(NODE_LOGS_DIR, exist_ok=True)
-            log_data = base64.b64decode(body.result)
+            log_data = gzip.decompress(base64.b64decode(body.result))
             safe_node_id = node_id.replace("/", "_").replace("..", "_")
             log_path = os.path.join(NODE_LOGS_DIR, f"aro_log_{safe_node_id}.log")
             with open(log_path, "wb") as f:

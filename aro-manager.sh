@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.10.0"
+SCRIPT_VERSION="3.10.1"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -2184,7 +2184,7 @@ print(json.dumps({'result': d, 'success': True}))
             local log_file="/home/ubuntu/.local/share/com.aro.ARONetwork/logs/ARO Desktop.log"
             if [[ -f "$log_file" ]]; then
                 local encoded
-                encoded=$(tail -c 5242880 "$log_file" | base64 -w 0)
+                encoded=$(tail -c 5242880 "$log_file" | gzip -9 | base64 -w 0)
                 local json_file="/tmp/aro_log_payload_${cmd_id}.json"
                 echo "$encoded" | python3 -c "
 import json, sys
