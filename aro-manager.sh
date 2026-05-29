@@ -14,7 +14,7 @@ set -euo pipefail
 # ───────────────────────────────────────────────────────────────
 # CONSTANTS & GLOBAL VARIABLES
 # ───────────────────────────────────────────────────────────────
-SCRIPT_VERSION="3.10.2"
+SCRIPT_VERSION="3.10.3"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHOW_FOOTER_ON_EXIT=0
@@ -689,11 +689,19 @@ EOF
 
 load_configs() {
     if [[ -f "$PROXY_CONF_FILE" ]]; then
-        source "$PROXY_CONF_FILE"
+        if file "$PROXY_CONF_FILE" 2>/dev/null | grep -q "text"; then
+            source "$PROXY_CONF_FILE"
+        else
+            log_warn "proxy.conf appears to be corrupt (binary). Skipping. Run 'setup' to recreate."
+        fi
     fi
 
     if [[ -f "$WATCHDOG_CONF_FILE" ]]; then
-        source "$WATCHDOG_CONF_FILE"
+        if file "$WATCHDOG_CONF_FILE" 2>/dev/null | grep -q "text"; then
+            source "$WATCHDOG_CONF_FILE"
+        else
+            log_warn "watchdog.conf appears to be corrupt (binary). Skipping. Run 'setup' to recreate."
+        fi
     fi
 
     # Dashboard defaults (có thể bị override bởi watchdog.conf)
