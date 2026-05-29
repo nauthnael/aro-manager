@@ -372,7 +372,13 @@ def list_nodes(
     filtered = all_out
     if search:
         q = search.lower()
-        filtered = [n for n in filtered if q in (n.node_id or "").lower() or q in (n.account or "").lower() or q in (n.serial or "").lower()]
+        filtered = [n for n in filtered if
+                    q in (n.node_id or "").lower()
+                    or q in (n.account or "").lower()
+                    or q in (n.serial or "").lower()
+                    or q in (n.proxy_host or "").lower()
+                    or q in (str(n.proxy_port) if n.proxy_port else "")
+                    or q in (n.proxy_user or "").lower()]
     if status_filter == "stale":
         filtered = [n for n in filtered if n.is_stale]
     elif status_filter == "no_exit_ip":
